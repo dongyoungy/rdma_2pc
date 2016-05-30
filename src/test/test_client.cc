@@ -163,7 +163,7 @@ int TestClient::HandleDisconnect(Context* context) {
   delete context->send_message;
   delete context->receive_message;
 
-  rdma_destroy_id(context->id);
+  //rdma_destroy_id(context->id);
 
   delete context;
 
@@ -351,6 +351,8 @@ int TestClient::SetSemaphore(Context* context) {
   struct ibv_send_wr send_work_request;
   struct ibv_send_wr* bad_work_request;
   //struct ibv_sge sge;
+
+  memset(&send_work_request, 0x00, sizeof(send_work_request));
 
   send_work_request.wr_id                 = (uint64_t)context;
   send_work_request.opcode                = IBV_WR_ATOMIC_CMP_AND_SWP;

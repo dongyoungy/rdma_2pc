@@ -176,7 +176,7 @@ int TestServer::HandleDisconnect(Context* context) {
   delete context->send_message;
   delete context->receive_message;
 
-  rdma_destroy_id(context->id);
+  //rdma_destroy_id(context->id);
 
   delete context;
 
