@@ -8,9 +8,13 @@ namespace rdma { namespace test {
 
 // forward declaration of TestServer
 class TestServer;
+// forward declaration of TestClient
+class TestClient;
 
 struct Context {
   TestServer* server;
+  TestClient* client;
+  bool connected;
   struct rdma_cm_id* id;
   struct ibv_qp* queue_pair;
 
@@ -19,6 +23,8 @@ struct Context {
   Message* receive_message;
   struct ibv_mr* receive_mr;
 
+  uint64_t* server_semaphore;
+  struct ibv_mr* rdma_server_semaphore;
   char* local_buffer;
   struct ibv_mr* rdma_local_mr;
   char* remote_buffer;
