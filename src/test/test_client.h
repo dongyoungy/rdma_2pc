@@ -34,6 +34,7 @@ class TestClient {
     int RegisterMemoryRegion(Context* context);
     int ReceiveMessage(Context* context);
     int SetSemaphore(Context* context);
+    int RequestSemaphore(Context* context);
     int HandleEvent(struct rdma_cm_event* event);
     int HandleAddressResolved(struct rdma_cm_id* id);
     int HandleRouteResolved(struct rdma_cm_id* id);

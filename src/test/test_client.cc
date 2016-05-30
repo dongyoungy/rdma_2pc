@@ -140,6 +140,8 @@ int TestClient::HandleConnection(Context* context) {
   cout << "connected to server." << endl;
   context->connected = true;
 
+  RequestSemaphore(context);
+
   return 0;
 }
 
@@ -292,6 +294,7 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
 
     // if received MR info
     if (context->receive_message->type == Message::MR_INFO) {
+      cout << "received server memory region for semaphore." << endl;
       // copy server rdma semaphore region
       context->rdma_server_semaphore = new ibv_mr;
       memcpy(context->rdma_server_semaphore,
@@ -310,6 +313,36 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     cout << "opcode = " << work_completion->opcode << endl;
     cout << "vendor_err = " << work_completion->vendor_err << endl;
   }
+}
+
+int TestClient::RequestSemaphore(Context* context) {
+
+  context->send_message->type = Message::MR_REQUEST;
+
+  struct ibv_send_wr send_work_request;
+  struct ibv_send_wr* bad_work_request;
+  struct ibv_sge sge;
+
+  send_work_request.wr_id      = (uint64_t)context;
+  send_work_request.opcode     = IBV_WR_SEND;
+  send_work_request.sg_list    = &sge;
+  send_work_request.num_sge    = 1;
+  send_work_request.send_flags = IBV_SEND_SIGNALED;
+
+  sge.addr   = (uint64_t)context->send_message;
+  sge.length = sizeof(*context->send_message);
+  sge.lkey   = context->send_mr->lkey;
+
+  int ret = 0;
+  if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
+          &bad_work_request))) {
+    cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
+    return -1;
+  }
+
+  cout << "requested semaphore" << endl;
+
+  return 0;
 }
 
 int TestClient::SetSemaphore(Context* context) {
