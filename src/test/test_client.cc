@@ -157,8 +157,6 @@ int TestClient::HandleDisconnect(Context* context) {
     ibv_dereg_mr(context->rdma_local_mr);
   if (context->rdma_remote_mr)
     ibv_dereg_mr(context->rdma_remote_mr);
-  if (context->rdma_server_semaphore)
-    ibv_dereg_mr(context->rdma_server_semaphore);
 
   delete context->send_message;
   delete context->receive_message;
@@ -350,14 +348,20 @@ int TestClient::RequestSemaphore(Context* context) {
 int TestClient::SetSemaphore(Context* context) {
   struct ibv_send_wr send_work_request;
   struct ibv_send_wr* bad_work_request;
-  //struct ibv_sge sge;
+  struct ibv_sge sge;
 
   memset(&send_work_request, 0x00, sizeof(send_work_request));
 
-  send_work_request.wr_id                 = (uint64_t)context;
-  send_work_request.opcode                = IBV_WR_ATOMIC_CMP_AND_SWP;
-  send_work_request.num_sge               = 0;
-  send_work_request.sg_list               = NULL;
+  sge.addr = (uint64_t)context->send_message;
+  sge.length = sizeof(*context->send_message);
+  sge.lkey = context->send_mr->lkey;
+
+  send_work_request.wr_id      = (uint64_t)context;
+  send_work_request.opcode     = IBV_WR_ATOMIC_CMP_AND_SWP;
+  send_work_request.num_sge    = 1;
+  send_work_request.sg_list    = &sge;
+  send_work_request.send_flags = IBV_SEND_SIGNALED;
+
   send_work_request.wr.atomic.remote_addr =
     (uint64_t)context->rdma_server_semaphore->addr;
   send_work_request.wr.atomic.rkey        =
@@ -366,7 +370,8 @@ int TestClient::SetSemaphore(Context* context) {
   send_work_request.wr.atomic.swap        = 1;
 
   int ret = 0;
-  if ((ret = ibv_post_send(context->queue_pair, &send_work_request, &bad_work_request))) {
+  if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
+          &bad_work_request))) {
     cerr << "SetSemaphore(): ibv_post_send() failed: " << strerror(ret) << endl;
     return -1;
   }
