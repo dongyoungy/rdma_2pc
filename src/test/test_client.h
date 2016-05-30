@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <rdma/rdma_cma.h>
@@ -33,7 +34,8 @@ class TestClient {
     int BuildConnectionManagerParams(struct rdma_conn_param* params);
     int RegisterMemoryRegion(Context* context);
     int ReceiveMessage(Context* context);
-    int SetSemaphore(Context* context);
+    int SetSemaphore(Context* context, uint64_t current_value,
+        uint64_t new_value);
     int RequestSemaphore(Context* context);
     int HandleEvent(struct rdma_cm_event* event);
     int HandleAddressResolved(struct rdma_cm_id* id);
@@ -47,6 +49,9 @@ class TestClient {
     struct rdma_event_channel* event_channel_;
     struct rdma_cm_id* connection_;
     struct addrinfo* address_;
+    struct timespec start_;
+    struct timespec end_;
+    uint64_t current_semaphore_;
 };
 
 }}

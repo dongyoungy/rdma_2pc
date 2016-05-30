@@ -4,11 +4,12 @@ namespace rdma { namespace test {
 
 // constructor
 TestClient::TestClient(const string& server_name, const string& server_port) {
-  server_name_   = server_name;
-  server_port_   = server_port;
-  event_channel_ = NULL;
-  connection_    = NULL;
-  address_       = NULL;
+  server_name_       = server_name;
+  server_port_       = server_port;
+  event_channel_     = NULL;
+  connection_        = NULL;
+  address_           = NULL;
+  current_semaphore_ = 0;
 }
 
 // destructor
@@ -122,7 +123,8 @@ int TestClient::HandleAddressResolved(struct rdma_cm_id* id) {
 int TestClient::HandleRouteResolved(struct rdma_cm_id* id) {
   struct rdma_conn_param connection_parameters;
   memset(&connection_parameters, 0x00, sizeof(connection_parameters));
-  connection_parameters.initiator_depth = connection_parameters.responder_resources = 1;
+  connection_parameters.initiator_depth =
+    connection_parameters.responder_resources = 1;
   connection_parameters.rnr_retry_count = 5;
 
   // connect
@@ -299,17 +301,39 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           &context->receive_message->memory_region,
           sizeof(*context->rdma_server_semaphore));
 
+      uint64_t new_semaphore;
+      if (current_semaphore_ == 0)
+        new_semaphore = 1;
+      else
+        new_semaphore = 0;
+
       // perform test
-      SetSemaphore(context);
+      clock_gettime(CLOCK_MONOTONIC, &start_);
+      SetSemaphore(context, current_semaphore_, new_semaphore);
+      current_semaphore_ = new_semaphore;
     }
   } else if (work_completion->opcode & IBV_WC_COMP_SWAP) {
     // completion of compare-and-swap
 
     // print stats for now
-    cout << "COMP_SWAP completed." << endl;
-    cout << "wr_id = " << work_completion->wr_id << endl;
-    cout << "opcode = " << work_completion->opcode << endl;
-    cout << "vendor_err = " << work_completion->vendor_err << endl;
+    //cout << "COMP_SWAP completed." << endl;
+    //cout << "wr_id = " << work_completion->wr_id << endl;
+    //cout << "opcode = " << work_completion->opcode << endl;
+    //cout << "vendor_err = " << work_completion->vendor_err << endl;
+    clock_gettime(CLOCK_MONOTONIC, &end_);
+    double dt = ((double)end_.tv_sec + 1.0e-9*end_.tv_nsec) -
+      ((double)start_.tv_sec + 1.0e-9*start_.tv_nsec);
+    cout << "Elapsed = " << dt << endl;
+
+    // perform test
+      uint64_t new_semaphore;
+      if (current_semaphore_ == 0)
+        new_semaphore = 1;
+      else
+        new_semaphore = 0;
+    clock_gettime(CLOCK_MONOTONIC, &start_);
+    SetSemaphore(context, current_semaphore_, new_semaphore);
+    current_semaphore_ = new_semaphore;
   }
 }
 
@@ -345,7 +369,8 @@ int TestClient::RequestSemaphore(Context* context) {
   return 0;
 }
 
-int TestClient::SetSemaphore(Context* context) {
+int TestClient::SetSemaphore(Context* context, uint64_t current_value,
+    uint64_t new_value) {
   struct ibv_send_wr send_work_request;
   struct ibv_send_wr* bad_work_request;
   struct ibv_sge sge;
@@ -366,8 +391,8 @@ int TestClient::SetSemaphore(Context* context) {
     (uint64_t)context->rdma_server_semaphore->addr;
   send_work_request.wr.atomic.rkey        =
     context->rdma_server_semaphore->rkey;
-  send_work_request.wr.atomic.compare_add = 0;
-  send_work_request.wr.atomic.swap        = 1;
+  send_work_request.wr.atomic.compare_add = current_value;
+  send_work_request.wr.atomic.swap        = new_value;
 
   int ret = 0;
   if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
