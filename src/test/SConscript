@@ -1,0 +1,5 @@
+Import("env")
+server = env.Program(target = 'test_server', source = ['test_server_driver.cc','test_server.cc'], LIBS=['rdmacm', 'ibverbs', 'pthread' ,'rt'])
+client = env.Program(target = 'test_client', source = ['test_client_driver.cc','test_client.cc'], LIBS=['rdmacm', 'ibverbs', 'pthread' ,'rt'])
+binaries = [server, client]
+Return("binaries")

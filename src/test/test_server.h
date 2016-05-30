@@ -8,7 +8,7 @@
 #include <rdma/rdma_cma.h>
 #include <iostream>
 
-#include "Context.h"
+#include "context.h"
 
 using namespace std;
 

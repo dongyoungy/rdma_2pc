@@ -17,14 +17,16 @@ TestClient::~TestClient() {
 
 int TestClient::Run() {
   int ret = 0;
-  if ((ret = getaddrinfo(server_name_.c_str(), server_port_.c_str(), NULL, &address_0))) {
+  if ((ret = getaddrinfo(server_name_.c_str(), server_port_.c_str(), NULL,
+          &address_))) {
     cerr << "Run(): getaddrinfo() failed: " << gai_strerror(ret) << endl;
     return -1;
   }
 
   event_channel_ = rdma_create_event_channel();
   if (event_channel_ == NULL) {
-    cerr << "Run(): rdma_create_event_channel() failed: " << strerror(errno) << endl;
+    cerr << "Run(): rdma_create_event_channel() failed: " <<
+      strerror(errno) << endl;
     return -1;
   }
   if (rdma_create_id(event_channel_, &connection_, NULL, RDMA_PS_TCP)) {
@@ -63,9 +65,9 @@ int TestClient::HandleEvent(struct rdma_cm_event* event) {
   } else if (event->event == RDMA_CM_EVENT_ROUTE_RESOLVED) {
     ret = HandleRouteResolved(event->id);
   } else if (event->event == RDMA_CM_EVENT_ESTABLISHED) {
-    ret = HandleConnection(event->id->context);
+    ret = HandleConnection(static_cast<Context*>(event->id->context));
   } else if (event->event == RDMA_CM_EVENT_DISCONNECTED) {
-    ret = HandleDisconnect(event->id->context);
+    ret = HandleDisconnect(static_cast<Context*>(event->id->context));
   } else {
     cerr << "Unknown event." << endl;
     Stop();
@@ -92,7 +94,7 @@ int TestClient::HandleAddressResolved(struct rdma_cm_id* id) {
 
   // set context for connection
   id->context = context;
-  context->qp = id->qp;
+  context->queue_pair = id->qp;
 
   // create memory regions for the connection
   if (RegisterMemoryRegion(context)) {
@@ -167,20 +169,50 @@ int TestClient::HandleDisconnect(Context* context) {
   return 0;
 }
 
+// Post receive to get message from clients
+int TestClient::ReceiveMessage(Context* context) {
+  struct ibv_recv_wr receive_work_request;
+  struct ibv_recv_wr* bad_work_request;
+  struct ibv_sge sge;
+
+  memset(&receive_work_request, 0x00, sizeof(receive_work_request));
+
+  receive_work_request.wr_id   = (uint64_t)context;
+  receive_work_request.next    = NULL;
+  receive_work_request.sg_list = &sge;
+  receive_work_request.num_sge = 1;
+
+  sge.addr   = (uint64_t)context->receive_message;
+  sge.length = sizeof(*context->receive_message);
+  sge.lkey   = context->receive_mr->lkey;
+
+  int ret = 0;
+  if ((ret = ibv_post_recv(context->queue_pair, &receive_work_request,
+          &bad_work_request))) {
+    cerr << "ibv_post_recv failed: " << strerror(ret) << endl;
+    return -1;
+  }
+
+  return 0;
+}
+
+
 // Register local memory regions for RDMA
 int TestClient::RegisterMemoryRegion(Context* context) {
 
   context->send_message = new Message;
   context->receive_message = new Message;
 
-  context->send_mr = ibv_reg_mr(context->pd, context->send_message,
+  context->send_mr = ibv_reg_mr(context->protection_domain,
+      context->send_message,
       sizeof(*(context->send_message)),
       IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ);
   if (context->send_mr == NULL) {
     cerr << "ibv_reg_mr() failed for send_mr." << endl;
     return -1;
   }
-  context->receive_mr = ibv_reg_mr(context->pd, context->receive_message,
+  context->receive_mr = ibv_reg_mr(context->protection_domain,
+      context->receive_message,
       sizeof(*(context->receive_message)),
       IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
   if (context->receive_mr == NULL) {
@@ -259,7 +291,7 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     ReceiveMessage(context);
 
     // if received MR info
-    if (context->receive_message->type == MR_INFO) {
+    if (context->receive_message->type == Message::MR_INFO) {
       // copy server rdma semaphore region
       context->rdma_server_semaphore = new ibv_mr;
       memcpy(context->rdma_server_semaphore,
@@ -289,8 +321,10 @@ int TestClient::SetSemaphore(Context* context) {
   send_work_request.opcode                = IBV_WR_ATOMIC_CMP_AND_SWP;
   send_work_request.num_sge               = 0;
   send_work_request.sg_list               = NULL;
-  send_work_request.wr.atomic.remote_addr = context->rdma_server_semaphore->addr;
-  send_work_request.wr.atomic.rkey        = context->rdma_server_semaphore->rkey;
+  send_work_request.wr.atomic.remote_addr =
+    (uint64_t)context->rdma_server_semaphore->addr;
+  send_work_request.wr.atomic.rkey        =
+    context->rdma_server_semaphore->rkey;
   send_work_request.wr.atomic.compare_add = 0;
   send_work_request.wr.atomic.swap        = 1;
 
@@ -306,14 +340,15 @@ int TestClient::SetSemaphore(Context* context) {
 }
 
 // Polls work completion from completion queue
-static void* TestClient::PollCompletionQueue(void* arg) {
+void* TestClient::PollCompletionQueue(void* arg) {
   struct ibv_cq* cq;
   struct ibv_wc wc;
   Context* queue_context;
-  Context* context = reinterpret_cast<Context*>(arg);
+  Context* context = static_cast<Context*>(arg);
 
   while (true) {
-    if (ibv_get_cq_event(context->completion_channel, &cq, &queue_context)) {
+    if (ibv_get_cq_event(context->completion_channel, &cq,
+          (void**)&queue_context)) {
       cerr << "ibv_get_cq_event() failed." << endl;
     }
     ibv_ack_cq_events(cq, 1);

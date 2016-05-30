@@ -11,7 +11,7 @@
 #include <rdma/rdma_cma.h>
 #include <iostream>
 
-#include "Context.h"
+#include "context.h"
 
 using namespace std;
 
@@ -38,6 +38,8 @@ class TestClient {
     int HandleAddressResolved(struct rdma_cm_id* id);
     int HandleRouteResolved(struct rdma_cm_id* id);
     int HandleWorkCompletion(struct ibv_wc* work_completion);
+    int HandleConnection(Context* context);
+    int HandleDisconnect(Context* context);
 
     string server_name_;
     string server_port_;

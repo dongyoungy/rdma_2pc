@@ -39,8 +39,8 @@ int TestServer::Run() {
     cerr << "Run(): rdma_listen() failed: " << strerror(errno) << endl;
     return -1;
   }
-  port = ntohs(rdma_get_src_port(listener_));
-  cout << "listning on port " << port << endl;
+  port_ = ntohs(rdma_get_src_port(listener_));
+  cout << "listning on port " << port_ << endl;
 
   struct rdma_cm_event* event = NULL;
   while (rdma_get_cm_event(event_channel_, &event) == 0) {
@@ -75,25 +75,29 @@ int TestServer::RegisterMemoryRegion(Context* context) {
   semaphore_ = 0; // init to 0
   context->server_semaphore = &semaphore_;
 
-  context->send_mr = ibv_reg_mr(context->pd, context->send_message,
+  context->send_mr = ibv_reg_mr(context->protection_domain,
+      context->send_message,
       sizeof(*(context->send_message)),
       IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ);
   if (context->send_mr == NULL) {
     cerr << "ibv_reg_mr() failed for send_mr." << endl;
     return -1;
   }
-  context->receive_mr = ibv_reg_mr(context->pd, context->receive_message,
+  context->receive_mr = ibv_reg_mr(context->protection_domain,
+      context->receive_message,
       sizeof(*(context->receive_message)),
       IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
   if (context->receive_mr == NULL) {
     cerr << "ibv_reg_mr() failed for receive_mr." << endl;
     return -1;
   }
-  context->rdma_server_semaphore = ibv_reg_mr(context->pd, context->server_semaphore,
-      sizeof(*server_semaphore), IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ |
+  context->rdma_server_semaphore = ibv_reg_mr(context->protection_domain,
+      context->server_semaphore,
+      sizeof(*context->server_semaphore),
+      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ |
       IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_ATOMIC);
-  if (context->rdma_local_mr == NULL) {
-    cerr << "ibv_reg_mr() failed for rdma_local_mr." << endl;
+  if (context->rdma_server_semaphore == NULL) {
+    cerr << "ibv_reg_mr() failed for rdma_server_semaphore." << endl;
     return -1;
   }
 
@@ -119,7 +123,7 @@ int TestServer::HandleConnectRequest(struct rdma_cm_id* id) {
 
   // set context for connection
   id->context = context;
-  context->qp = id->qp;
+  context->queue_pair = id->qp;
 
   // create memory regions for the connection
   if (RegisterMemoryRegion(context)) {
@@ -182,7 +186,7 @@ int TestServer::HandleDisconnect(Context* context) {
 
 // Send local RDMA memory region to client.
 int TestServer::SendMemoryRegion(Context* context) {
-  context->send_message->type = MR_INFO;
+  context->send_message->type = Message::MR_INFO;
   memcpy(&context->send_message->memory_region, context->rdma_server_semaphore,
       sizeof(context->send_message->memory_region));
   if (SendMessage(context)) {
@@ -226,7 +230,7 @@ int TestServer::ReceiveMessage(Context* context) {
   struct ibv_recv_wr* bad_work_request;
   struct ibv_sge sge;
 
-  memset(&received_work_request, 0x00, sizeof(wr));
+  memset(&receive_work_request, 0x00, sizeof(receive_work_request));
 
   receive_work_request.wr_id   = (uint64_t)context;
   receive_work_request.next    = NULL;
@@ -238,7 +242,8 @@ int TestServer::ReceiveMessage(Context* context) {
   sge.lkey   = context->receive_mr->lkey;
 
   int ret = 0;
-  if ((ret = ibv_post_recv(context->queue_pair, &receive_work_request, &bad_wo))) {
+  if ((ret = ibv_post_recv(context->queue_pair, &receive_work_request,
+          &bad_work_request))) {
     cerr << "ibv_post_recv failed: " << strerror(ret) << endl;
     return -1;
   }
@@ -303,9 +308,9 @@ int TestServer::HandleEvent(struct rdma_cm_event* event) {
   if (event->event == RDMA_CM_EVENT_CONNECT_REQUEST) {
     ret = HandleConnectRequest(event->id);
   } else if (event->event == RDMA_CM_EVENT_ESTABLISHED) {
-    ret = HandleConnection(event->id->context);
+    ret = HandleConnection(static_cast<Context*>(event->id->context));
   } else if (event->event == RDMA_CM_EVENT_DISCONNECTED) {
-    ret = HandleDisconnect(event->id->context);
+    ret = HandleDisconnect(static_cast<Context*>(event->id->context));
   } else {
     cerr << "Unknown event." << endl;
     Stop();
@@ -327,21 +332,22 @@ int TestServer::HandleWorkCompletion(struct ibv_wc* work_completion) {
     ReceiveMessage(context);
 
     // if client is requesting MR
-    if (context->receive_message->type == MR_REQUEST) {
+    if (context->receive_message->type == Message::MR_REQUEST) {
       SendMemoryRegion(context);
     }
   }
 }
 
 // Polls work completion from completion queue
-static void* TestServer::PollCompletionQueue(void* arg) {
+void* TestServer::PollCompletionQueue(void* arg) {
   struct ibv_cq* cq;
   struct ibv_wc wc;
   Context* queue_context;
-  Context* context = reinterpret_cast<Context*>(arg);
+  Context* context = static_cast<Context*>(arg);
 
   while (true) {
-    if (ibv_get_cq_event(context->completion_channel, &cq, &queue_context)) {
+    if (ibv_get_cq_event(context->completion_channel, &cq,
+          (void**)&queue_context)) {
       cerr << "ibv_get_cq_event() failed." << endl;
     }
     ibv_ack_cq_events(cq, 1);

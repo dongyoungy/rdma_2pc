@@ -1,0 +1,4 @@
+bin/
+build/
+src/.sconsign.dblite
+.sconsign.dblite
