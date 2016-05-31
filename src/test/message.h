@@ -9,8 +9,10 @@ class Message {
   public:
     Message() {};
     enum {
-      MR_REQUEST,
-      MR_INFO
+      MR_SEMAPHORE_REQUEST,
+      MR_DATA_REQUEST,
+      MR_SEMAPHORE_INFO,
+      MR_DATA_INFO
     } type;
     struct ibv_mr memory_region;
 };

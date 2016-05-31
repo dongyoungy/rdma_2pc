@@ -25,6 +25,10 @@ struct Context {
 
   uint64_t* server_semaphore;
   struct ibv_mr* rdma_server_semaphore;
+
+  char* server_data;
+  struct ibv_mr* rdma_server_data;
+
   char* local_buffer;
   struct ibv_mr* rdma_local_mr;
   char* remote_buffer;

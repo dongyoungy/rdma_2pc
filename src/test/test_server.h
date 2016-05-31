@@ -33,7 +33,8 @@ class TestServer {
     int RegisterMemoryRegion(Context* context);
     int ReceiveMessage(Context* context);
     int SendMessage(Context* context);
-    int SendMemoryRegion(Context* context);
+    int SendSemaphoreMemoryRegion(Context* context);
+    int SendDataMemoryRegion(Context* context);
     int HandleWorkCompletion(struct ibv_wc* work_completion);
     int HandleEvent(struct rdma_cm_event* event);
     int HandleConnectRequest(struct rdma_cm_id* id);

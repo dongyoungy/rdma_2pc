@@ -185,16 +185,16 @@ int TestServer::HandleDisconnect(Context* context) {
 }
 
 // Send local RDMA memory region to client.
-int TestServer::SendMemoryRegion(Context* context) {
-  context->send_message->type = Message::MR_INFO;
+int TestServer::SendSemaphoreMemoryRegion(Context* context) {
+  context->send_message->type = Message::MR_SEMAPHORE_INFO;
   memcpy(&context->send_message->memory_region, context->rdma_server_semaphore,
       sizeof(context->send_message->memory_region));
   if (SendMessage(context)) {
-    cerr << "SendMemoryRegion(): SendMessage() failed." << endl;
+    cerr << "SendSemaphoreMemoryRegion(): SendMessage() failed." << endl;
     return -1;
   }
 
-  cout << "SendMemoryRegion(): memory region sent." << endl;
+  cout << "SendSemaphoreMemoryRegion(): memory region sent." << endl;
   return 0;
 }
 
@@ -321,6 +321,7 @@ int TestServer::HandleEvent(struct rdma_cm_event* event) {
   return ret;
 }
 
+// Handles work completions.
 int TestServer::HandleWorkCompletion(struct ibv_wc* work_completion) {
   Context* context = (Context *)work_completion->wr_id;
 
@@ -333,9 +334,14 @@ int TestServer::HandleWorkCompletion(struct ibv_wc* work_completion) {
     // Post receive first.
     ReceiveMessage(context);
 
-    // if client is requesting MR
-    if (context->receive_message->type == Message::MR_REQUEST) {
-      SendMemoryRegion(context);
+    // if client is requesting semaphore MR
+    if (context->receive_message->type == Message::MR_SEMAPHORE_REQUEST) {
+      SendSemaphoreMemoryRegion(context);
+    } else if (context->receive_message->type == Message::MR_DATA_REQUEST) {
+      SendDataMemoryRegion(context);
+    } else {
+      cerr << "Unknown message type: " << context->receive_message->type << endl;
+      return -1;
     }
   }
 }
