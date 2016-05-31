@@ -186,6 +186,8 @@ int TestServer::HandleDisconnect(Context* context) {
     ibv_dereg_mr(context->rdma_remote_mr);
   if (context->rdma_server_semaphore)
     ibv_dereg_mr(context->rdma_server_semaphore);
+  if (context->rdma_server_data)
+    ibv_dereg_mr(context->rdma_server_data);
 
   delete context->send_message;
   delete context->receive_message;
