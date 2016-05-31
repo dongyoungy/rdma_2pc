@@ -10,6 +10,8 @@ TestClient::TestClient(const string& server_name, const string& server_port) {
   connection_        = NULL;
   address_           = NULL;
   current_semaphore_ = 0;
+  num_trial_         = 0;
+  total_cas_time_    = 0;
 }
 
 // destructor
@@ -70,7 +72,7 @@ int TestClient::HandleEvent(struct rdma_cm_event* event) {
   } else if (event->event == RDMA_CM_EVENT_DISCONNECTED) {
     ret = HandleDisconnect(static_cast<Context*>(event->id->context));
   } else {
-    cerr << "Unknown event." << endl;
+    cerr << "Unknown event: " << event->event << endl;
     Stop();
   }
 
@@ -301,6 +303,7 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           &context->receive_message->memory_region,
           sizeof(*context->rdma_server_semaphore));
 
+      current_semaphore_ = 1;
       uint64_t new_semaphore;
       if (current_semaphore_ == 0)
         new_semaphore = 1;
@@ -320,10 +323,18 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     //cout << "wr_id = " << work_completion->wr_id << endl;
     //cout << "opcode = " << work_completion->opcode << endl;
     //cout << "vendor_err = " << work_completion->vendor_err << endl;
+
     clock_gettime(CLOCK_MONOTONIC, &end_);
-    double dt = ((double)end_.tv_sec + 1.0e-9*end_.tv_nsec) -
-      ((double)start_.tv_sec + 1.0e-9*start_.tv_nsec);
-    cout << "Elapsed = " << dt << endl;
+    double dt = ((double)end_.tv_sec *1.0e+9 + end_.tv_nsec) -
+      ((double)start_.tv_sec * 1.0e+9 + start_.tv_nsec);
+    total_cas_time_ += dt;
+    ++num_trial_;
+
+    if (num_trial_ >= TOTAL_TRIAL) {
+      cout << "Average CAS Time = " << total_cas_time_ /(double)TOTAL_TRIAL <<
+        endl;
+      exit(0);
+    }
 
     // perform test
       uint64_t new_semaphore;
@@ -335,6 +346,8 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     SetSemaphore(context, current_semaphore_, new_semaphore);
     current_semaphore_ = new_semaphore;
   }
+
+  return 0;
 }
 
 int TestClient::RequestSemaphore(Context* context) {
@@ -401,7 +414,7 @@ int TestClient::SetSemaphore(Context* context, uint64_t current_value,
     return -1;
   }
 
-  cout << "SetSmaphore(): message sent." << endl;
+  //cout << "SetSmaphore(): message sent." << endl;
 
   return 0;
 }

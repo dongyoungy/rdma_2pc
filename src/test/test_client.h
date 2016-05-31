@@ -44,6 +44,10 @@ class TestClient {
     int HandleConnection(Context* context);
     int HandleDisconnect(Context* context);
 
+    static const int TOTAL_TRIAL = 1000000;
+
+    double total_cas_time_;
+    int num_trial_;
     string server_name_;
     string server_port_;
     struct rdma_event_channel* event_channel_;
