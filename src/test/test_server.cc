@@ -153,8 +153,8 @@ int TestServer::HandleConnectRequest(struct rdma_cm_id* id) {
   struct rdma_conn_param connection_parameters;
   memset(&connection_parameters, 0x00, sizeof(connection_parameters));
   connection_parameters.initiator_depth =
-    connection_parameters.responder_resources = 1;
-  connection_parameters.rnr_retry_count = 7;
+    connection_parameters.responder_resources = 5;
+  connection_parameters.rnr_retry_count = 5;
 
   // accept connection
   if (rdma_accept(id, &connection_parameters)) {
