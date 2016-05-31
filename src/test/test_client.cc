@@ -130,7 +130,7 @@ int TestClient::HandleRouteResolved(struct rdma_cm_id* id) {
   memset(&connection_parameters, 0x00, sizeof(connection_parameters));
   connection_parameters.initiator_depth =
     connection_parameters.responder_resources = 1;
-  connection_parameters.rnr_retry_count = 5;
+  connection_parameters.rnr_retry_count = 7;
 
   // connect
   if (rdma_connect(id, &connection_parameters)) {
