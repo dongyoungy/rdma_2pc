@@ -305,7 +305,8 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
   Context* context = (Context *)work_completion->wr_id;
 
   if (work_completion->status != IBV_WC_SUCCESS) {
-    cerr << "Work completion status is not IBV_WC_SUCCESS." << endl;
+    cerr << "Work completion status is not IBV_WC_SUCCESS: " <<
+      work_completion->status << endl;
     return -1;
   }
 
@@ -379,7 +380,7 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     clock_gettime(CLOCK_MONOTONIC, &end_);
     double dt = ((double)end_.tv_sec *1.0e+9 + end_.tv_nsec) -
       ((double)start_.tv_sec * 1.0e+9 + start_.tv_nsec);
-    cout << "Time taken to read " << data_size_ << "bytes = " << dt << "ns."
+    cout << "Time taken to read " << data_size_ << " bytes = " << dt << " ns."
       <<endl;
   }
 
