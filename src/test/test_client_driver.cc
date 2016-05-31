@@ -9,7 +9,7 @@ int main(int argc, char** argv) {
   if (argc != 5) {
     cout << argv[0] << "<server_name> <server_port> <test_mode> <data_size>"
       << endl;
-    cout << "test_mode: 0 = semaphore, 1 = data"
+    cout << "test_mode: 0 = semaphore, 1 = data" << endl;
     exit(1);
   }
 
