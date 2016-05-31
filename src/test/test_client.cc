@@ -309,7 +309,7 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     return -1;
   }
 
-  if (work_completion->opcode & IBV_WC_RECV) {
+  if (work_completion->opcode == IBV_WC_RECV) {
     // post receive first.
     ReceiveMessage(context);
 
@@ -345,7 +345,7 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       clock_gettime(CLOCK_MONOTONIC, &start_);
       ReadData(context);
     }
-  } else if (work_completion->opcode & IBV_WC_COMP_SWAP) {
+  } else if (work_completion->opcode == IBV_WC_COMP_SWAP) {
     // completion of compare-and-swap
 
     // print stats for now
@@ -375,7 +375,7 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     clock_gettime(CLOCK_MONOTONIC, &start_);
     SetSemaphore(context, current_semaphore_, new_semaphore);
     current_semaphore_ = new_semaphore;
-  } else if (work_completion->opcode & IBV_WC_RDMA_READ) {
+  } else if (work_completion->opcode == IBV_WC_RDMA_READ) {
     clock_gettime(CLOCK_MONOTONIC, &end_);
     double dt = ((double)end_.tv_sec *1.0e+9 + end_.tv_nsec) -
       ((double)start_.tv_sec * 1.0e+9 + start_.tv_nsec);
