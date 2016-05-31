@@ -11,6 +11,8 @@ class TestServer;
 // forward declaration of TestClient
 class TestClient;
 
+static const size_t DATA_SIZE = 4 * 1024;
+
 struct Context {
   TestServer* server;
   TestClient* client;

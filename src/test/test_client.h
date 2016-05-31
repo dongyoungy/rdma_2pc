@@ -21,7 +21,8 @@ namespace rdma { namespace test {
 class TestClient {
 
   public:
-    TestClient(const string& server_name, const string& server_port);
+    TestClient(const string& server_name, const string& server_port,
+        int test_mode, size_t data_size);
     ~TestClient();
     int Run();
     void Stop();
@@ -36,7 +37,9 @@ class TestClient {
     int ReceiveMessage(Context* context);
     int SetSemaphore(Context* context, uint64_t current_value,
         uint64_t new_value);
+    int ReadData(Context* context);
     int RequestSemaphore(Context* context);
+    int RequestData(Context* context);
     int HandleEvent(struct rdma_cm_event* event);
     int HandleAddressResolved(struct rdma_cm_id* id);
     int HandleRouteResolved(struct rdma_cm_id* id);
@@ -45,8 +48,11 @@ class TestClient {
     int HandleDisconnect(Context* context);
 
     static const int TOTAL_TRIAL = 1000000;
+    static const int TEST_MODE_SEM = 0;
+    static const int TEST_MODE_DATA = 1;
 
     double total_cas_time_;
+    int test_mode_;
     int num_trial_;
     string server_name_;
     string server_port_;
@@ -56,6 +62,7 @@ class TestClient {
     struct timespec start_;
     struct timespec end_;
     uint64_t current_semaphore_;
+    size_t data_size_;
 };
 
 }}

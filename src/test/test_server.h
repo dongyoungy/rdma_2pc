@@ -19,7 +19,7 @@ const size_t BUFFER_SIZE = 1024 * 1024;
 class TestServer {
 
   public:
-    TestServer();
+    TestServer(size_t data_size);
     ~TestServer();
     int Run();
     void Stop();
@@ -49,6 +49,7 @@ class TestServer {
     struct rdma_event_channel* event_channel_;
     struct sockaddr_in6 address_;
     uint16_t port_;
+    size_t data_size_;
 };
 
 }}

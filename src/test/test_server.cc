@@ -3,13 +3,14 @@
 namespace rdma { namespace test {
 
 // constructor
-TestServer::TestServer() {
-  buffer_                   = new char[BUFFER_SIZE];
+TestServer::TestServer(size_t data_size) {
+  buffer_                   = new char[data_size];
   semaphore_                = 0;
   listener_                 = NULL;
   event_channel_            = NULL;
   registered_memory_region_ = NULL;
   port_                     = 0;
+  data_size_                = data_size;
 }
 
 // destructor
@@ -24,7 +25,8 @@ int TestServer::Run() {
 
   event_channel_ = rdma_create_event_channel();
   if (event_channel_ == NULL) {
-    cerr << "Run(): rdma_create_event_channel() failed: " << strerror(errno) << endl;
+    cerr << "Run(): rdma_create_event_channel() failed: " <<
+      strerror(errno) << endl;
     return -1;
   }
   if (rdma_create_id(event_channel_, &listener_, NULL, RDMA_PS_TCP)) {
@@ -74,6 +76,7 @@ int TestServer::RegisterMemoryRegion(Context* context) {
 
   semaphore_ = 0; // init to 0
   context->server_semaphore = &semaphore_;
+  context->server_data = buffer_;
 
   context->send_mr = ibv_reg_mr(context->protection_domain,
       context->send_message,
@@ -98,6 +101,15 @@ int TestServer::RegisterMemoryRegion(Context* context) {
       IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_ATOMIC);
   if (context->rdma_server_semaphore == NULL) {
     cerr << "ibv_reg_mr() failed for rdma_server_semaphore." << endl;
+    return -1;
+  }
+  context->rdma_server_data = ibv_reg_mr(context->protection_domain,
+      context->server_data,
+      data_size_,
+      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ |
+      IBV_ACCESS_REMOTE_WRITE);
+  if (context->rdma_server_data == NULL) {
+    cerr << "ibv_reg_mr() failed for rdma_server_data." << endl;
     return -1;
   }
 
@@ -140,7 +152,8 @@ int TestServer::HandleConnectRequest(struct rdma_cm_id* id) {
   // set rdma connection parameters
   struct rdma_conn_param connection_parameters;
   memset(&connection_parameters, 0x00, sizeof(connection_parameters));
-  connection_parameters.initiator_depth = connection_parameters.responder_resources = 1;
+  connection_parameters.initiator_depth =
+    connection_parameters.responder_resources = 1;
   connection_parameters.rnr_retry_count = 5;
 
   // accept connection
@@ -160,6 +173,7 @@ int TestServer::HandleConnection(Context* context) {
 }
 
 int TestServer::HandleDisconnect(Context* context) {
+  // rdma_destroy_qp() causes seg fault when client disconnects. why?
   //rdma_destroy_qp(context->id);
 
   if (context->send_mr)
@@ -176,6 +190,7 @@ int TestServer::HandleDisconnect(Context* context) {
   delete context->send_message;
   delete context->receive_message;
 
+  // rdma_destroy_id() also causes seg fault when client disconnects. why?
   //rdma_destroy_id(context->id);
 
   delete context;
@@ -184,7 +199,7 @@ int TestServer::HandleDisconnect(Context* context) {
   return 0;
 }
 
-// Send local RDMA memory region to client.
+// Send local RDMA semaphore memory region to client.
 int TestServer::SendSemaphoreMemoryRegion(Context* context) {
   context->send_message->type = Message::MR_SEMAPHORE_INFO;
   memcpy(&context->send_message->memory_region, context->rdma_server_semaphore,
@@ -195,6 +210,20 @@ int TestServer::SendSemaphoreMemoryRegion(Context* context) {
   }
 
   cout << "SendSemaphoreMemoryRegion(): memory region sent." << endl;
+  return 0;
+}
+
+// Send local RDMA semaphore memory region to client.
+int TestServer::SendDataMemoryRegion(Context* context) {
+  context->send_message->type = Message::MR_DATA_INFO;
+  memcpy(&context->send_message->memory_region, context->rdma_server_data,
+      sizeof(context->send_message->memory_region));
+  if (SendMessage(context)) {
+    cerr << "SendDataMemoryRegion(): SendMessage() failed." << endl;
+    return -1;
+  }
+
+  cout << "SendDataMemoryRegion(): memory region sent." << endl;
   return 0;
 }
 
@@ -216,7 +245,8 @@ int TestServer::SendMessage(Context* context) {
   sge.lkey   = context->send_mr->lkey;
 
   int ret = 0;
-  if ((ret = ibv_post_send(context->queue_pair, &send_work_request, &bad_work_request))) {
+  if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
+          &bad_work_request))) {
     cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
     return -1;
   }
@@ -340,7 +370,8 @@ int TestServer::HandleWorkCompletion(struct ibv_wc* work_completion) {
     } else if (context->receive_message->type == Message::MR_DATA_REQUEST) {
       SendDataMemoryRegion(context);
     } else {
-      cerr << "Unknown message type: " << context->receive_message->type << endl;
+      cerr << "Unknown message type: " << context->receive_message->type
+        << endl;
       return -1;
     }
   }

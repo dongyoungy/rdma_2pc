@@ -3,7 +3,8 @@
 namespace rdma { namespace test {
 
 // constructor
-TestClient::TestClient(const string& server_name, const string& server_port) {
+TestClient::TestClient(const string& server_name, const string& server_port,
+    int test_mode, size_t data_size) {
   server_name_       = server_name;
   server_port_       = server_port;
   event_channel_     = NULL;
@@ -12,6 +13,8 @@ TestClient::TestClient(const string& server_name, const string& server_port) {
   current_semaphore_ = 0;
   num_trial_         = 0;
   total_cas_time_    = 0;
+  test_mode_         = test_mode;
+  data_size_         = data_size;
 }
 
 // destructor
@@ -144,7 +147,14 @@ int TestClient::HandleConnection(Context* context) {
   cout << "connected to server." << endl;
   context->connected = true;
 
-  RequestSemaphore(context);
+  if (test_mode_ == TEST_MODE_SEM) {
+    RequestSemaphore(context);
+  } else if (test_mode_ == TEST_MODE_DATA) {
+    RequestData(context);
+  } else {
+    cerr << "Unknown test mode: " << test_mode_ << endl;
+    return -1;
+  }
 
   return 0;
 }
@@ -223,8 +233,17 @@ int TestClient::RegisterMemoryRegion(Context* context) {
     cerr << "ibv_reg_mr() failed for receive_mr." << endl;
     return -1;
   }
+  context->local_buffer = new char[data_size_];
+  context->rdma_local_mr = ibv_reg_mr(context->protection_domain,
+      context->local_buffer,
+      data_size_,
+      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
+  if (context->rdma_local_mr == NULL) {
+    cerr << "ibv_reg_mr() failed for rdma_local_mr." << endl;
+    return -1;
+  }
+
   context->rdma_server_semaphore = NULL;
-  context->rdma_local_mr = NULL;
   context->rdma_remote_mr = NULL;
 
   return 0;
@@ -294,8 +313,8 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     // post receive first.
     ReceiveMessage(context);
 
-    // if received MR info
-    if (context->receive_message->type == Message::MR_INFO) {
+    // if received semaphore MR info
+    if (context->receive_message->type == Message::MR_SEMAPHORE_INFO) {
       cout << "received server memory region for semaphore." << endl;
       // copy server rdma semaphore region
       context->rdma_server_semaphore = new ibv_mr;
@@ -314,6 +333,17 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       clock_gettime(CLOCK_MONOTONIC, &start_);
       SetSemaphore(context, current_semaphore_, new_semaphore);
       current_semaphore_ = new_semaphore;
+    } else if (context->receive_message->type == Message::MR_DATA_INFO) {
+      cout << "received server memory region for data." << endl;
+      // copy server rdma data region
+      context->rdma_server_data = new ibv_mr;
+      memcpy(context->rdma_server_data,
+          &context->receive_message->memory_region,
+          sizeof(*context->rdma_server_data));
+
+      // perform test
+      clock_gettime(CLOCK_MONOTONIC, &start_);
+      ReadData(context);
     }
   } else if (work_completion->opcode & IBV_WC_COMP_SWAP) {
     // completion of compare-and-swap
@@ -345,14 +375,21 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     clock_gettime(CLOCK_MONOTONIC, &start_);
     SetSemaphore(context, current_semaphore_, new_semaphore);
     current_semaphore_ = new_semaphore;
+  } else if (work_completion->opcode & IBV_WC_RDMA_READ) {
+    clock_gettime(CLOCK_MONOTONIC, &end_);
+    double dt = ((double)end_.tv_sec *1.0e+9 + end_.tv_nsec) -
+      ((double)start_.tv_sec * 1.0e+9 + start_.tv_nsec);
+    cout << "Time taken to read " << data_size_ << "bytes = " << dt << "ns."
+      <<endl;
   }
 
   return 0;
 }
 
+// Requests semaphore MR region of the server via IBV_WR_SEND op.
 int TestClient::RequestSemaphore(Context* context) {
 
-  context->send_message->type = Message::MR_REQUEST;
+  context->send_message->type = Message::MR_SEMAPHORE_REQUEST;
 
   struct ibv_send_wr send_work_request;
   struct ibv_send_wr* bad_work_request;
@@ -377,7 +414,39 @@ int TestClient::RequestSemaphore(Context* context) {
     return -1;
   }
 
-  cout << "requested semaphore" << endl;
+  cout << "requested semaphore region" << endl;
+
+  return 0;
+}
+
+int TestClient::RequestData(Context* context) {
+
+  context->send_message->type = Message::MR_DATA_REQUEST;
+
+  struct ibv_send_wr send_work_request;
+  struct ibv_send_wr* bad_work_request;
+  struct ibv_sge sge;
+
+  memset(&send_work_request, 0x00, sizeof(send_work_request));
+
+  send_work_request.wr_id      = (uint64_t)context;
+  send_work_request.opcode     = IBV_WR_SEND;
+  send_work_request.sg_list    = &sge;
+  send_work_request.num_sge    = 1;
+  send_work_request.send_flags = IBV_SEND_SIGNALED;
+
+  sge.addr   = (uint64_t)context->send_message;
+  sge.length = sizeof(*context->send_message);
+  sge.lkey   = context->send_mr->lkey;
+
+  int ret = 0;
+  if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
+          &bad_work_request))) {
+    cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
+    return -1;
+  }
+
+  cout << "requested data region" << endl;
 
   return 0;
 }
@@ -415,6 +484,39 @@ int TestClient::SetSemaphore(Context* context, uint64_t current_value,
   }
 
   //cout << "SetSmaphore(): message sent." << endl;
+
+  return 0;
+}
+
+// reads data from the server's local MR.
+int TestClient::ReadData(Context* context) {
+  struct ibv_send_wr send_work_request;
+  struct ibv_send_wr* bad_work_request;
+  struct ibv_sge sge;
+
+  memset(&send_work_request, 0x00, sizeof(send_work_request));
+
+  sge.addr   = (uint64_t)context->local_buffer;
+  sge.length = data_size_;
+  sge.lkey   = context->rdma_local_mr->lkey;
+
+  send_work_request.wr_id      = (uint64_t)context;
+  send_work_request.opcode     = IBV_WR_RDMA_READ;
+  send_work_request.num_sge    = 1;
+  send_work_request.sg_list    = &sge;
+  send_work_request.send_flags = IBV_SEND_SIGNALED;
+
+  send_work_request.wr.rdma.remote_addr =
+    (uint64_t)context->rdma_server_data->addr;
+  send_work_request.wr.rdma.rkey        =
+    context->rdma_server_data->rkey;
+
+  int ret = 0;
+  if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
+          &bad_work_request))) {
+    cerr << "ReadData(): ibv_post_send() failed: " << strerror(ret) << endl;
+    return -1;
+  }
 
   return 0;
 }
