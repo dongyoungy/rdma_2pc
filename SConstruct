@@ -1,4 +1,5 @@
-env = Environment(CC = 'mpicxx')
+import os
+env = Environment(ENV = os.environ, CC = 'mpicc', CXX = 'mpic++')
 debug = ARGUMENTS.get('debug', 0)
 if int(debug):
     env.Append(CCFLAGS='-g')

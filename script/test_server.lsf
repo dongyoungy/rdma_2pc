@@ -1,0 +1,15 @@
+#!/bin/bash
+#
+#BSUB -a mvapich                       # parallel environment to use
+#BSUB -W 30                            # time requested in minutes
+#BSUB -n 1                               # number of tasks in job
+#BSUB -R rusage[mem=64]     # memory in Kilobytes request
+#BSUB -J rdma_test_server                        # Job name
+#BSUB -e /gpfs/gpfs0/groups/mozafari/dyoon/work/lsf_log/test_server/%J.e                     # error file name in which %J is replaced by the job ID
+#BSUB -o /gpfs/gpfs0/groups/mozafari/dyoon/work/lsf_log/test_server/%J.o                    # output file name in which %J is replaced by the job ID
+#BSUB -q normal                         # use the normal queue
+
+/gpfs/gpfs0/groups/mozafari/dyoon/work/rdma_2pc/bin/test_server /gpfs/gpfs0/groups/mozafari/dyoon/work/temp 4096
+
+# end of bsub
+

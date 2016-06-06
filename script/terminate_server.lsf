@@ -1,0 +1,15 @@
+
+#!/bin/bash
+#
+#BSUB -W 1                            # cpu in seconds time requested
+#BSUB -n 1                               # number of tasks in job
+#BSUB -R rusage[mem=1]     # memory in Kilobytes request
+#BSUB -J rdma_test_terminate                        # Job name
+#BSUB -e /gpfs/gpfs0/groups/mozafari/dyoon/work/lsf_log/%J.e                     # error file name in which %J is replaced by the job ID
+#BSUB -o /gpfs/gpfs0/groups/mozafari/dyoon/work/lsf_log/%J.o                    # output file name in which %J is replaced by the job ID
+#BSUB -q normal                         # use the normal queue
+
+bkill -J rdma_test_server
+
+# end of bsub
+

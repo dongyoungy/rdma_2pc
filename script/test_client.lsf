@@ -1,0 +1,16 @@
+#!/bin/bash
+#
+#BSUB -a openmpi                       # parallel environment to use
+#BSUB -W 2                            # time requested in minutes
+#BSUB -n 2                               # number of tasks in job
+#BSUB -R "span[ptile=1]"
+#BSUB -R rusage[mem=64]     # memory in Kilobytes request
+#BSUB -J rdma_test_client                        # Job name
+#BSUB -e /gpfs/gpfs0/groups/mozafari/dyoon/work/lsf_log/test_client/%J.e                     # error file name in which %J is replaced by the job ID
+#BSUB -o /gpfs/gpfs0/groups/mozafari/dyoon/work/lsf_log/test_client/%J.o                    # output file name in which %J is replaced by the job ID
+#BSUB -q normal                         # use the normal queue
+
+mpirun.lsf --mca pml ob1 --mca btl self,sm,openib /gpfs/gpfs0/groups/mozafari/dyoon/work/rdma_2pc/bin/test_client /gpfs/gpfs0/groups/mozafari/dyoon/work/temp 1 60 4096
+
+# end of bsub
+

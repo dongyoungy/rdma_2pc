@@ -1,0 +1,14 @@
+#!/bin/bash
+#
+#BSUB -C 10                            # cpu in seconds time requested
+#BSUB -n 1                               # number of tasks in job
+#BSUB -R rusage[mem=8]     # memory in Kilobytes request
+#BSUB -J lsf_test                        # Job name
+#BSUB -e %J.errors                     # error file name in which %J is replaced by the job ID
+#BSUB -o %J.output                    # output file name in which %J is replaced by the job ID
+#BSUB -q normal                         # use the normal queue
+
+echo "Hello World"
+
+# end of bsub
+

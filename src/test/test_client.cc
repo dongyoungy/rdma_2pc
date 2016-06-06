@@ -3,16 +3,32 @@
 namespace rdma { namespace test {
 
 // constructor
-TestClient::TestClient(const string& server_name, const string& server_port,
-    int test_mode, size_t data_size) {
-  server_name_       = server_name;
-  server_port_       = server_port;
+//TestClient::TestClient(const string& server_name, const string& server_port,
+    //int test_mode, size_t data_size) {
+  //server_name_       = server_name;
+  //server_port_       = server_port;
+  //event_channel_     = NULL;
+  //connection_        = NULL;
+  //address_           = NULL;
+  //current_semaphore_ = 0;
+  //num_trial_         = 0;
+  //total_cas_time_    = 0;
+  //test_mode_         = test_mode;
+  //data_size_         = data_size;
+//}
+
+// constructor
+TestClient::TestClient(const string& work_dir, int test_mode,
+    int test_duration, size_t data_size) {
+  work_dir_          = work_dir;
+  test_duration_     = test_duration;
   event_channel_     = NULL;
   connection_        = NULL;
   address_           = NULL;
   current_semaphore_ = 0;
   num_trial_         = 0;
   total_cas_time_    = 0;
+  total_read_time_   = 0;
   test_mode_         = test_mode;
   data_size_         = data_size;
 }
@@ -22,6 +38,14 @@ TestClient::~TestClient() {
 }
 
 int TestClient::Run() {
+  // read server address from file
+  if (ReadServerAddress()) {
+    cerr << "Run(): ReadServerAddress() failed" << endl;
+    return -1;
+  }
+
+  cout << "connecting to server: " << server_name_ << ":" << server_port_
+    << endl;
   int ret = 0;
   if ((ret = getaddrinfo(server_name_.c_str(), server_port_.c_str(), NULL,
           &address_))) {
@@ -62,6 +86,45 @@ int TestClient::Run() {
 
 void TestClient::Stop() {
   exit(0);
+}
+
+int TestClient::ReadServerAddress() {
+  char ip[64];
+  char port[16];
+
+  // open files
+  string ip_filename = work_dir_ + "/server.ip";
+  string port_filename = work_dir_ + "/server.port";
+  FILE* ip_file = fopen(ip_filename.c_str(), "r");
+  if (ip_file == NULL) {
+    cerr << "ReadServerAddress(): fopen() failed: " << strerror(errno) << endl;
+    return -1;
+  }
+  FILE* port_file = fopen(port_filename.c_str(), "r");
+  if (port_file == NULL) {
+    cerr << "ReadServerAddress(): fopen() failed: " << strerror(errno) << endl;
+    return -1;
+  }
+
+  fgets(ip, 64, ip_file);
+  fgets(port, 16, port_file);
+
+  char* pos;
+  // let's remove trailing newline character
+  if ((pos = strchr(ip, '\n')) != NULL) {
+    *pos = '\0';
+  }
+  if ((pos = strchr(port, '\n')) != NULL) {
+    *pos = '\0';
+  }
+
+  server_name_ = ip;
+  server_port_ = port;
+
+  fclose(ip_file);
+  fclose(port_file);
+
+  return 0;
 }
 
 int TestClient::HandleEvent(struct rdma_cm_event* event) {
@@ -343,6 +406,7 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           sizeof(*context->rdma_server_data));
 
       // perform test
+      time(&test_start_);
       clock_gettime(CLOCK_MONOTONIC, &start_);
       ReadData(context);
     }
@@ -380,8 +444,21 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     clock_gettime(CLOCK_MONOTONIC, &end_);
     double dt = ((double)end_.tv_sec *1.0e+9 + end_.tv_nsec) -
       ((double)start_.tv_sec * 1.0e+9 + start_.tv_nsec);
-    cout << "Time taken to read " << data_size_ << " bytes = " << dt << " ns."
-      <<endl;
+    total_read_time_ += dt;
+    ++num_trial_;
+    time(&test_end_);
+
+    if (difftime(test_end_, test_start_) >= test_duration_) {
+      cout << "Data size = " << data_size_ << " bytes" << endl;
+      cout << "Average read time = " <<
+        total_read_time_ / (double)num_trial_ <<
+        endl;
+      cout << "# reads = " << num_trial_ << endl;
+      exit(0);
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &start_);
+    ReadData(context);
   }
 
   return 0;

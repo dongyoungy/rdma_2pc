@@ -3,7 +3,8 @@
 namespace rdma { namespace test {
 
 // constructor
-TestServer::TestServer(size_t data_size) {
+TestServer::TestServer(const string& work_dir, size_t data_size) {
+  work_dir_                 = work_dir;
   buffer_                   = new char[data_size];
   semaphore_                = 0;
   listener_                 = NULL;
@@ -44,6 +45,12 @@ int TestServer::Run() {
   port_ = ntohs(rdma_get_src_port(listener_));
   cout << "listning on port " << port_ << endl;
 
+  // print ip,port,lsf job id in the working directory
+  if (PrintInfo()) {
+    cerr << "PrintInfo() error." << endl;
+    return -1;
+  }
+
   struct rdma_cm_event* event = NULL;
   while (rdma_get_cm_event(event_channel_, &event) == 0) {
     struct rdma_cm_event current_event;
@@ -55,6 +62,102 @@ int TestServer::Run() {
 
   DestroyListener();
   return 0;
+}
+
+int TestServer::PrintInfo() {
+  // write ip, port (infiniband) and current LSF job id in the work dir
+
+  // open files
+  string ip_filename = work_dir_ + "/server.ip";
+  string port_filename = work_dir_ + "/server.port";
+  string job_id_filename = work_dir_ + "/server.jobid";
+  FILE* ip_file = fopen(ip_filename.c_str(), "w");
+  if (ip_file == NULL) {
+    cerr << "Run(): fopen() failed: " << strerror(errno) << endl;
+    return -1;
+  }
+  FILE* port_file = fopen(port_filename.c_str(), "w");
+  if (port_file == NULL) {
+    cerr << "Run(): fopen() failed: " << strerror(errno) << endl;
+    return -1;
+  }
+  FILE* job_id_file = fopen(job_id_filename.c_str(), "w");
+  if (job_id_file == NULL) {
+    cerr << "Run(): fopen() failed: " << strerror(errno) << endl;
+    return -1;
+  }
+
+  string ip_address;
+  if (GetInfinibandIP(ip_address)) {
+    cerr << "Run(): failed to obtain infiniband ip address from interface ib0"
+      << endl;
+    return -1;
+  }
+  cout << "ip address: " << ip_address << endl;
+  if (fprintf(ip_file, "%s\n", ip_address.c_str()) < 0) {
+    cerr << "Run(): fprintf() error while writing ip." << endl;
+    return -1;
+  }
+  if (fprintf(port_file, "%d\n", port_) < 0) {
+    cerr << "Run(): fprintf() error while writing port." << endl;
+    return -1;
+  }
+  char* job_id = getenv("LSB_JOBID");
+  if (job_id == NULL) {
+    cerr << "Run(): LSB_JOBID not available." << endl;
+    return -1;
+  }
+  if (fprintf(job_id_file, "%s\n", job_id) < 0) {
+    cerr << "Run(): fprintf() error while writing LSF job id." << endl;
+    return -1;
+  }
+
+  fclose(ip_file);
+  fclose(port_file);
+  fclose(job_id_file);
+}
+
+int TestServer::GetInfinibandIP(string& ip_address) {
+  struct ifaddrs *ifaddr, *ifa;
+  int family, s, n;
+  char host[NI_MAXHOST];
+
+  if (getifaddrs(&ifaddr) == -1) {
+    cerr << "getifaddrs() error: " << strerror(errno) << endl;
+    return -1;
+  }
+
+  /* Walk through linked list, maintaining head pointer so we
+   *               can free list later */
+
+  bool ip_found = false;
+  for (ifa = ifaddr, n = 0; ifa != NULL; ifa = ifa->ifa_next, n++) {
+    if (ifa->ifa_addr == NULL)
+      continue;
+
+    if (strncmp(ifa->ifa_name, "ib0", 3) == 0 &&
+        ifa->ifa_addr->sa_family == AF_INET) {
+
+      s = getnameinfo(ifa->ifa_addr,
+          sizeof(*ifa->ifa_addr),
+          host, NI_MAXHOST,
+          NULL, 0, NI_NUMERICHOST);
+      if (s != 0) {
+        cerr << "getnameinfo() failed: " << gai_strerror(s) << endl;
+        return -1;
+      }
+
+      ip_found = true;
+      ip_address = host;
+    }
+  }
+
+  if (ip_found) {
+    return 0;
+  } else {
+    cerr << "Infiniband ip address not found." << endl;
+    return -1;
+  }
 }
 
 void TestServer::DestroyListener() {
