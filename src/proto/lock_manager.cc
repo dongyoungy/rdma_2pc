@@ -1,26 +1,42 @@
-#include "test_server.h"
+#include "lock_manager.h"
 
-namespace rdma { namespace test {
+namespace rdma { namespace proto {
 
 // constructor
-TestServer::TestServer(const string& work_dir, size_t data_size) {
+LockManager::LockManager(const string& work_dir, uint32_t rank,
+    int num_manager, int num_lock_object, int lock_mode) {
   work_dir_                 = work_dir;
-  buffer_                   = new char[data_size];
-  semaphore_                = 0;
+  rank_                     = rank;
+  num_manager_              = num_manager;
+  num_lock_object_          = num_lock_object;
+  lock_table_               = new uint64_t[num_lock_object_];
   listener_                 = NULL;
   event_channel_            = NULL;
   registered_memory_region_ = NULL;
   port_                     = 0;
-  data_size_                = data_size;
+  lock_mode_                = lock_mode;
+
+  // initialize lock table with 0
+  memset(lock_table_, 0x00, num_lock_object_*sizeof(uint64_t));
+
+  // initialize local lock mutex
+  pthread_mutex_init(&lock_mutex_, NULL);
 }
 
 // destructor
-TestServer::~TestServer() {
-  if (buffer_)
-    delete[] buffer_;
+LockManager::~LockManager() {
+  if (lock_table_)
+    delete[] lock_table_;
+
+  // destroy mutex and free the resource
+  pthread_mutex_destroy(&lock_mutex_);
 }
 
-int TestServer::Run() {
+int LockManager::GetID() const {
+  return rank_;
+}
+
+int LockManager::Initialize() {
   memset(&address_, 0x00, sizeof(address_));
   address_.sin6_family = AF_INET6;
 
@@ -43,14 +59,17 @@ int TestServer::Run() {
     return -1;
   }
   port_ = ntohs(rdma_get_src_port(listener_));
-  cout << "listning on port " << port_ << endl;
+  cout << "LockManager " << rank_ <<  " listening on port " << port_ << endl;
 
-  // print ip,port,lsf job id in the working directory
+  // print ip,port of lock manager in the working directory
   if (PrintInfo()) {
     cerr << "PrintInfo() error." << endl;
     return -1;
   }
+  return 0;
+}
 
+int LockManager::Run() {
   struct rdma_cm_event* event = NULL;
   while (rdma_get_cm_event(event_channel_, &event) == 0) {
     struct rdma_cm_event current_event;
@@ -64,26 +83,51 @@ int TestServer::Run() {
   return 0;
 }
 
-int TestServer::PrintInfo() {
-  // write ip, port (infiniband) and current LSF job id in the work dir
+int LockManager::RegisterUser(int user_id, LockSimulator* user) {
+  user_map[user_id] = user;
+  return 0;
+}
+
+int LockManager::InitializeLockClients() {
+  for (int i = 0; i < num_manager_; ++i) {
+    LockClient* client = new LockClient(work_dir_, this, i);
+    pthread_t* client_thread = new pthread_t;
+
+    if (pthread_create(client_thread, NULL,
+          &LockManager::RunLockClient, (void*)client)) {
+      cerr << "pthread_create() for LockClient failed." << endl;
+      return -1;
+    }
+
+    lock_clients_.push_back(client);
+    lock_client_threads_.push_back(client_thread);
+  }
+  return 0;
+}
+
+int LockManager::PrintInfo() {
+  // write ip, port (infiniband) of lock manager in the work dir
 
   // open files
-  string ip_filename = work_dir_ + "/server.ip";
-  string port_filename = work_dir_ + "/server.port";
-  string job_id_filename = work_dir_ + "/server.jobid";
-  FILE* ip_file = fopen(ip_filename.c_str(), "w");
+  char ip_filename[256];
+  char port_filename[256];
+  if (sprintf(ip_filename, "%s/lm%04d.ip", work_dir_.c_str(), rank_) < 0) {
+    cerr << "PrintInfo(): sprintf() failed." << endl;
+    return -1;
+  }
+  if (sprintf(port_filename, "%s/lm%04d.port", work_dir_.c_str(), rank_) < 0) {
+    cerr << "PrintInfo(): sprintf() failed." << endl;
+    return -1;
+  }
+
+  FILE* ip_file = fopen(ip_filename, "w");
   if (ip_file == NULL) {
-    cerr << "Run(): fopen() failed: " << strerror(errno) << endl;
+    cerr << "PrintInfo(): fopen() failed: " << strerror(errno) << endl;
     return -1;
   }
-  FILE* port_file = fopen(port_filename.c_str(), "w");
+  FILE* port_file = fopen(port_filename, "w");
   if (port_file == NULL) {
-    cerr << "Run(): fopen() failed: " << strerror(errno) << endl;
-    return -1;
-  }
-  FILE* job_id_file = fopen(job_id_filename.c_str(), "w");
-  if (job_id_file == NULL) {
-    cerr << "Run(): fopen() failed: " << strerror(errno) << endl;
+    cerr << "PrintInfo(): fopen() failed: " << strerror(errno) << endl;
     return -1;
   }
 
@@ -102,22 +146,12 @@ int TestServer::PrintInfo() {
     cerr << "Run(): fprintf() error while writing port." << endl;
     return -1;
   }
-  char* job_id = getenv("LSB_JOBID");
-  if (job_id == NULL) {
-    cerr << "Run(): LSB_JOBID not available." << endl;
-    return -1;
-  }
-  if (fprintf(job_id_file, "%s\n", job_id) < 0) {
-    cerr << "Run(): fprintf() error while writing LSF job id." << endl;
-    return -1;
-  }
 
   fclose(ip_file);
   fclose(port_file);
-  fclose(job_id_file);
 }
 
-int TestServer::GetInfinibandIP(string& ip_address) {
+int LockManager::GetInfinibandIP(string& ip_address) {
   struct ifaddrs *ifaddr, *ifa;
   int family, s, n;
   char host[NI_MAXHOST];
@@ -160,27 +194,25 @@ int TestServer::GetInfinibandIP(string& ip_address) {
   }
 }
 
-void TestServer::DestroyListener() {
+void LockManager::DestroyListener() {
   if (listener_)
     rdma_destroy_id(listener_);
   if (event_channel_)
     rdma_destroy_event_channel(event_channel_);
 }
 
-void TestServer::Stop() {
+void LockManager::Stop() {
   DestroyListener();
   exit(0);
 }
 
 // Currently the server registers same memory region for each client.
-int TestServer::RegisterMemoryRegion(Context* context) {
+int LockManager::RegisterMemoryRegion(Context* context) {
 
   context->send_message = new Message;
   context->receive_message = new Message;
 
-  semaphore_ = 0; // init to 0
-  context->server_semaphore = &semaphore_;
-  context->server_data = buffer_;
+  context->lock_table = lock_table_;
 
   context->send_mr = ibv_reg_mr(context->protection_domain,
       context->send_message,
@@ -198,44 +230,40 @@ int TestServer::RegisterMemoryRegion(Context* context) {
     cerr << "ibv_reg_mr() failed for receive_mr." << endl;
     return -1;
   }
-  context->rdma_server_semaphore = ibv_reg_mr(context->protection_domain,
-      context->server_semaphore,
-      sizeof(*context->server_semaphore),
+  context->lock_table_mr = ibv_reg_mr(context->protection_domain,
+      context->lock_table,
+      num_lock_object_*sizeof(uint64_t),
       IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ |
       IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_ATOMIC);
-  if (context->rdma_server_semaphore == NULL) {
-    cerr << "ibv_reg_mr() failed for rdma_server_semaphore." << endl;
+  if (context->lock_table_mr == NULL) {
+    cerr << "ibv_reg_mr() failed for lock_table_mr." << endl;
     return -1;
   }
-  context->rdma_server_data = ibv_reg_mr(context->protection_domain,
-      context->server_data,
-      data_size_,
-      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ |
-      IBV_ACCESS_REMOTE_WRITE);
-  if (context->rdma_server_data == NULL) {
-    cerr << "ibv_reg_mr() failed for rdma_server_data." << endl;
-    return -1;
-  }
-
-  context->rdma_local_mr = NULL;
-  context->rdma_remote_mr = NULL;
 
   return 0;
 }
 
-int TestServer::HandleConnectRequest(struct rdma_cm_id* id) {
+int LockManager::HandleConnectRequest(struct rdma_cm_id* id) {
   Context* context = BuildContext(id);
   if (context == NULL) {
     cerr << "BuildContext() failed." << endl;
     return -1;
   }
-  struct ibv_qp_init_attr queue_pair_attributes;
+  struct ibv_exp_qp_init_attr queue_pair_attributes;
   BuildQueuePairAttr(context, &queue_pair_attributes);
 
-  if (rdma_create_qp(id, context->protection_domain, &queue_pair_attributes)) {
-    cerr << "rdma_create_qp() failed: " << strerror(errno) << endl;
+  //if (rdma_create_qp(id, context->protection_domain, &queue_pair_attributes)) {
+    //cerr << "rdma_create_qp() failed: " << strerror(errno) << endl;
+    //return -1;
+  //}
+
+  struct ibv_qp* queue_pair = ibv_exp_create_qp(id->verbs,
+      &queue_pair_attributes);
+  if (queue_pair == NULL) {
+    cerr << "ibv_exp_create_qp() failed." << endl;
     return -1;
   }
+  id->qp = queue_pair;
 
   // set context for connection
   id->context = context;
@@ -269,14 +297,14 @@ int TestServer::HandleConnectRequest(struct rdma_cm_id* id) {
   return 0;
 }
 
-int TestServer::HandleConnection(Context* context) {
+int LockManager::HandleConnection(Context* context) {
   cout << "Client connected." << endl;
   context->connected = true;
 
   return 0;
 }
 
-int TestServer::HandleDisconnect(Context* context) {
+int LockManager::HandleDisconnect(Context* context) {
   // rdma_destroy_qp() causes seg fault when client disconnects. why?
   //rdma_destroy_qp(context->id);
 
@@ -284,14 +312,8 @@ int TestServer::HandleDisconnect(Context* context) {
     ibv_dereg_mr(context->send_mr);
   if (context->receive_mr)
     ibv_dereg_mr(context->receive_mr);
-  if (context->rdma_local_mr)
-    ibv_dereg_mr(context->rdma_local_mr);
-  if (context->rdma_remote_mr)
-    ibv_dereg_mr(context->rdma_remote_mr);
-  if (context->rdma_server_semaphore)
-    ibv_dereg_mr(context->rdma_server_semaphore);
-  if (context->rdma_server_data)
-    ibv_dereg_mr(context->rdma_server_data);
+  if (context->lock_table_mr)
+    ibv_dereg_mr(context->lock_table_mr);
 
   delete context->send_message;
   delete context->receive_message;
@@ -305,35 +327,176 @@ int TestServer::HandleDisconnect(Context* context) {
   return 0;
 }
 
-// Send local RDMA semaphore memory region to client.
-int TestServer::SendSemaphoreMemoryRegion(Context* context) {
-  context->send_message->type = Message::MR_SEMAPHORE_INFO;
-  memcpy(&context->send_message->memory_region, context->rdma_server_semaphore,
-      sizeof(context->send_message->memory_region));
+// Send local lock table memory region to client.
+int LockManager::SendLockTableMemoryRegion(Context* context) {
+  context->send_message->type = Message::LOCK_TABLE_MR;
+  memcpy(&context->send_message->lock_table_mr, context->lock_table_mr,
+      sizeof(context->send_message->lock_table_mr));
   if (SendMessage(context)) {
-    cerr << "SendSemaphoreMemoryRegion(): SendMessage() failed." << endl;
+    cerr << "SendLockTableMemoryRegion(): SendMessage() failed." << endl;
     return -1;
   }
 
-  cout << "SendSemaphoreMemoryRegion(): memory region sent." << endl;
+  cout << "SendLockTableMemoryRegion(): memory region sent." << endl;
   return 0;
 }
 
-// Send local RDMA semaphore memory region to client.
-int TestServer::SendDataMemoryRegion(Context* context) {
-  context->send_message->type = Message::MR_DATA_INFO;
-  memcpy(&context->send_message->memory_region, context->rdma_server_data,
-      sizeof(context->send_message->memory_region));
+// Send lock request result to client.
+int LockManager::SendLockRequestResult(Context* context, int user_id,
+    int lock_type, int obj_index, bool result) {
+  context->send_message->type        = Message::LOCK_REQUEST_RESULT;
+  context->send_message->user_id     = user_id;
+  context->send_message->lock_type   = lock_type;
+  context->send_message->obj_index   = obj_index;
+  context->send_message->lock_result = result;
   if (SendMessage(context)) {
-    cerr << "SendDataMemoryRegion(): SendMessage() failed." << endl;
+    cerr << "SendLockRequestResult(): SendMessage() failed." << endl;
     return -1;
   }
 
-  cout << "SendDataMemoryRegion(): memory region sent." << endl;
+  //cout << "SendLockRequestResult(): memory region sent." << endl;
   return 0;
 }
 
-int TestServer::SendMessage(Context* context) {
+// Send unlock request result to client.
+int LockManager::SendUnlockRequestResult(Context* context, int user_id,
+    int lock_type, int obj_index, bool result) {
+  context->send_message->type        = Message::UNLOCK_REQUEST_RESULT;
+  context->send_message->user_id     = user_id;
+  context->send_message->lock_type   = lock_type;
+  context->send_message->obj_index   = obj_index;
+  context->send_message->lock_result = result;
+  if (SendMessage(context)) {
+    cerr << "SendUnlockRequestResult(): SendMessage() failed." << endl;
+    return -1;
+  }
+
+  //cout << "SendUnlockRequestResult(): memory region sent." << endl;
+  return 0;
+}
+
+int LockManager::Lock(int user_id, int manager_id, int lock_type,
+    int obj_index) {
+  LockClient* lock_client = lock_clients_[manager_id];
+
+  return lock_client->RequestLock(user_id, lock_type, obj_index, lock_mode_);
+}
+
+int LockManager::Unlock(int user_id, int manager_id, int lock_type,
+    int obj_index) {
+  LockClient* lock_client = lock_clients_[manager_id];
+
+  return lock_client->RequestUnlock(user_id, lock_type, obj_index);
+}
+
+int LockManager::LockLocally(Context* context) {
+  bool lock_result = false;
+  int user_id   = context->receive_message->user_id;
+  int obj_index = context->receive_message->obj_index;
+  int lock_type = context->receive_message->lock_type;
+  uint64_t* lock_object = (lock_table_+obj_index);
+  uint32_t exclusive, shared;
+  exclusive = (uint32_t)((*lock_object)>>32);
+  shared = (uint32_t)(*lock_object);
+
+  // lock locally on lock table
+  pthread_mutex_lock(&lock_mutex_);
+
+  // if shared lock is requested
+  if (lock_type == LockManager::SHARED) {
+    if (exclusive == 0) {
+      ++shared;
+      *lock_object = ((uint64_t)exclusive) << 32 | shared;
+      lock_result = true;
+    } else {
+      lock_result = false;
+    }
+  } else if (lock_type == LockManager::EXCLUSIVE) {
+    // if exclusive lock is requested
+    if (exclusive == 0 && shared == 0) {
+      exclusive = context->receive_message->user_id;
+      *lock_object = ((uint64_t)exclusive) << 32 | shared;
+      lock_result = true;
+    } else {
+      lock_result = false;
+    }
+  }
+
+  // unlock locally on lock table
+  pthread_mutex_unlock(&lock_mutex_);
+
+  // send result back to the client
+  if (SendLockRequestResult(context, user_id, lock_type, obj_index,
+        lock_result)) {
+    cerr << "LockLocally() failed." << endl;
+    return -1;
+  }
+
+  return 0;
+}
+
+int LockManager::UnlockLocally(Context* context) {
+
+  bool lock_result;
+  int user_id   = context->receive_message->user_id;
+  int obj_index = context->receive_message->obj_index;
+  int lock_type = context->receive_message->lock_type;
+  uint64_t* lock_object = (lock_table_+obj_index);
+  uint32_t exclusive, shared;
+  exclusive = (uint32_t)((*lock_object)>>32);
+  shared = (uint32_t)(*lock_object);
+
+  // lock locally on lock table
+  pthread_mutex_lock(&lock_mutex_);
+
+  // unlocking shared lock
+  if (lock_type == LockManager::SHARED) {
+    if (shared > 0) {
+      --shared;
+      *lock_object = ((uint64_t)exclusive) << 32 | shared;
+      lock_result = true;
+    } else {
+      cerr << "client is trying to unlock shared lock with 0 counts." << endl;
+      lock_result = false;
+    }
+  } else if (lock_type == LockManager::EXCLUSIVE) {// if exclusive lock is requested
+    if (exclusive == user_id && shared == 0) {
+      exclusive = 0;
+      *lock_object = ((uint64_t)exclusive) << 32 | shared;
+      lock_result = true;
+    } else {
+      cerr << "client is trying to unlock exclusive lock," <<
+        " which it does not own." << endl;
+      lock_result = false;
+    }
+  }
+
+  // unlock locally on lock table
+  pthread_mutex_unlock(&lock_mutex_);
+
+  // send result back to the client
+  if (SendUnlockRequestResult(context, user_id, lock_type, obj_index,
+        lock_result)) {
+    cerr << "UnlockLocally(): SendUnlockRequestResult() failed." << endl;
+    return -1;
+  }
+
+  return 0;
+}
+
+int LockManager::NotifyLockRequestResult(int user_id, int lock_type,
+    int obj_index, bool result) {
+  LockSimulator* user = user_map[user_id];
+  user->NotifyResult(LockManager::TASK_LOCK, lock_type, obj_index, result);
+}
+
+int LockManager::NotifyUnlockRequestResult(int user_id, int lock_type,
+    int obj_index, bool result) {
+  LockSimulator* user = user_map[user_id];
+  user->NotifyResult(LockManager::TASK_UNLOCK, lock_type, obj_index, result);
+}
+
+int LockManager::SendMessage(Context* context) {
   struct ibv_send_wr send_work_request;
   struct ibv_send_wr* bad_work_request;
   struct ibv_sge sge;
@@ -357,13 +520,13 @@ int TestServer::SendMessage(Context* context) {
     return -1;
   }
 
-  cout << "SendMessage(): message sent." << endl;
+  //cout << "SendMessage(): message sent." << endl;
 
   return 0;
 }
 
 // Post receive to get message from clients
-int TestServer::ReceiveMessage(Context* context) {
+int LockManager::ReceiveMessage(Context* context) {
   struct ibv_recv_wr receive_work_request;
   struct ibv_recv_wr* bad_work_request;
   struct ibv_sge sge;
@@ -390,10 +553,11 @@ int TestServer::ReceiveMessage(Context* context) {
 }
 
 // Builds queue pair attributes
-void TestServer::BuildQueuePairAttr(Context* context,
-    struct ibv_qp_init_attr* attributes) {
+void LockManager::BuildQueuePairAttr(Context* context,
+    struct ibv_exp_qp_init_attr* attributes) {
   memset(attributes, 0x00, sizeof(*attributes));
 
+  attributes->pd               = context->protection_domain;
   attributes->send_cq          = context->completion_queue;
   attributes->recv_cq          = context->completion_queue;
   attributes->qp_type          = IBV_QPT_RC;
@@ -401,9 +565,12 @@ void TestServer::BuildQueuePairAttr(Context* context,
   attributes->cap.max_recv_wr  = 16;
   attributes->cap.max_send_sge = 1;
   attributes->cap.max_recv_sge = 1;
+  attributes->comp_mask        = IBV_EXP_QP_INIT_ATTR_PD | IBV_EXP_QP_INIT_ATTR_CREATE_FLAGS;
+  attributes->max_atomic_arg   = sizeof(uint64_t);
+  attributes->exp_create_flags = IBV_EXP_QP_CREATE_ATOMIC_BE_REPLY;
 }
 
-Context* TestServer::BuildContext(struct rdma_cm_id* id) {
+Context* LockManager::BuildContext(struct rdma_cm_id* id) {
   // create new context for the connection
   Context* new_context = new Context;
   new_context->server = this;
@@ -432,7 +599,7 @@ Context* TestServer::BuildContext(struct rdma_cm_id* id) {
   }
   // create completion queue poller thread
   if (pthread_create(&new_context->cq_poller_thread, NULL,
-        &TestServer::PollCompletionQueue, new_context)) {
+        &LockManager::PollCompletionQueue, new_context)) {
      cerr << "pthread_create() failed." << endl;
      return NULL;
   }
@@ -441,7 +608,7 @@ Context* TestServer::BuildContext(struct rdma_cm_id* id) {
 }
 
 // Handles RDMA connection manager events
-int TestServer::HandleEvent(struct rdma_cm_event* event) {
+int LockManager::HandleEvent(struct rdma_cm_event* event) {
   int ret = 0;
   if (event->event == RDMA_CM_EVENT_CONNECT_REQUEST) {
     ret = HandleConnectRequest(event->id);
@@ -458,7 +625,7 @@ int TestServer::HandleEvent(struct rdma_cm_event* event) {
 }
 
 // Handles work completions.
-int TestServer::HandleWorkCompletion(struct ibv_wc* work_completion) {
+int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
   Context* context = (Context *)work_completion->wr_id;
 
   if (work_completion->status != IBV_WC_SUCCESS) {
@@ -471,10 +638,12 @@ int TestServer::HandleWorkCompletion(struct ibv_wc* work_completion) {
     ReceiveMessage(context);
 
     // if client is requesting semaphore MR
-    if (context->receive_message->type == Message::MR_SEMAPHORE_REQUEST) {
-      SendSemaphoreMemoryRegion(context);
-    } else if (context->receive_message->type == Message::MR_DATA_REQUEST) {
-      SendDataMemoryRegion(context);
+    if (context->receive_message->type == Message::LOCK_TABLE_MR_REQUEST) {
+      SendLockTableMemoryRegion(context);
+    } else if (context->receive_message->type == Message::LOCK_REQUEST) {
+      LockLocally(context);
+    } else if (context->receive_message->type == Message::UNLOCK_REQUEST) {
+      UnlockLocally(context);
     } else {
       cerr << "Unknown message type: " << context->receive_message->type
         << endl;
@@ -484,7 +653,7 @@ int TestServer::HandleWorkCompletion(struct ibv_wc* work_completion) {
 }
 
 // Polls work completion from completion queue
-void* TestServer::PollCompletionQueue(void* arg) {
+void* LockManager::PollCompletionQueue(void* arg) {
   struct ibv_cq* cq;
   struct ibv_wc wc;
   Context* queue_context;
@@ -506,6 +675,11 @@ void* TestServer::PollCompletionQueue(void* arg) {
   }
 
   return NULL;
+}
+
+void* LockManager::RunLockClient(void* args) {
+  LockClient* client = static_cast<LockClient*>(args);
+  client->Run();
 }
 
 

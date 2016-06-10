@@ -427,7 +427,7 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
 
     if (num_trial_ >= TOTAL_TRIAL) {
       cout << "Average CAS Time = " << total_cas_time_ /(double)TOTAL_TRIAL <<
-        endl;
+        " ns" << endl;
       exit(0);
     }
 
@@ -451,7 +451,7 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     if (difftime(test_end_, test_start_) >= test_duration_) {
       cout << "Data size = " << data_size_ << " bytes" << endl;
       cout << "Average read time = " <<
-        total_read_time_ / (double)num_trial_ <<
+        total_read_time_ / (double)num_trial_ << " ns" <<
         endl;
       cout << "# reads = " << num_trial_ << endl;
       exit(0);

@@ -6,6 +6,8 @@ if int(debug):
 else:
     env.Append(CCFLAGS='-O2')
 binaries = []
-b = SConscript('src/test/SConscript', variant_dir='build', duplicate=0, exports='env')
+b = SConscript('src/test/SConscript', variant_dir='build/test', duplicate=0, exports='env')
+binaries.append(b)
+b = SConscript('src/proto/SConscript', variant_dir='build/proto', duplicate=0, exports='env')
 binaries.append(b)
 env.Install('bin', binaries)

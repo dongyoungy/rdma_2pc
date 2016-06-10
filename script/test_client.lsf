@@ -10,7 +10,7 @@
 #BSUB -o /gpfs/gpfs0/groups/mozafari/dyoon/work/lsf_log/test_client/%J.o                    # output file name in which %J is replaced by the job ID
 #BSUB -q normal                         # use the normal queue
 
-mpirun.lsf --mca pml ob1 --mca btl self,sm,openib /gpfs/gpfs0/groups/mozafari/dyoon/work/rdma_2pc/bin/test_client /gpfs/gpfs0/groups/mozafari/dyoon/work/temp 1 60 4096
+mpirun.lsf --mca pml ob1 --mca btl self,sm,openib /gpfs/gpfs0/groups/mozafari/dyoon/work/rdma_2pc/bin/test_client /gpfs/gpfs0/groups/mozafari/dyoon/work/temp
 
 # end of bsub
 
