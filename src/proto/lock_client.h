@@ -1,7 +1,9 @@
 #ifndef RDMA_PROTO_LOCKCLIENT_H
 #define RDMA_PROTO_LOCKCLIENT_H
 
+#include <iostream>
 #include <stdlib.h>
+#include <pthread.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/types.h>
@@ -10,7 +12,6 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <rdma/rdma_cma.h>
-#include <iostream>
 
 #include "lock_manager.h"
 #include "context.h"
@@ -19,10 +20,13 @@ using namespace std;
 
 namespace rdma { namespace proto {
 
+class LockSimulator;
+
 class LockClient {
 
   public:
     LockClient(const string& work_dir, LockManager* local_manager,
+        LockSimulator* local_user,
         int remote_lm_id);
     ~LockClient();
     int Run();
@@ -60,6 +64,7 @@ class LockClient {
     static const int TEST_MODE_DATA = 1;
 
     LockManager* local_manager_;
+    LockSimulator* local_user_;
     Context* context_;
     int remote_lm_id_;
     int test_duration_;
@@ -79,6 +84,7 @@ class LockClient {
     size_t data_size_;
     time_t test_start_;
     time_t test_end_;
+    pthread_mutex_t lock_mutex_;
 };
 
 }}

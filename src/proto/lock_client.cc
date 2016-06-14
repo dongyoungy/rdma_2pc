@@ -4,6 +4,7 @@ namespace rdma { namespace proto {
 
 // constructor
 LockClient::LockClient(const string& work_dir, LockManager* local_manager,
+    LockSimulator* local_user,
     int remote_lm_id) {
   work_dir_      = work_dir;
   context_       = NULL;
@@ -11,7 +12,11 @@ LockClient::LockClient(const string& work_dir, LockManager* local_manager,
   connection_    = NULL;
   address_       = NULL;
   local_manager_ = local_manager;
+  local_user_    = local_user;
   remote_lm_id_  = remote_lm_id;
+
+  // initialize local lock mutex
+  pthread_mutex_init(&lock_mutex_, NULL);
 }
 
 // destructor
@@ -141,7 +146,7 @@ int LockClient::HandleAddressResolved(struct rdma_cm_id* id) {
 
   context_ = BuildContext(id);
   if (context_ == NULL) {
-    cerr << "BuildContext() failed." << endl;
+    cerr << "LockClient: BuildContext() failed." << endl;
     return -1;
   }
 
@@ -209,7 +214,7 @@ int LockClient::HandleRouteResolved(struct rdma_cm_id* id) {
 }
 
 int LockClient::HandleConnection(Context* context) {
-  cout << "connected to server." << endl;
+  //cout << "connected to server." << endl;
   context->connected = true;
 
   SendLockTableRequest(context);
@@ -225,8 +230,8 @@ int LockClient::HandleDisconnect(Context* context) {
     ibv_dereg_mr(context->send_mr);
   if (context->receive_mr)
     ibv_dereg_mr(context->receive_mr);
-  if (context->lock_table_mr)
-    ibv_dereg_mr(context->lock_table_mr);
+  //if (context->lock_table_mr)
+    //ibv_dereg_mr(context->lock_table_mr);
   if (context->original_value_mr)
     ibv_dereg_mr(context->original_value_mr);
 
@@ -237,7 +242,7 @@ int LockClient::HandleDisconnect(Context* context) {
 
   delete context;
 
-  cout << "disconnected." << endl;
+  //cout << "disconnected." << endl;
   return 0;
 }
 
@@ -362,28 +367,28 @@ Context* LockClient::BuildContext(struct rdma_cm_id* id) {
   new_context->device_context = id->verbs;
   if ((new_context->protection_domain =
         ibv_alloc_pd(new_context->device_context)) == NULL) {
-    cerr << "ibv_alloc_pd() failed." << endl;
+    cerr << "LockClient: ibv_alloc_pd() failed." << endl;
     return NULL;
   }
   if ((new_context->completion_channel =
         ibv_create_comp_channel(new_context->device_context)) == NULL) {
-    cerr << "ibv_create_comp_channel() failed." << endl;
+    cerr << "LockClient: ibv_create_comp_channel() failed." << endl;
     return NULL;
   }
   if ((new_context->completion_queue =
         ibv_create_cq(new_context->device_context, 64,
           NULL, new_context->completion_channel, 0)) == NULL) {
-    cerr << "ibv_create_cq() failed." << endl;
+    cerr << "LockClient: ibv_create_cq() failed." << endl;
     return NULL;
   }
   if (ibv_req_notify_cq(new_context->completion_queue, 0)) {
-    cerr << "ibv_req_notify_cq() failed." << endl;
+    cerr << "LockClient: ibv_req_notify_cq() failed." << endl;
     return NULL;
   }
   // create completion queue poller thread
   if (pthread_create(&new_context->cq_poller_thread, NULL,
         &LockClient::PollCompletionQueue, new_context)) {
-     cerr << "pthread_create() failed." << endl;
+     cerr << "LockClient: pthread_create() failed." << endl;
      return NULL;
   }
 
@@ -405,7 +410,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
 
     // if received lock table MR info
     if (context->receive_message->type == Message::LOCK_TABLE_MR) {
-      cout << "received lock table MR." << endl;
+      //cout << "received lock table MR." << endl;
       // copy server rdma semaphore region
       context->lock_table_mr = new ibv_mr;
       memcpy(context->lock_table_mr,
@@ -433,7 +438,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
 #endif
     uint32_t exclusive, shared;
     exclusive = (uint32_t)((value)>>32);
-    shared = (uint32_t)shared;
+    shared = (uint32_t)value;
     // it should have been successful since exclusive and shared was 0
     if (exclusive == 0 && shared ==0) {
       local_manager_->NotifyLockRequestResult(context->last_user_id,
@@ -449,9 +454,12 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
   } else if (work_completion->opcode == IBV_WC_FETCH_ADD) {
     // completion of fetch-and-add, i.e. remote shared locking
     uint64_t prev_value = *context->original_value;
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+    uint64_t value = __bswap_constant_64(prev_value);  // Compiler builtin
+#endif
     uint32_t exclusive, shared;
-    exclusive = (uint32_t)((prev_value)>>32);
-    shared = (uint32_t)shared;
+    exclusive = (uint32_t)((value)>>32);
+    shared = (uint32_t)value;
     // it should have been successful since exclusive and shared was 0
     if (exclusive == 0) {
       local_manager_->NotifyLockRequestResult(context->last_user_id,
@@ -497,7 +505,7 @@ int LockClient::SendLockTableRequest(Context* context) {
     return -1;
   }
 
-  cout << "requested lock table MR" << endl;
+  //cout << "requested lock table MR" << endl;
 
   return 0;
 }
@@ -510,6 +518,8 @@ int LockClient::RequestLock(int user_id, int lock_type, int obj_index,
   } else if (lock_mode == LockManager::LOCK_REMOTE) {
     // try locking remotely
     return this->LockRemotely(context_, user_id, lock_type, obj_index);
+  } else {
+    cerr << "Unknown lock mode: " << lock_mode << endl;
   }
 }
 
@@ -540,18 +550,18 @@ int LockClient::LockRemotely(Context* context, int user_id, int lock_type,
   send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
 
   if (lock_type == LockManager::SHARED) {
-    send_work_request.exp_opcode                = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
+    send_work_request.exp_opcode            = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
     send_work_request.wr.atomic.compare_add = 1;
   } else if (lock_type == LockManager::EXCLUSIVE) {
     exclusive = user_id;
     shared = 0;
     uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
-    send_work_request.exp_opcode                = IBV_EXP_WR_ATOMIC_CMP_AND_SWP;
+    send_work_request.exp_opcode            = IBV_EXP_WR_ATOMIC_CMP_AND_SWP;
     send_work_request.wr.atomic.compare_add = (uint64_t)0ULL;
     send_work_request.wr.atomic.swap        = new_value;
   }
   send_work_request.wr.atomic.remote_addr =
-    (uint64_t)context->lock_table_mr->addr;// + (obj_index*sizeof(uint64_t));
+    (uint64_t)context->lock_table_mr->addr + (obj_index*sizeof(uint64_t));
   send_work_request.wr.atomic.rkey        =
     context->lock_table_mr->rkey;
 
@@ -568,30 +578,38 @@ int LockClient::LockRemotely(Context* context, int user_id, int lock_type,
 
 int LockClient::SendLockRequest(Context* context, int user_id,
     int lock_type, int obj_index) {
+
+  pthread_mutex_lock(&lock_mutex_);
   context->send_message->type = Message::LOCK_REQUEST;
   context->send_message->lock_type = lock_type;
   context->send_message->obj_index = obj_index;
   context->send_message->user_id = user_id;
+
   if (SendMessage(context)) {
     cerr << "SendLockRequest(): SendMessage() failed." << endl;
+    pthread_mutex_unlock(&lock_mutex_);
     return -1;
   }
 
+  pthread_mutex_unlock(&lock_mutex_);
   //cout << "SendLockRequest(): lock request sent." << endl;
   return 0;
 }
 
 int LockClient::SendUnlockRequest(Context* context, int user_id,
     int lock_type, int obj_index) {
+  pthread_mutex_lock(&lock_mutex_);
   context->send_message->type = Message::UNLOCK_REQUEST;
   context->send_message->lock_type = lock_type;
   context->send_message->obj_index = obj_index;
   context->send_message->user_id = user_id;
   if (SendMessage(context)) {
+    pthread_mutex_unlock(&lock_mutex_);
     cerr << "SendUnlockRequest(): SendMessage() failed." << endl;
     return -1;
   }
 
+  pthread_mutex_unlock(&lock_mutex_);
   //cout << "SendUnlockRequest(): memory region sent." << endl;
   return 0;
 }

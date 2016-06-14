@@ -24,7 +24,11 @@ class LockSimulator {
         int num_lock_object, int duration, bool verbose);
     void Run();
     int NotifyResult(int task, int lock_type, int obj_index, bool result);
+    int GetID() const;
     int GetState() const;
+    uint64_t GetDuration() const;
+    uint64_t GetTotalNumLocks() const;
+    uint64_t GetTotalNumUnlocks() const;
 
     static const int STATE_IDLE = 0;
     static const int STATE_LOCKING = 1;
@@ -49,6 +53,8 @@ class LockSimulator {
     int request_size_;
     time_t start_time_;
     time_t current_time_;
+    uint64_t total_num_locks_;
+    uint64_t total_num_unlocks_;
 };
 
 }}

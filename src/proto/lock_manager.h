@@ -42,6 +42,7 @@ class LockManager {
         bool result);
     int NotifyUnlockRequestResult(int user_id, int lock_type, int obj_index,
         bool result);
+    int GetLockMode() const;
     void Stop();
     static void* PollCompletionQueue(void* context);
     static void* RunLockClient(void* args);
@@ -54,6 +55,8 @@ class LockManager {
 
     static const int TASK_LOCK = 0;
     static const int TASK_UNLOCK = 1;
+
+    static const int MAX_USER = 65536;
 
   private:
     Context* BuildContext(struct rdma_cm_id* id);
@@ -81,10 +84,11 @@ class LockManager {
     void DestroyListener();
 
     // each client connects to each lock manager in the cluster
-    vector<LockClient*> lock_clients_;
+    map<int, LockClient*> lock_clients_;
     vector<pthread_t*> lock_client_threads_;
 
-    // map for actual user/sclients/simulators
+    // vector for actual user/sclients/simulators
+    vector<LockSimulator*> users;
     map<int, LockSimulator*> user_map;
 
     string work_dir_;

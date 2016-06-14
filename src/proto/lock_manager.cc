@@ -85,22 +85,28 @@ int LockManager::Run() {
 
 int LockManager::RegisterUser(int user_id, LockSimulator* user) {
   user_map[user_id] = user;
+  users.push_back(user);
   return 0;
 }
 
 int LockManager::InitializeLockClients() {
   for (int i = 0; i < num_manager_; ++i) {
-    LockClient* client = new LockClient(work_dir_, this, i);
-    pthread_t* client_thread = new pthread_t;
+    for (int j = 0; j < users.size(); ++j) {
+      LockSimulator* user = users[j];
+      LockClient* client = new LockClient(work_dir_, this, user, i);
+      pthread_t* client_thread = new pthread_t;
 
-    if (pthread_create(client_thread, NULL,
-          &LockManager::RunLockClient, (void*)client)) {
-      cerr << "pthread_create() for LockClient failed." << endl;
-      return -1;
+      if (pthread_create(client_thread, NULL,
+            &LockManager::RunLockClient, (void*)client)) {
+        cerr << "pthread_create() for LockClient failed." << endl;
+        return -1;
+      }
+
+      lock_clients_[MAX_USER*i+user->GetID()] = client;
+      //lock_clients_.push_back(client);
+      lock_client_threads_.push_back(client_thread);
+
     }
-
-    lock_clients_.push_back(client);
-    lock_client_threads_.push_back(client_thread);
   }
   return 0;
 }
@@ -246,7 +252,7 @@ int LockManager::RegisterMemoryRegion(Context* context) {
 int LockManager::HandleConnectRequest(struct rdma_cm_id* id) {
   Context* context = BuildContext(id);
   if (context == NULL) {
-    cerr << "BuildContext() failed." << endl;
+    cerr << "LockManager: BuildContext() failed." << endl;
     return -1;
   }
   struct ibv_exp_qp_init_attr queue_pair_attributes;
@@ -298,7 +304,7 @@ int LockManager::HandleConnectRequest(struct rdma_cm_id* id) {
 }
 
 int LockManager::HandleConnection(Context* context) {
-  cout << "Client connected." << endl;
+  //cout << "Client connected." << endl;
   context->connected = true;
 
   return 0;
@@ -323,7 +329,7 @@ int LockManager::HandleDisconnect(Context* context) {
 
   delete context;
 
-  cout << "client disconnected." << endl;
+  //cout << "client disconnected." << endl;
   return 0;
 }
 
@@ -337,7 +343,7 @@ int LockManager::SendLockTableMemoryRegion(Context* context) {
     return -1;
   }
 
-  cout << "SendLockTableMemoryRegion(): memory region sent." << endl;
+  //cout << "SendLockTableMemoryRegion(): memory region sent." << endl;
   return 0;
 }
 
@@ -377,14 +383,14 @@ int LockManager::SendUnlockRequestResult(Context* context, int user_id,
 
 int LockManager::Lock(int user_id, int manager_id, int lock_type,
     int obj_index) {
-  LockClient* lock_client = lock_clients_[manager_id];
+  LockClient* lock_client = lock_clients_[manager_id*MAX_USER+user_id];
 
   return lock_client->RequestLock(user_id, lock_type, obj_index, lock_mode_);
 }
 
 int LockManager::Unlock(int user_id, int manager_id, int lock_type,
     int obj_index) {
-  LockClient* lock_client = lock_clients_[manager_id];
+  LockClient* lock_client = lock_clients_[manager_id*MAX_USER+user_id];
 
   return lock_client->RequestUnlock(user_id, lock_type, obj_index);
 }
@@ -456,17 +462,17 @@ int LockManager::UnlockLocally(Context* context) {
       *lock_object = ((uint64_t)exclusive) << 32 | shared;
       lock_result = true;
     } else {
-      cerr << "client is trying to unlock shared lock with 0 counts." << endl;
+     //cerr << "client is trying to unlock shared lock with 0 counts." << endl;
       lock_result = false;
     }
   } else if (lock_type == LockManager::EXCLUSIVE) {// if exclusive lock is requested
-    if (exclusive == user_id && shared == 0) {
+    if (exclusive == user_id) {
       exclusive = 0;
       *lock_object = ((uint64_t)exclusive) << 32 | shared;
       lock_result = true;
     } else {
-      cerr << "client is trying to unlock exclusive lock," <<
-        " which it does not own." << endl;
+      //cerr << "client is trying to unlock exclusive lock," <<
+        //" which it does not own." << endl;
       lock_result = false;
     }
   }
@@ -487,13 +493,17 @@ int LockManager::UnlockLocally(Context* context) {
 int LockManager::NotifyLockRequestResult(int user_id, int lock_type,
     int obj_index, bool result) {
   LockSimulator* user = user_map[user_id];
+  pthread_mutex_lock(&lock_mutex_);
   user->NotifyResult(LockManager::TASK_LOCK, lock_type, obj_index, result);
+  pthread_mutex_unlock(&lock_mutex_);
 }
 
 int LockManager::NotifyUnlockRequestResult(int user_id, int lock_type,
     int obj_index, bool result) {
   LockSimulator* user = user_map[user_id];
+  pthread_mutex_lock(&lock_mutex_);
   user->NotifyResult(LockManager::TASK_UNLOCK, lock_type, obj_index, result);
+  pthread_mutex_unlock(&lock_mutex_);
 }
 
 int LockManager::SendMessage(Context* context) {
@@ -579,28 +589,28 @@ Context* LockManager::BuildContext(struct rdma_cm_id* id) {
   new_context->device_context = id->verbs;
   if ((new_context->protection_domain =
         ibv_alloc_pd(new_context->device_context)) == NULL) {
-    cerr << "ibv_alloc_pd() failed." << endl;
+    cerr << "LockManager: ibv_alloc_pd() failed." << endl;
     return NULL;
   }
   if ((new_context->completion_channel =
         ibv_create_comp_channel(new_context->device_context)) == NULL) {
-    cerr << "ibv_create_comp_channel() failed." << endl;
+    cerr << "LockManager: ibv_create_comp_channel() failed." << endl;
     return NULL;
   }
   if ((new_context->completion_queue =
         ibv_create_cq(new_context->device_context, 64,
           NULL, new_context->completion_channel, 0)) == NULL) {
-    cerr << "ibv_create_cq() failed." << endl;
+    cerr << "LockManager: ibv_create_cq() failed." << endl;
     return NULL;
   }
   if (ibv_req_notify_cq(new_context->completion_queue, 0)) {
-    cerr << "ibv_req_notify_cq() failed." << endl;
+    cerr << "LockManager: ibv_req_notify_cq() failed." << endl;
     return NULL;
   }
   // create completion queue poller thread
   if (pthread_create(&new_context->cq_poller_thread, NULL,
         &LockManager::PollCompletionQueue, new_context)) {
-     cerr << "pthread_create() failed." << endl;
+     cerr << "LockManager: pthread_create() failed." << endl;
      return NULL;
   }
 
@@ -675,6 +685,10 @@ void* LockManager::PollCompletionQueue(void* arg) {
   }
 
   return NULL;
+}
+
+int LockManager::GetLockMode() const {
+  return lock_mode_;
 }
 
 void* LockManager::RunLockClient(void* args) {

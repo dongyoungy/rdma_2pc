@@ -14,18 +14,14 @@ void* RunLockManager(void* args);
 
 int main(int argc, char** argv) {
 
-  MPI_Init(&argc, &argv);
-
   if (argc != 6) {
     cout << argv[0] << " <work_dir> <num_lock_object>" <<
       " <num_users> <lock_mode> <duration>" << endl;
     exit(1);
   }
 
-  int num_managers, rank;
-
-  MPI_Comm_size(MPI_COMM_WORLD, &num_managers);
-  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  int num_managers = 1;
+  int rank = 0;
 
   if (1 == htons(1)) {
     cout << "The current machine uses BIG ENDIAN" << endl;
@@ -37,13 +33,6 @@ int main(int argc, char** argv) {
   int num_users = atoi(argv[3]);
   int lock_mode = atoi(argv[4]);
   int duration = atoi(argv[5]);
-
-  string lock_mode_str;
-  if (lock_mode == LockManager::LOCK_LOCAL) {
-    lock_mode_str = "LOCK_MODE_LOCAL";
-  } else if (lock_mode == LockManager::LOCK_REMOTE) {
-    lock_mode_str = "LOCK_MODE_REMOTE";
-  }
 
   if (rank == 0) {
     cout << "Duration = " << duration << " seconds"  << endl;
@@ -97,36 +86,16 @@ int main(int argc, char** argv) {
     }
   }
 
-  int local_sum = 0;
-  int global_sum = 0;
-
-  MPI_Barrier(MPI_COMM_WORLD);
-
   for (int i=0;i<num_managers;++i) {
     if (rank==i) {
-      //cout << "Node = " << rank << endl;
+      cout << "Node = " << rank << endl;
       for (int j=0;j<users.size();++j) {
         LockSimulator* simulator = users[j];
-        //cout << "Total Lock # = " << simulator->GetTotalNumLocks() << endl;
-        //cout << "Total Unlock # = " << simulator->GetTotalNumUnlocks() << endl;
-        local_sum += simulator->GetTotalNumLocks();
+        cout << "Total Lock # = " << simulator->GetTotalNumLocks() << endl;
+        cout << "Total Unlock # = " << simulator->GetTotalNumUnlocks() << endl;
       }
-      //MPI_Barrier(MPI_COMM_WORLD);
     }
   }
-
-  MPI_Barrier(MPI_COMM_WORLD);
-
-  MPI_Reduce(&local_sum, &global_sum, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-
-  MPI_Barrier(MPI_COMM_WORLD);
-  if (rank==0) {
-    cout << "Global Total Lock # = " << global_sum << "(# nodes: " <<
-      num_managers << ", duration: " <<
-      duration << ", mode: " << lock_mode_str << ")" << endl;
-  }
-
-  MPI_Finalize();
 }
 
 void* RunLockManager(void* args) {
