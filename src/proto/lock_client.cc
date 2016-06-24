@@ -23,6 +23,10 @@ LockClient::LockClient(const string& work_dir, LockManager* local_manager,
 LockClient::~LockClient() {
 }
 
+Context* LockClient::GetContext() {
+  return context_;
+}
+
 int LockClient::Run() {
   // read server address from file
   if (ReadServerAddress()) {
@@ -439,17 +443,37 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     uint32_t exclusive, shared;
     exclusive = (uint32_t)((value)>>32);
     shared = (uint32_t)value;
-    // it should have been successful since exclusive and shared was 0
-    if (exclusive == 0 && shared ==0) {
-      local_manager_->NotifyLockRequestResult(context->last_user_id,
-          context->last_lock_type,
-          context->last_obj_index,
-          true);
-    } else {
-      local_manager_->NotifyLockRequestResult(context->last_user_id,
-          context->last_lock_type,
-          context->last_obj_index,
-          false);
+
+    if (context->last_lock_task == LockManager::TASK_LOCK) {
+      // it should have been successful since exclusive and shared was 0
+      if (exclusive == 0 && shared == 0) {
+        local_manager_->NotifyLockRequestResult(context->last_user_id,
+            context->last_lock_type,
+            context->last_obj_index,
+            LockManager::RESULT_SUCCESS);
+      } else {
+        local_manager_->NotifyLockRequestResult(context->last_user_id,
+            context->last_lock_type,
+            context->last_obj_index,
+            LockManager::RESULT_FAILURE);
+      }
+    } else if (context->last_lock_task == LockManager::TASK_UNLOCK) {
+      if (exclusive == context->last_user_id && shared == 0) {
+        local_manager_->NotifyUnlockRequestResult(context->last_user_id,
+            context->last_lock_type,
+            context->last_obj_index,
+            LockManager::RESULT_SUCCESS);
+      } else if (exclusive == context->last_user_id && shared != 0) {
+        local_manager_->NotifyUnlockRequestResult(context->last_user_id,
+            context->last_lock_type,
+            context->last_obj_index,
+            LockManager::RESULT_RETRY);
+      } else {
+        local_manager_->NotifyUnlockRequestResult(context->last_user_id,
+            context->last_lock_type,
+            context->last_obj_index,
+            LockManager::RESULT_FAILURE);
+      }
     }
   } else if (work_completion->opcode == IBV_WC_FETCH_ADD) {
     // completion of fetch-and-add, i.e. remote shared locking
@@ -460,17 +484,26 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     uint32_t exclusive, shared;
     exclusive = (uint32_t)((value)>>32);
     shared = (uint32_t)value;
-    // it should have been successful since exclusive and shared was 0
-    if (exclusive == 0) {
-      local_manager_->NotifyLockRequestResult(context->last_user_id,
+
+    if (context->last_lock_task == LockManager::TASK_LOCK) {
+      // it should have been successful since exclusive and shared was 0
+      if (exclusive == 0) {
+        local_manager_->NotifyLockRequestResult(context->last_user_id,
+            context->last_lock_type,
+            context->last_obj_index,
+            LockManager::RESULT_SUCCESS);
+      } else {
+        local_manager_->NotifyLockRequestResult(context->last_user_id,
+            context->last_lock_type,
+            context->last_obj_index,
+            LockManager::RESULT_FAILURE);
+      }
+    } else if (context->last_lock_task == LockManager::TASK_UNLOCK) {
+      // unlock always succeeds. (really?)
+      local_manager_->NotifyUnlockRequestResult(context->last_user_id,
           context->last_lock_type,
           context->last_obj_index,
-          true);
-    } else {
-      local_manager_->NotifyLockRequestResult(context->last_user_id,
-          context->last_lock_type,
-          context->last_obj_index,
-          false);
+          LockManager::RESULT_SUCCESS);
     }
   }
 
@@ -519,12 +552,19 @@ int LockClient::RequestLock(int user_id, int lock_type, int obj_index,
     // try locking remotely
     return this->LockRemotely(context_, user_id, lock_type, obj_index);
   } else {
-    cerr << "Unknown lock mode: " << lock_mode << endl;
+    cerr << "RequestLock(): Unknown lock mode: " << lock_mode << endl;
   }
 }
 
-int LockClient::RequestUnlock(int user_id, int lock_type, int obj_index) {
-  return this->SendUnlockRequest(context_, user_id, lock_type, obj_index);
+int LockClient::RequestUnlock(int user_id, int lock_type, int obj_index,
+    int lock_mode) {
+  if (lock_mode == LockManager::LOCK_LOCAL) {
+    return this->SendUnlockRequest(context_, user_id, lock_type, obj_index);
+  } else if (lock_mode == LockManager::LOCK_REMOTE) {
+    return this->UnlockRemotely(context_, user_id, lock_type, obj_index);
+  } else {
+    cerr << "RequestUnlock(): Unknown lock mode: " << lock_mode << endl;
+  }
 }
 
 int LockClient::LockRemotely(Context* context, int user_id, int lock_type,
@@ -539,6 +579,7 @@ int LockClient::LockRemotely(Context* context, int user_id, int lock_type,
   context->last_user_id   = user_id;
   context->last_lock_type = lock_type;
   context->last_obj_index = obj_index;
+  context->last_lock_task = LockManager::TASK_LOCK;
 
   sge.addr = (uint64_t)context->original_value;
   sge.length = sizeof(uint64_t);
@@ -560,6 +601,7 @@ int LockClient::LockRemotely(Context* context, int user_id, int lock_type,
     send_work_request.wr.atomic.compare_add = (uint64_t)0ULL;
     send_work_request.wr.atomic.swap        = new_value;
   }
+
   send_work_request.wr.atomic.remote_addr =
     (uint64_t)context->lock_table_mr->addr + (obj_index*sizeof(uint64_t));
   send_work_request.wr.atomic.rkey        =
@@ -575,6 +617,56 @@ int LockClient::LockRemotely(Context* context, int user_id, int lock_type,
   return 0;
 }
 
+
+int LockClient::UnlockRemotely(Context* context, int user_id, int lock_type,
+    int obj_index) {
+  uint32_t exclusive, shared;
+  struct ibv_exp_send_wr send_work_request;
+  struct ibv_exp_send_wr* bad_work_request;
+  struct ibv_sge sge;
+
+  memset(&send_work_request, 0x00, sizeof(send_work_request));
+
+  context->last_user_id   = user_id;
+  context->last_lock_type = lock_type;
+  context->last_obj_index = obj_index;
+  context->last_lock_task = LockManager::TASK_UNLOCK;
+
+  sge.addr = (uint64_t)context->original_value;
+  sge.length = sizeof(uint64_t);
+  sge.lkey = context->original_value_mr->lkey;
+
+  send_work_request.wr_id      = (uint64_t)context;
+  send_work_request.num_sge    = 1;
+  send_work_request.sg_list    = &sge;
+  send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
+
+  if (lock_type == LockManager::SHARED) {
+    send_work_request.exp_opcode            = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
+    send_work_request.wr.atomic.compare_add = -1;
+  } else if (lock_type == LockManager::EXCLUSIVE) {
+    exclusive = 0;
+    shared = 0;
+    uint64_t prev_value = ((uint64_t)user_id) << 32 | shared;
+    send_work_request.exp_opcode            = IBV_EXP_WR_ATOMIC_CMP_AND_SWP;
+    send_work_request.wr.atomic.compare_add = prev_value;
+    send_work_request.wr.atomic.swap        = (uint64_t)0ULL;
+  }
+  send_work_request.wr.atomic.remote_addr =
+    (uint64_t)context->lock_table_mr->addr + (obj_index*sizeof(uint64_t));
+  send_work_request.wr.atomic.rkey        =
+    context->lock_table_mr->rkey;
+
+  int ret = 0;
+  if ((ret = ibv_exp_post_send(context->queue_pair, &send_work_request,
+          &bad_work_request))) {
+    cerr << "UnlockRemotely(): ibv_exp_post_send() failed: " << strerror(ret) <<
+      endl;
+    return -1;
+  }
+
+  return 0;
+}
 
 int LockClient::SendLockRequest(Context* context, int user_id,
     int lock_type, int obj_index) {

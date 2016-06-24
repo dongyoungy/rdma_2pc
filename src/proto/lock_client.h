@@ -31,8 +31,9 @@ class LockClient {
     ~LockClient();
     int Run();
     void Stop();
+    Context* GetContext();
     int RequestLock(int user_id, int lock_type, int obj_index, int lock_mode);
-    int RequestUnlock(int user_id, int lock_type, int obj_index);
+    int RequestUnlock(int user_id, int lock_type, int obj_index, int lock_mode);
 
     static void* PollCompletionQueue(void* context);
 
@@ -46,6 +47,8 @@ class LockClient {
     int SendMessage(Context* context);
     int ReadServerAddress();
     int LockRemotely(Context* context, int user_id, int lock_type,
+        int obj_index);
+    int UnlockRemotely(Context* context, int user_id, int lock_type,
         int obj_index);
     int SendLockTableRequest(Context* context);
     int SendLockRequest(Context* context, int user_id,

@@ -20,7 +20,7 @@ LockManager::LockManager(const string& work_dir, uint32_t rank,
   memset(lock_table_, 0x00, num_lock_object_*sizeof(uint64_t));
 
   // initialize local lock mutex
-  pthread_mutex_init(&lock_mutex_, NULL);
+  lock_mutex_ = new pthread_mutex_t*[num_lock_object_];
 }
 
 // destructor
@@ -29,7 +29,9 @@ LockManager::~LockManager() {
     delete[] lock_table_;
 
   // destroy mutex and free the resource
-  pthread_mutex_destroy(&lock_mutex_);
+  for (int i=0;i<num_lock_object_;++i) {
+    pthread_mutex_destroy(lock_mutex_[i]);
+  }
 }
 
 int LockManager::GetID() const {
@@ -37,6 +39,11 @@ int LockManager::GetID() const {
 }
 
 int LockManager::Initialize() {
+
+  for (int i=0;i<num_lock_object_;++i) {
+    lock_mutex_[i] = new pthread_mutex_t;
+    pthread_mutex_init(lock_mutex_[i], NULL);
+  }
   memset(&address_, 0x00, sizeof(address_));
   address_.sin6_family = AF_INET6;
 
@@ -85,6 +92,9 @@ int LockManager::Run() {
 
 int LockManager::RegisterUser(int user_id, LockSimulator* user) {
   user_map[user_id] = user;
+  pthread_mutex_t* mutex = new pthread_mutex_t;
+  pthread_mutex_init(mutex, NULL);
+  user_mutex_map[user_id] = mutex;
   users.push_back(user);
   return 0;
 }
@@ -258,7 +268,7 @@ int LockManager::HandleConnectRequest(struct rdma_cm_id* id) {
   struct ibv_exp_qp_init_attr queue_pair_attributes;
   BuildQueuePairAttr(context, &queue_pair_attributes);
 
-  //if (rdma_create_qp(id, context->protection_domain, &queue_pair_attributes)) {
+  //if (rdma_create_qp(id, context->protection_domain, &queue_pair_attributes)){
     //cerr << "rdma_create_qp() failed: " << strerror(errno) << endl;
     //return -1;
   //}
@@ -349,7 +359,7 @@ int LockManager::SendLockTableMemoryRegion(Context* context) {
 
 // Send lock request result to client.
 int LockManager::SendLockRequestResult(Context* context, int user_id,
-    int lock_type, int obj_index, bool result) {
+    int lock_type, int obj_index, int result) {
   context->send_message->type        = Message::LOCK_REQUEST_RESULT;
   context->send_message->user_id     = user_id;
   context->send_message->lock_type   = lock_type;
@@ -366,7 +376,7 @@ int LockManager::SendLockRequestResult(Context* context, int user_id,
 
 // Send unlock request result to client.
 int LockManager::SendUnlockRequestResult(Context* context, int user_id,
-    int lock_type, int obj_index, bool result) {
+    int lock_type, int obj_index, int result) {
   context->send_message->type        = Message::UNLOCK_REQUEST_RESULT;
   context->send_message->user_id     = user_id;
   context->send_message->lock_type   = lock_type;
@@ -384,19 +394,30 @@ int LockManager::SendUnlockRequestResult(Context* context, int user_id,
 int LockManager::Lock(int user_id, int manager_id, int lock_type,
     int obj_index) {
   LockClient* lock_client = lock_clients_[manager_id*MAX_USER+user_id];
-
   return lock_client->RequestLock(user_id, lock_type, obj_index, lock_mode_);
+
+  //if (lock_mode_ == LockManager::LOCK_LOCAL && rank_ == manager_id) {
+    //return LockLocally(lock_client->GetContext(), user_id, lock_type, obj_index);
+  //} else {
+    //return lock_client->RequestLock(user_id, lock_type, obj_index, lock_mode_);
+  //}
 }
 
 int LockManager::Unlock(int user_id, int manager_id, int lock_type,
     int obj_index) {
   LockClient* lock_client = lock_clients_[manager_id*MAX_USER+user_id];
+  return lock_client->RequestUnlock(user_id, lock_type, obj_index, lock_mode_);
 
-  return lock_client->RequestUnlock(user_id, lock_type, obj_index);
+  //if (lock_mode_ == LockManager::LOCK_LOCAL && rank_ == manager_id) {
+    //return UnlockLocally(lock_client->GetContext(), user_id, lock_type, obj_index);
+  //}
+  //else {
+    //return lock_client->RequestUnlock(user_id, lock_type, obj_index, lock_mode_);
+  //}
 }
 
 int LockManager::LockLocally(Context* context) {
-  bool lock_result = false;
+  int lock_result = LockManager::RESULT_FAILURE;
   int user_id   = context->receive_message->user_id;
   int obj_index = context->receive_message->obj_index;
   int lock_type = context->receive_message->lock_type;
@@ -406,30 +427,30 @@ int LockManager::LockLocally(Context* context) {
   shared = (uint32_t)(*lock_object);
 
   // lock locally on lock table
-  pthread_mutex_lock(&lock_mutex_);
+  pthread_mutex_lock(lock_mutex_[obj_index]);
 
   // if shared lock is requested
   if (lock_type == LockManager::SHARED) {
     if (exclusive == 0) {
       ++shared;
       *lock_object = ((uint64_t)exclusive) << 32 | shared;
-      lock_result = true;
+      lock_result = LockManager::RESULT_SUCCESS;
     } else {
-      lock_result = false;
+      lock_result = LockManager::RESULT_FAILURE;
     }
   } else if (lock_type == LockManager::EXCLUSIVE) {
     // if exclusive lock is requested
     if (exclusive == 0 && shared == 0) {
       exclusive = context->receive_message->user_id;
       *lock_object = ((uint64_t)exclusive) << 32 | shared;
-      lock_result = true;
+      lock_result = LockManager::RESULT_SUCCESS;
     } else {
-      lock_result = false;
+      lock_result = LockManager::RESULT_FAILURE;
     }
   }
 
   // unlock locally on lock table
-  pthread_mutex_unlock(&lock_mutex_);
+  pthread_mutex_unlock(lock_mutex_[obj_index]);
 
   // send result back to the client
   if (SendLockRequestResult(context, user_id, lock_type, obj_index,
@@ -441,9 +462,45 @@ int LockManager::LockLocally(Context* context) {
   return 0;
 }
 
+int LockManager::LockLocalDirect(int user_id, int lock_type, int obj_index) {
+  int lock_result = LockManager::RESULT_FAILURE;
+  uint64_t* lock_object = (lock_table_+obj_index);
+  uint32_t exclusive, shared;
+  exclusive = (uint32_t)((*lock_object)>>32);
+  shared = (uint32_t)(*lock_object);
+
+  // lock locally on lock table
+  pthread_mutex_lock(lock_mutex_[obj_index]);
+
+  // if shared lock is requested
+  if (lock_type == LockManager::SHARED) {
+    if (exclusive == 0) {
+      ++shared;
+      *lock_object = ((uint64_t)exclusive) << 32 | shared;
+      lock_result = LockManager::RESULT_SUCCESS;
+    } else {
+      lock_result = LockManager::RESULT_FAILURE;
+    }
+  } else if (lock_type == LockManager::EXCLUSIVE) {
+    // if exclusive lock is requested
+    if (exclusive == 0 && shared == 0) {
+      exclusive = user_id;
+      *lock_object = ((uint64_t)exclusive) << 32 | shared;
+      lock_result = LockManager::RESULT_SUCCESS;
+    } else {
+      lock_result = LockManager::RESULT_FAILURE;
+    }
+  }
+
+  // unlock locally on lock table
+  pthread_mutex_unlock(lock_mutex_[obj_index]);
+
+  return lock_result;
+}
+
 int LockManager::UnlockLocally(Context* context) {
 
-  bool lock_result;
+  int lock_result;
   int user_id   = context->receive_message->user_id;
   int obj_index = context->receive_message->obj_index;
   int lock_type = context->receive_message->lock_type;
@@ -453,32 +510,32 @@ int LockManager::UnlockLocally(Context* context) {
   shared = (uint32_t)(*lock_object);
 
   // lock locally on lock table
-  pthread_mutex_lock(&lock_mutex_);
+  pthread_mutex_lock(lock_mutex_[obj_index]);
 
   // unlocking shared lock
   if (lock_type == LockManager::SHARED) {
     if (shared > 0) {
       --shared;
       *lock_object = ((uint64_t)exclusive) << 32 | shared;
-      lock_result = true;
+      lock_result = LockManager::RESULT_SUCCESS;
     } else {
      //cerr << "client is trying to unlock shared lock with 0 counts." << endl;
-      lock_result = false;
+      lock_result = LockManager::RESULT_FAILURE;
     }
   } else if (lock_type == LockManager::EXCLUSIVE) {// if exclusive lock is requested
     if (exclusive == user_id) {
       exclusive = 0;
       *lock_object = ((uint64_t)exclusive) << 32 | shared;
-      lock_result = true;
+      lock_result = LockManager::RESULT_SUCCESS;
     } else {
       //cerr << "client is trying to unlock exclusive lock," <<
         //" which it does not own." << endl;
-      lock_result = false;
+      lock_result = LockManager::RESULT_FAILURE;
     }
   }
 
   // unlock locally on lock table
-  pthread_mutex_unlock(&lock_mutex_);
+  pthread_mutex_unlock(lock_mutex_[obj_index]);
 
   // send result back to the client
   if (SendUnlockRequestResult(context, user_id, lock_type, obj_index,
@@ -490,20 +547,58 @@ int LockManager::UnlockLocally(Context* context) {
   return 0;
 }
 
+int LockManager::UnlockLocalDirect(int user_id, int lock_type, int obj_index) {
+  int lock_result;
+  uint64_t* lock_object = (lock_table_+obj_index);
+  uint32_t exclusive, shared;
+  exclusive = (uint32_t)((*lock_object)>>32);
+  shared = (uint32_t)(*lock_object);
+
+  // lock locally on lock table
+  pthread_mutex_lock(lock_mutex_[obj_index]);
+
+  // unlocking shared lock
+  if (lock_type == LockManager::SHARED) {
+    if (shared > 0) {
+      --shared;
+      *lock_object = ((uint64_t)exclusive) << 32 | shared;
+      lock_result = LockManager::RESULT_SUCCESS;
+    } else {
+     //cerr << "client is trying to unlock shared lock with 0 counts." << endl;
+      lock_result = LockManager::RESULT_FAILURE;
+    }
+  } else if (lock_type == LockManager::EXCLUSIVE) {// if exclusive lock is requested
+    if (exclusive == user_id) {
+      exclusive = 0;
+      *lock_object = ((uint64_t)exclusive) << 32 | shared;
+      lock_result = LockManager::RESULT_SUCCESS;
+    } else {
+      //cerr << "client is trying to unlock exclusive lock," <<
+        //" which it does not own." << endl;
+      lock_result = LockManager::RESULT_FAILURE;
+    }
+  }
+
+  // unlock locally on lock table
+  pthread_mutex_unlock(lock_mutex_[obj_index]);
+
+  return lock_result;
+}
+
 int LockManager::NotifyLockRequestResult(int user_id, int lock_type,
-    int obj_index, bool result) {
+    int obj_index, int result) {
   LockSimulator* user = user_map[user_id];
-  pthread_mutex_lock(&lock_mutex_);
+  //pthread_mutex_lock(user_mutex_map[user_id]);
   user->NotifyResult(LockManager::TASK_LOCK, lock_type, obj_index, result);
-  pthread_mutex_unlock(&lock_mutex_);
+  //pthread_mutex_unlock(user_mutex_map[user_id]);
 }
 
 int LockManager::NotifyUnlockRequestResult(int user_id, int lock_type,
-    int obj_index, bool result) {
+    int obj_index, int result) {
   LockSimulator* user = user_map[user_id];
-  pthread_mutex_lock(&lock_mutex_);
+  //pthread_mutex_lock(user_mutex_map[user_id]);
   user->NotifyResult(LockManager::TASK_UNLOCK, lock_type, obj_index, result);
-  pthread_mutex_unlock(&lock_mutex_);
+  //pthread_mutex_unlock(user_mutex_map[user_id]);
 }
 
 int LockManager::SendMessage(Context* context) {
@@ -575,7 +670,8 @@ void LockManager::BuildQueuePairAttr(Context* context,
   attributes->cap.max_recv_wr  = 16;
   attributes->cap.max_send_sge = 1;
   attributes->cap.max_recv_sge = 1;
-  attributes->comp_mask        = IBV_EXP_QP_INIT_ATTR_PD | IBV_EXP_QP_INIT_ATTR_CREATE_FLAGS;
+  attributes->comp_mask        = IBV_EXP_QP_INIT_ATTR_PD |
+    IBV_EXP_QP_INIT_ATTR_CREATE_FLAGS;
   attributes->max_atomic_arg   = sizeof(uint64_t);
   attributes->exp_create_flags = IBV_EXP_QP_CREATE_ATOMIC_BE_REPLY;
 }

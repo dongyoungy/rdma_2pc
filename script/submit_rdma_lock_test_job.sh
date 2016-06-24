@@ -1,6 +1,7 @@
 #!/bin/bash
 
-for nn in {17..19}
+#for nn in {1..1}
+for nn in 20
 do
   bsub -n $nn < ./rdma_dist_lock_local.lsf
   num_jobs=`bjobs 2>&1 | wc -l`
@@ -13,7 +14,8 @@ do
   done
 done
 
-for nn in {4..20}
+#for nn in {1..1}
+for nn in 20
 do
   bsub -n $nn < ./rdma_dist_lock_remote.lsf
   num_jobs=`bjobs 2>&1 | wc -l`

@@ -3,6 +3,7 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <infiniband/verbs.h>
+#include <sys/times.h>
 #include "mpi.h"
 #include "lock_simulator.h"
 #include "lock_manager.h"
@@ -11,6 +12,14 @@ using namespace std;
 using namespace rdma::proto;
 
 void* RunLockManager(void* args);
+void* RunLockSimulator(void* args);
+void* MeasureCPUUsage(void* args);
+
+struct CPUUsage {
+  double total_cpu;
+  double num_sample;
+  bool terminate;
+};
 
 int main(int argc, char** argv) {
 
@@ -71,7 +80,10 @@ int main(int argc, char** argv) {
         num_managers,
         num_lock_object,
         duration,
-        false // verbose
+        false, // verbose
+        true, // measure lock time
+        false, // is all local?
+        lock_mode
         );
     lock_manager->RegisterUser(rank*num_managers+(i+1), simulator);
     users.push_back(simulator);
@@ -87,7 +99,22 @@ int main(int argc, char** argv) {
   sleep(1);
 
   for (int i=0;i<num_users;++i) {
-    users[i]->Run();
+    //users[i]->Run();
+    pthread_t lock_simulator_thread;
+    if (pthread_create(&lock_simulator_thread, NULL, &RunLockSimulator,
+          (void*)users[i])) {
+      cerr << "pthread_create() error." << endl;
+      exit(-1);
+    }
+  }
+
+  // measure cpu usage
+  pthread_t cpu_measure_thread;
+  CPUUsage usage;
+  if (pthread_create(&cpu_measure_thread, NULL, &MeasureCPUUsage,
+        (void*)&usage)) {
+     cerr << "pthread_create() error." << endl;
+     exit(-1);
   }
 
   for (int i=0;i<users.size();++i) {
@@ -99,6 +126,16 @@ int main(int argc, char** argv) {
 
   int local_sum = 0;
   int global_sum = 0;
+  int local_unlock_sum = 0;
+  int global_unlock_sum = 0;
+  int local_lock_success = 0;
+  int global_lock_success = 0;
+  int local_lock_failure = 0;
+  int global_lock_failure = 0;
+  double local_lock_time = 0;
+  double global_lock_time = 0;
+  double local_cpu_usage = 0;
+  double global_cpu_usage = 0;
 
   MPI_Barrier(MPI_COMM_WORLD);
 
@@ -107,24 +144,57 @@ int main(int argc, char** argv) {
       //cout << "Node = " << rank << endl;
       for (int j=0;j<users.size();++j) {
         LockSimulator* simulator = users[j];
-        //cout << "Total Lock # = " << simulator->GetTotalNumLocks() << endl;
-        //cout << "Total Unlock # = " << simulator->GetTotalNumUnlocks() << endl;
         local_sum += simulator->GetTotalNumLocks();
+        local_unlock_sum += simulator->GetTotalNumUnlocks();
+        local_lock_success += simulator->GetTotalNumLockSuccess();
+        local_lock_failure += simulator->GetTotalNumLockFailure();
+        if (simulator->IsLockTimeMeasured()) {
+          local_lock_time += simulator->GetAverageTimeTakenToLock();
+        }
       }
       //MPI_Barrier(MPI_COMM_WORLD);
     }
   }
 
+  usage.terminate = true;
+  pthread_join(cpu_measure_thread, NULL);
+  local_cpu_usage = usage.total_cpu / usage.num_sample;
   MPI_Barrier(MPI_COMM_WORLD);
 
   MPI_Reduce(&local_sum, &global_sum, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_unlock_sum, &global_unlock_sum, 1, MPI_INT, MPI_SUM, 0,
+      MPI_COMM_WORLD);
+  MPI_Reduce(&local_lock_success, &global_lock_success, 1, MPI_INT, MPI_SUM, 0,
+      MPI_COMM_WORLD);
+  MPI_Reduce(&local_lock_failure, &global_lock_failure, 1, MPI_INT, MPI_SUM, 0,
+      MPI_COMM_WORLD);
+  MPI_Reduce(&local_lock_time, &global_lock_time, 1, MPI_DOUBLE, MPI_SUM, 0,
+      MPI_COMM_WORLD);
+  MPI_Reduce(&local_cpu_usage, &global_cpu_usage, 1, MPI_DOUBLE, MPI_SUM, 0,
+      MPI_COMM_WORLD);
 
   MPI_Barrier(MPI_COMM_WORLD);
   if (rank==0) {
     cout << "Global Total Lock # = " << global_sum << "(# nodes: " <<
       num_managers << ", duration: " <<
       duration << ", mode: " << lock_mode_str << ")" << endl;
+    cout << "Global Total Unlock # = " << global_unlock_sum << "(# nodes: " <<
+      num_managers << ", duration: " <<
+      duration << ", mode: " << lock_mode_str << ")" << endl;
+    cout << "Global Total Lock Success # = " << global_lock_success <<
+      "(# nodes: " << num_managers << ", duration: " <<
+      duration << ", mode: " << lock_mode_str << ")" << endl;
+    cout << "Global Total Lock Failure # = " << global_lock_failure <<
+      "(# nodes: " << num_managers << ", duration: " <<
+      duration << ", mode: " << lock_mode_str << ")" << endl;
+    cout << "Global Average Lock Time = " << global_lock_time / num_managers <<
+      " ns " << "(# nodes: " << num_managers << ", duration: " <<
+      duration << ", mode: " << lock_mode_str << ")" << endl;
+    cout << "Avg CPU Usage = " << global_cpu_usage / num_managers << "% "
+      "(# nodes: " << num_managers << ", duration: " <<
+      duration << ", mode: " << lock_mode_str << ")" << endl;
   }
+
 
   MPI_Finalize();
 }
@@ -132,4 +202,62 @@ int main(int argc, char** argv) {
 void* RunLockManager(void* args) {
   LockManager* lock_manager = (LockManager*)args;
   lock_manager->Run();
+}
+
+void* RunLockSimulator(void* args) {
+  LockSimulator* user = (LockSimulator*)args;
+  user->Run();
+}
+
+void* MeasureCPUUsage(void* args) {
+  CPUUsage* usage = (CPUUsage*)args;
+
+  usage->total_cpu = 0;
+  usage->num_sample = 0;
+  usage->terminate = false;
+
+  int numProcessors;
+  clock_t lastCPU, lastSysCPU, lastUserCPU, now;
+  double percent;
+
+  FILE* file;
+  struct tms timeSample;
+  char line[128];
+
+  lastCPU = times(&timeSample);
+  lastSysCPU = timeSample.tms_stime;
+  lastUserCPU = timeSample.tms_utime;
+
+  file = fopen("/proc/cpuinfo", "r");
+  numProcessors = 0;
+  while(fgets(line, 128, file) != NULL){
+    if (strncmp(line, "processor", 9) == 0) numProcessors++;
+  }
+  fclose(file);
+
+  while (!usage->terminate) {
+    now = times(&timeSample);
+    if (now <= lastCPU || timeSample.tms_stime < lastSysCPU ||
+        timeSample.tms_utime < lastUserCPU){
+      //Overflow detection. Just skip this value.
+      //            percent = -1.0;
+      //
+    }
+    else{
+      percent = (timeSample.tms_stime - lastSysCPU) +
+        (timeSample.tms_utime - lastUserCPU);
+      percent /= (now - lastCPU);
+      //percent /= numProcessors;
+      percent *= 100;
+
+    }
+    lastCPU = now;
+    lastSysCPU = timeSample.tms_stime;
+    lastUserCPU = timeSample.tms_utime;
+
+    usage->total_cpu += percent;
+    usage->num_sample += 1;
+    cout << percent << endl;
+    sleep(1);
+  }
 }

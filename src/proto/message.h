@@ -21,7 +21,7 @@ class Message {
     int user_id;
     uint32_t manager_id; // id of lock manager requesting lock
     int obj_index; // obj index in lock table
-    bool lock_result;
+    int lock_result;
 };
 
 }}

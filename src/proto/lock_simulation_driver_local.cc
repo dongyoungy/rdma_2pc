@@ -2,6 +2,7 @@
 #include <vector>
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <sys/times.h>
 #include <infiniband/verbs.h>
 #include "mpi.h"
 #include "lock_simulator.h"
@@ -11,6 +12,14 @@ using namespace std;
 using namespace rdma::proto;
 
 void* RunLockManager(void* args);
+void* RunLockSimulator(void* args);
+void* MeasureCPUUsage(void* args);
+
+struct CPUUsage {
+  double total_cpu;
+  double num_sample;
+  bool terminate;
+};
 
 int main(int argc, char** argv) {
 
@@ -60,7 +69,10 @@ int main(int argc, char** argv) {
         num_managers,
         num_lock_object,
         duration,
-        false // verbose
+        false, // verbose
+        false, // measure lock
+        true, // is all local?
+        lock_mode
         );
     lock_manager->RegisterUser(rank*num_managers+(i+1), simulator);
     users.push_back(simulator);
@@ -76,7 +88,22 @@ int main(int argc, char** argv) {
   sleep(1);
 
   for (int i=0;i<num_users;++i) {
-    users[i]->Run();
+    //users[i]->Run();
+    pthread_t lock_simulator_thread;
+    if (pthread_create(&lock_simulator_thread, NULL, &RunLockSimulator,
+          (void*)users[i])) {
+      cerr << "pthread_create() error." << endl;
+      exit(-1);
+    }
+  }
+
+  // measure cpu usage
+  pthread_t cpu_measure_thread;
+  CPUUsage usage;
+  if (pthread_create(&cpu_measure_thread, NULL, &MeasureCPUUsage,
+        (void*)&usage)) {
+     cerr << "pthread_create() error." << endl;
+     exit(-1);
   }
 
   for (int i=0;i<users.size();++i) {
@@ -96,9 +123,70 @@ int main(int argc, char** argv) {
       }
     }
   }
+  usage.terminate = true;
+  pthread_join(cpu_measure_thread, NULL);
+  cout << "Avg CPU Usage = " << usage.total_cpu / usage.num_sample << endl;
 }
 
 void* RunLockManager(void* args) {
   LockManager* lock_manager = (LockManager*)args;
   lock_manager->Run();
+}
+
+void* RunLockSimulator(void* args) {
+  LockSimulator* user = (LockSimulator*)args;
+  user->Run();
+}
+
+void* MeasureCPUUsage(void* args) {
+  CPUUsage* usage = (CPUUsage*)args;
+
+  usage->total_cpu = 0;
+  usage->num_sample = 0;
+  usage->terminate = false;
+
+  int numProcessors;
+  clock_t lastCPU, lastSysCPU, lastUserCPU, now;
+  double percent;
+
+  FILE* file;
+  struct tms timeSample;
+  char line[128];
+
+  lastCPU = times(&timeSample);
+  lastSysCPU = timeSample.tms_stime;
+  lastUserCPU = timeSample.tms_utime;
+
+  file = fopen("/proc/cpuinfo", "r");
+  numProcessors = 0;
+  while(fgets(line, 128, file) != NULL){
+    if (strncmp(line, "processor", 9) == 0) numProcessors++;
+  }
+  fclose(file);
+
+  while (!usage->terminate) {
+    now = times(&timeSample);
+    if (now <= lastCPU || timeSample.tms_stime < lastSysCPU ||
+        timeSample.tms_utime < lastUserCPU){
+      //Overflow detection. Just skip this value.
+      //            percent = -1.0;
+      //
+    }
+    else{
+      percent = (timeSample.tms_stime - lastSysCPU) +
+        (timeSample.tms_utime - lastUserCPU);
+      percent /= (now - lastCPU);
+      //percent /= numProcessors;
+      percent *= 100;
+
+    }
+    lastCPU = now;
+    lastSysCPU = timeSample.tms_stime;
+    lastUserCPU = timeSample.tms_utime;
+
+    usage->total_cpu += percent;
+    usage->num_sample += 1;
+    cout << percent << endl;
+    sleep(1);
+  }
 }

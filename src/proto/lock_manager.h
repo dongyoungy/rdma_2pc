@@ -38,10 +38,13 @@ class LockManager {
     int Run();
     int Lock(int user_id, int manager_id, int lock_type, int obj_index);
     int Unlock(int user_id, int manager_id, int lock_type, int obj_index);
+    int LockLocalDirect(int user_id, int lock_type, int obj_index);
+    int UnlockLocalDirect(int user_id, int lock_type, int obj_index);
     int NotifyLockRequestResult(int user_id, int lock_type, int obj_index,
-        bool result);
+        int result);
     int NotifyUnlockRequestResult(int user_id, int lock_type, int obj_index,
-        bool result);
+        int result);
+    int GetID() const;
     int GetLockMode() const;
     void Stop();
     static void* PollCompletionQueue(void* context);
@@ -56,13 +59,16 @@ class LockManager {
     static const int TASK_LOCK = 0;
     static const int TASK_UNLOCK = 1;
 
+    static const int RESULT_SUCCESS = 0;
+    static const int RESULT_FAILURE = 1;
+    static const int RESULT_RETRY = 2;
+
     static const int MAX_USER = 65536;
 
   private:
     Context* BuildContext(struct rdma_cm_id* id);
     int PrintInfo();
     int GetInfinibandIP(string& ip_address);
-    int GetID() const;
     void BuildQueuePairAttr(Context* context,
         struct ibv_exp_qp_init_attr* attributes);
     int BuildConnectionManagerParams(struct rdma_conn_param* params);
@@ -71,9 +77,9 @@ class LockManager {
     int SendMessage(Context* context);
     int SendLockTableMemoryRegion(Context* context);
     int SendLockRequestResult(Context* context, int user_id,
-        int lock_type, int obj_index, bool result);
+        int lock_type, int obj_index, int result);
     int SendUnlockRequestResult(Context* context, int user_id,
-        int lock_type, int obj_index, bool result);
+        int lock_type, int obj_index, int result);
     int LockLocally(Context* context);
     int UnlockLocally(Context* context);
     int HandleWorkCompletion(struct ibv_wc* work_completion);
@@ -90,6 +96,7 @@ class LockManager {
     // vector for actual user/sclients/simulators
     vector<LockSimulator*> users;
     map<int, LockSimulator*> user_map;
+    map<int, pthread_mutex_t*> user_mutex_map;
 
     string work_dir_;
     uint64_t* lock_table_;
@@ -103,7 +110,7 @@ class LockManager {
     struct sockaddr_in6 address_;
     uint16_t port_;
     size_t data_size_;
-    pthread_mutex_t lock_mutex_;
+    pthread_mutex_t** lock_mutex_;
 
 };
 

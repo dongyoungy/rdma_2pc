@@ -27,6 +27,7 @@ struct Context {
   int last_user_id;
   int last_lock_type;
   int last_obj_index;
+  int last_lock_task;
 
   uint64_t* lock_table;
   struct ibv_mr* lock_table_mr;
