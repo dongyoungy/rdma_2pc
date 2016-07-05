@@ -136,6 +136,14 @@ int main(int argc, char** argv) {
   double global_lock_time = 0;
   double local_cpu_usage = 0;
   double global_cpu_usage = 0;
+  double local_remote_exclusive_lock_time = 0;
+  double global_remote_exclusive_lock_time = 0;
+  double local_remote_shared_lock_time = 0;
+  double global_remote_shared_lock_time = 0;
+  double local_local_exclusive_lock_time = 0;
+  double global_local_exclusive_lock_time = 0;
+  double local_local_shared_lock_time = 0;
+  double global_local_shared_lock_time = 0;
 
   MPI_Barrier(MPI_COMM_WORLD);
 
@@ -156,6 +164,15 @@ int main(int argc, char** argv) {
     }
   }
 
+  local_remote_shared_lock_time =
+    lock_manager->GetAverageRemoteSharedLockTime();
+  local_remote_exclusive_lock_time =
+    lock_manager->GetAverageRemoteExclusiveLockTime();
+  local_local_shared_lock_time =
+    lock_manager->GetAverageLocalSharedLockTime();
+  local_local_exclusive_lock_time =
+    lock_manager->GetAverageLocalExclusiveLockTime();
+
   usage.terminate = true;
   pthread_join(cpu_measure_thread, NULL);
   local_cpu_usage = usage.total_cpu / usage.num_sample;
@@ -172,6 +189,18 @@ int main(int argc, char** argv) {
       MPI_COMM_WORLD);
   MPI_Reduce(&local_cpu_usage, &global_cpu_usage, 1, MPI_DOUBLE, MPI_SUM, 0,
       MPI_COMM_WORLD);
+  MPI_Reduce(&local_remote_shared_lock_time,
+      &global_remote_shared_lock_time,
+      1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_remote_exclusive_lock_time,
+      &global_remote_exclusive_lock_time,
+      1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_local_shared_lock_time,
+      &global_local_shared_lock_time,
+      1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_local_exclusive_lock_time,
+      &global_local_exclusive_lock_time,
+      1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 
   MPI_Barrier(MPI_COMM_WORLD);
   if (rank==0) {
@@ -190,11 +219,26 @@ int main(int argc, char** argv) {
     cout << "Global Average Lock Time = " << global_lock_time / num_managers <<
       " ns " << "(# nodes: " << num_managers << ", duration: " <<
       duration << ", mode: " << lock_mode_str << ")" << endl;
+    cout << "Global Average Remote Shared Lock Time = " <<
+      global_remote_shared_lock_time / num_managers <<
+      " ns " << "(# nodes: " << num_managers << ", duration: " <<
+      duration << ", mode: " << lock_mode_str << ")" << endl;
+    cout << "Global Average Remote Exclusive Lock Time = " <<
+      global_remote_exclusive_lock_time / num_managers <<
+      " ns " << "(# nodes: " << num_managers << ", duration: " <<
+      duration << ", mode: " << lock_mode_str << ")" << endl;
+    cout << "Global Average Local Shared Lock Time = " <<
+      global_local_shared_lock_time / num_managers <<
+      " ns " << "(# nodes: " << num_managers << ", duration: " <<
+      duration << ", mode: " << lock_mode_str << ")" << endl;
+    cout << "Global Average Local Exclusive Lock Time = " <<
+      global_local_exclusive_lock_time / num_managers <<
+      " ns " << "(# nodes: " << num_managers << ", duration: " <<
+      duration << ", mode: " << lock_mode_str << ")" << endl;
     cout << "Avg CPU Usage = " << global_cpu_usage / num_managers << "% "
       "(# nodes: " << num_managers << ", duration: " <<
       duration << ", mode: " << lock_mode_str << ")" << endl;
   }
-
 
   MPI_Finalize();
 }
@@ -257,7 +301,7 @@ void* MeasureCPUUsage(void* args) {
 
     usage->total_cpu += percent;
     usage->num_sample += 1;
-    cout << percent << endl;
+    //cout << percent << endl;
     sleep(1);
   }
 }

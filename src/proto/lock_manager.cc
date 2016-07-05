@@ -5,16 +5,20 @@ namespace rdma { namespace proto {
 // constructor
 LockManager::LockManager(const string& work_dir, uint32_t rank,
     int num_manager, int num_lock_object, int lock_mode) {
-  work_dir_                 = work_dir;
-  rank_                     = rank;
-  num_manager_              = num_manager;
-  num_lock_object_          = num_lock_object;
-  lock_table_               = new uint64_t[num_lock_object_];
-  listener_                 = NULL;
-  event_channel_            = NULL;
-  registered_memory_region_ = NULL;
-  port_                     = 0;
-  lock_mode_                = lock_mode;
+  work_dir_                        = work_dir;
+  rank_                            = rank;
+  num_manager_                     = num_manager;
+  num_lock_object_                 = num_lock_object;
+  lock_table_                      = new uint64_t[num_lock_object_];
+  listener_                        = NULL;
+  event_channel_                   = NULL;
+  registered_memory_region_        = NULL;
+  port_                            = 0;
+  lock_mode_                       = lock_mode;
+  total_local_exclusive_lock_time_ = 0;
+  total_local_shared_lock_time_    = 0;
+  num_local_exclusive_lock_        = 0;
+  num_local_shared_lock_           = 0;
 
   // initialize lock table with 0
   memset(lock_table_, 0x00, num_lock_object_*sizeof(uint64_t));
@@ -417,6 +421,10 @@ int LockManager::Unlock(int user_id, int manager_id, int lock_type,
 }
 
 int LockManager::LockLocally(Context* context) {
+
+  // get time
+  clock_gettime(CLOCK_MONOTONIC, &start_local_lock_);
+
   int lock_result = LockManager::RESULT_FAILURE;
   int user_id   = context->receive_message->user_id;
   int obj_index = context->receive_message->obj_index;
@@ -451,6 +459,21 @@ int LockManager::LockLocally(Context* context) {
 
   // unlock locally on lock table
   pthread_mutex_unlock(lock_mutex_[obj_index]);
+
+  // get time
+  clock_gettime(CLOCK_MONOTONIC, &end_local_lock_);
+  double time_taken = ((double)end_local_lock_.tv_sec * 1e+9 +
+      (double)end_local_lock_.tv_nsec) -
+    ((double)start_local_lock_.tv_sec * 1e+9 +
+     (double)start_local_lock_.tv_nsec);
+
+  if (lock_type == LockManager::SHARED) {
+    total_local_shared_lock_time_ += time_taken;
+    ++num_local_shared_lock_;
+  } else if (lock_type == LockManager::EXCLUSIVE) {
+    total_local_exclusive_lock_time_ += time_taken;
+    ++num_local_exclusive_lock_;
+  }
 
   // send result back to the client
   if (SendLockRequestResult(context, user_id, lock_type, obj_index,
@@ -706,8 +729,8 @@ Context* LockManager::BuildContext(struct rdma_cm_id* id) {
   // create completion queue poller thread
   if (pthread_create(&new_context->cq_poller_thread, NULL,
         &LockManager::PollCompletionQueue, new_context)) {
-     cerr << "LockManager: pthread_create() failed." << endl;
-     return NULL;
+    cerr << "LockManager: pthread_create() failed." << endl;
+    return NULL;
   }
 
   return new_context;
@@ -756,6 +779,36 @@ int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
       return -1;
     }
   }
+}
+
+double LockManager::GetAverageLocalSharedLockTime() const {
+  return (num_local_shared_lock_ > 0) ?
+    total_local_shared_lock_time_ / num_local_shared_lock_ : 0;
+}
+
+double LockManager::GetAverageLocalExclusiveLockTime() const {
+  return (num_local_exclusive_lock_ > 0) ?
+    total_local_exclusive_lock_time_ / num_local_exclusive_lock_ : 0;
+}
+
+double LockManager::GetAverageRemoteExclusiveLockTime() const {
+  double num_clients = lock_clients_.size();
+  double total_time = 0.0;
+  map<int, LockClient*>::const_iterator it;
+  for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
+    total_time += it->second->GetAverageRemoteExclusiveLockTime();
+  }
+  return total_time / num_clients;
+}
+
+double LockManager::GetAverageRemoteSharedLockTime() const {
+  double num_clients = lock_clients_.size();
+  double total_time = 0.0;
+  map<int, LockClient*>::const_iterator it;
+  for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
+    total_time += it->second->GetAverageRemoteSharedLockTime();
+  }
+  return total_time / num_clients;
 }
 
 // Polls work completion from completion queue

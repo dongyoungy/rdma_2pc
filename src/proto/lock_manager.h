@@ -47,6 +47,10 @@ class LockManager {
     int GetID() const;
     int GetLockMode() const;
     void Stop();
+    double GetAverageLocalExclusiveLockTime() const;
+    double GetAverageLocalSharedLockTime() const;
+    double GetAverageRemoteExclusiveLockTime() const;
+    double GetAverageRemoteSharedLockTime() const;
     static void* PollCompletionQueue(void* context);
     static void* RunLockClient(void* args);
 
@@ -108,6 +112,12 @@ class LockManager {
     struct rdma_cm_id* listener_;
     struct rdma_event_channel* event_channel_;
     struct sockaddr_in6 address_;
+    struct timespec start_local_lock_;
+    struct timespec end_local_lock_;
+    double total_local_exclusive_lock_time_;
+    double total_local_shared_lock_time_;
+    double num_local_exclusive_lock_;
+    double num_local_shared_lock_;
     uint16_t port_;
     size_t data_size_;
     pthread_mutex_t** lock_mutex_;

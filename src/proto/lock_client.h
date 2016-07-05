@@ -34,6 +34,8 @@ class LockClient {
     Context* GetContext();
     int RequestLock(int user_id, int lock_type, int obj_index, int lock_mode);
     int RequestUnlock(int user_id, int lock_type, int obj_index, int lock_mode);
+    double GetAverageRemoteExclusiveLockTime() const;
+    double GetAverageRemoteSharedLockTime() const;
 
     static void* PollCompletionQueue(void* context);
 
@@ -72,8 +74,10 @@ class LockClient {
     int remote_lm_id_;
     int test_duration_;
     string work_dir_;
-    double total_cas_time_;
-    double total_read_time_;
+    double total_exclusive_lock_remote_time_;
+    double total_shared_lock_remote_time_;
+    double num_exclusive_lock_;
+    double num_shared_lock_;
     int test_mode_;
     int num_trial_;
     string server_name_;
@@ -83,6 +87,10 @@ class LockClient {
     struct addrinfo* address_;
     struct timespec start_;
     struct timespec end_;
+    struct timespec start_remote_exclusive_lock_;
+    struct timespec end_remote_exclusive_lock_;
+    struct timespec start_remote_shared_lock_;
+    struct timespec end_remote_shared_lock_;
     uint64_t current_semaphore_;
     size_t data_size_;
     time_t test_start_;

@@ -6,14 +6,18 @@ namespace rdma { namespace proto {
 LockClient::LockClient(const string& work_dir, LockManager* local_manager,
     LockSimulator* local_user,
     int remote_lm_id) {
-  work_dir_      = work_dir;
-  context_       = NULL;
-  event_channel_ = NULL;
-  connection_    = NULL;
-  address_       = NULL;
-  local_manager_ = local_manager;
-  local_user_    = local_user;
-  remote_lm_id_  = remote_lm_id;
+  work_dir_                         = work_dir;
+  context_                          = NULL;
+  event_channel_                    = NULL;
+  connection_                       = NULL;
+  address_                          = NULL;
+  local_manager_                    = local_manager;
+  local_user_                       = local_user;
+  remote_lm_id_                     = remote_lm_id;
+  total_exclusive_lock_remote_time_ = 0;
+  total_shared_lock_remote_time_    = 0;
+  num_exclusive_lock_               = 0;
+  num_shared_lock_                  = 0;
 
   // initialize local lock mutex
   pthread_mutex_init(&lock_mutex_, NULL);
@@ -356,7 +360,8 @@ void LockClient::BuildQueuePairAttr(Context* context,
   attributes->cap.max_recv_wr  = 16;
   attributes->cap.max_send_sge = 1;
   attributes->cap.max_recv_sge = 1;
-  attributes->comp_mask        = IBV_EXP_QP_INIT_ATTR_PD | IBV_EXP_QP_INIT_ATTR_CREATE_FLAGS;
+  attributes->comp_mask        = IBV_EXP_QP_INIT_ATTR_PD |
+    IBV_EXP_QP_INIT_ATTR_CREATE_FLAGS;
   attributes->exp_create_flags = IBV_EXP_QP_CREATE_ATOMIC_BE_REPLY;
   attributes->max_atomic_arg   = sizeof(uint64_t);
 }
@@ -436,6 +441,16 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     }
   } else if (work_completion->opcode == IBV_WC_COMP_SWAP) {
     // completion of compare-and-swap, i.e. remote exclusive locking
+
+    // get time
+    clock_gettime(CLOCK_MONOTONIC, &end_remote_exclusive_lock_);
+    double time_taken = ((double)end_remote_exclusive_lock_.tv_sec * 1e+9 +
+        (double)end_remote_exclusive_lock_.tv_nsec) -
+      ((double)start_remote_exclusive_lock_.tv_sec * 1e+9 +
+          (double)start_remote_exclusive_lock_.tv_nsec);
+    total_exclusive_lock_remote_time_ += time_taken;
+    ++num_exclusive_lock_;
+
     uint64_t prev_value = *context->original_value;
 #if __BYTE_ORDER == __LITTLE_ENDIAN
     uint64_t value = __bswap_constant_64(prev_value);  // Compiler builtin
@@ -477,6 +492,16 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     }
   } else if (work_completion->opcode == IBV_WC_FETCH_ADD) {
     // completion of fetch-and-add, i.e. remote shared locking
+
+    // get time
+    clock_gettime(CLOCK_MONOTONIC, &end_remote_shared_lock_);
+    double time_taken = ((double)end_remote_shared_lock_.tv_sec * 1e+9 +
+        (double)end_remote_shared_lock_.tv_nsec) -
+      ((double)start_remote_shared_lock_.tv_sec * 1e+9 +
+          (double)start_remote_shared_lock_.tv_nsec);
+    total_shared_lock_remote_time_ += time_taken;
+    ++num_shared_lock_;
+
     uint64_t prev_value = *context->original_value;
 #if __BYTE_ORDER == __LITTLE_ENDIAN
     uint64_t value = __bswap_constant_64(prev_value);  // Compiler builtin
@@ -569,6 +594,13 @@ int LockClient::RequestUnlock(int user_id, int lock_type, int obj_index,
 
 int LockClient::LockRemotely(Context* context, int user_id, int lock_type,
     int obj_index) {
+
+  if (lock_type == LockManager::SHARED) {
+    clock_gettime(CLOCK_MONOTONIC, &start_remote_shared_lock_);
+  } else if (lock_type == LockManager::EXCLUSIVE) {
+    clock_gettime(CLOCK_MONOTONIC, &start_remote_exclusive_lock_);
+  }
+
   uint32_t exclusive, shared;
   struct ibv_exp_send_wr send_work_request;
   struct ibv_exp_send_wr* bad_work_request;
@@ -620,6 +652,13 @@ int LockClient::LockRemotely(Context* context, int user_id, int lock_type,
 
 int LockClient::UnlockRemotely(Context* context, int user_id, int lock_type,
     int obj_index) {
+
+  if (lock_type == LockManager::SHARED) {
+    clock_gettime(CLOCK_MONOTONIC, &start_remote_shared_lock_);
+  } else if (lock_type == LockManager::EXCLUSIVE) {
+    clock_gettime(CLOCK_MONOTONIC, &start_remote_exclusive_lock_);
+  }
+
   uint32_t exclusive, shared;
   struct ibv_exp_send_wr send_work_request;
   struct ibv_exp_send_wr* bad_work_request;
@@ -704,6 +743,16 @@ int LockClient::SendUnlockRequest(Context* context, int user_id,
   pthread_mutex_unlock(&lock_mutex_);
   //cout << "SendUnlockRequest(): memory region sent." << endl;
   return 0;
+}
+
+double LockClient::GetAverageRemoteSharedLockTime() const {
+  return num_shared_lock_ > 0 ?
+    total_shared_lock_remote_time_ / num_shared_lock_ : 0;
+}
+
+double LockClient::GetAverageRemoteExclusiveLockTime() const {
+  return num_exclusive_lock_ > 0 ?
+    total_exclusive_lock_remote_time_ / num_exclusive_lock_ : 0;
 }
 
 // Polls work completion from completion queue
