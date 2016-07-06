@@ -811,6 +811,26 @@ double LockManager::GetAverageRemoteSharedLockTime() const {
   return total_time / num_clients;
 }
 
+double LockManager::GetAverageSendMessageTime() const {
+  double num_clients = lock_clients_.size();
+  double total_time = 0.0;
+  map<int, LockClient*>::const_iterator it;
+  for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
+    total_time += it->second->GetAverageSendMessageTime();
+  }
+  return total_time / num_clients;
+}
+
+double LockManager::GetAverageReceiveMessageTime() const {
+  double num_clients = lock_clients_.size();
+  double total_time = 0.0;
+  map<int, LockClient*>::const_iterator it;
+  for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
+    total_time += it->second->GetAverageReceiveMessageTime();
+  }
+  return total_time / num_clients;
+}
+
 // Polls work completion from completion queue
 void* LockManager::PollCompletionQueue(void* arg) {
   struct ibv_cq* cq;

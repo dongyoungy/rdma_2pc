@@ -144,6 +144,10 @@ int main(int argc, char** argv) {
   double global_local_exclusive_lock_time = 0;
   double local_local_shared_lock_time = 0;
   double global_local_shared_lock_time = 0;
+  double local_send_message_time = 0;
+  double global_send_message_time = 0;
+  double local_receive_message_time = 0;
+  double global_receive_message_time = 0;
 
   MPI_Barrier(MPI_COMM_WORLD);
 
@@ -172,6 +176,8 @@ int main(int argc, char** argv) {
     lock_manager->GetAverageLocalSharedLockTime();
   local_local_exclusive_lock_time =
     lock_manager->GetAverageLocalExclusiveLockTime();
+  local_send_message_time = lock_manager->GetAverageSendMessageTime();
+  local_receive_message_time = lock_manager->GetAverageReceiveMessageTime();
 
   usage.terminate = true;
   pthread_join(cpu_measure_thread, NULL);
@@ -200,6 +206,12 @@ int main(int argc, char** argv) {
       1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Reduce(&local_local_exclusive_lock_time,
       &global_local_exclusive_lock_time,
+      1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_send_message_time,
+      &global_send_message_time,
+      1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_receive_message_time,
+      &global_receive_message_time,
       1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 
   MPI_Barrier(MPI_COMM_WORLD);
@@ -233,6 +245,14 @@ int main(int argc, char** argv) {
       duration << ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average Local Exclusive Lock Time = " <<
       global_local_exclusive_lock_time / num_managers <<
+      " ns " << "(# nodes: " << num_managers << ", duration: " <<
+      duration << ", mode: " << lock_mode_str << ")" << endl;
+    cout << "Global Average Send Message Time = " <<
+      global_send_message_time / num_managers <<
+      " ns " << "(# nodes: " << num_managers << ", duration: " <<
+      duration << ", mode: " << lock_mode_str << ")" << endl;
+    cout << "Global Average Receive Message Time = " <<
+      global_receive_message_time / num_managers <<
       " ns " << "(# nodes: " << num_managers << ", duration: " <<
       duration << ", mode: " << lock_mode_str << ")" << endl;
     cout << "Avg CPU Usage = " << global_cpu_usage / num_managers << "% "

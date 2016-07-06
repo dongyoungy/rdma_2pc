@@ -51,6 +51,8 @@ class LockManager {
     double GetAverageLocalSharedLockTime() const;
     double GetAverageRemoteExclusiveLockTime() const;
     double GetAverageRemoteSharedLockTime() const;
+    double GetAverageSendMessageTime() const;
+    double GetAverageReceiveMessageTime() const;
     static void* PollCompletionQueue(void* context);
     static void* RunLockClient(void* args);
 

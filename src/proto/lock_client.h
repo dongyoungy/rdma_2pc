@@ -36,6 +36,8 @@ class LockClient {
     int RequestUnlock(int user_id, int lock_type, int obj_index, int lock_mode);
     double GetAverageRemoteExclusiveLockTime() const;
     double GetAverageRemoteSharedLockTime() const;
+    double GetAverageSendMessageTime() const;
+    double GetAverageReceiveMessageTime() const;
 
     static void* PollCompletionQueue(void* context);
 
@@ -74,6 +76,10 @@ class LockClient {
     int remote_lm_id_;
     int test_duration_;
     string work_dir_;
+    double total_send_message_time_;
+    double num_send_message_;
+    double total_receive_message_time_;
+    double num_receive_message_;
     double total_exclusive_lock_remote_time_;
     double total_shared_lock_remote_time_;
     double num_exclusive_lock_;
@@ -91,6 +97,10 @@ class LockClient {
     struct timespec end_remote_exclusive_lock_;
     struct timespec start_remote_shared_lock_;
     struct timespec end_remote_shared_lock_;
+    struct timespec start_send_message_;
+    struct timespec end_send_message_;
+    struct timespec start_receive_message_;
+    struct timespec end_receive_message_;
     uint64_t current_semaphore_;
     size_t data_size_;
     time_t test_start_;

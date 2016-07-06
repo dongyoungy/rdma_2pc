@@ -16,8 +16,12 @@ LockClient::LockClient(const string& work_dir, LockManager* local_manager,
   remote_lm_id_                     = remote_lm_id;
   total_exclusive_lock_remote_time_ = 0;
   total_shared_lock_remote_time_    = 0;
+  total_send_message_time_          = 0;
+  total_receive_message_time_       = 0;
   num_exclusive_lock_               = 0;
   num_shared_lock_                  = 0;
+  num_send_message_                 = 0;
+  num_receive_message_              = 0;
 
   // initialize local lock mutex
   pthread_mutex_init(&lock_mutex_, NULL);
@@ -255,6 +259,9 @@ int LockClient::HandleDisconnect(Context* context) {
 }
 
 int LockClient::SendMessage(Context* context) {
+
+  clock_gettime(CLOCK_MONOTONIC, &start_send_message_);
+
   struct ibv_send_wr send_work_request;
   struct ibv_send_wr* bad_work_request;
   struct ibv_sge sge;
@@ -285,6 +292,9 @@ int LockClient::SendMessage(Context* context) {
 
 // Post receive to get message from clients
 int LockClient::ReceiveMessage(Context* context) {
+
+  clock_gettime(CLOCK_MONOTONIC, &start_receive_message_);
+
   struct ibv_recv_wr receive_work_request;
   struct ibv_recv_wr* bad_work_request;
   struct ibv_sge sge;
@@ -306,6 +316,14 @@ int LockClient::ReceiveMessage(Context* context) {
     cerr << "ibv_post_recv failed: " << strerror(ret) << endl;
     return -1;
   }
+
+  clock_gettime(CLOCK_MONOTONIC, &end_receive_message_);
+  double time_taken = ((double)end_receive_message_.tv_sec * 1e+9 +
+      (double)end_receive_message_.tv_nsec) -
+    ((double)start_receive_message_.tv_sec * 1e+9 +
+     (double)start_receive_message_.tv_nsec);
+  total_receive_message_time_ += time_taken;
+  ++num_receive_message_;
 
   return 0;
 }
@@ -439,6 +457,14 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           context->receive_message->obj_index,
           context->receive_message->lock_result);
     }
+  } else if (work_completion->opcode == IBV_WC_SEND) {
+    clock_gettime(CLOCK_MONOTONIC, &end_send_message_);
+    double time_taken = ((double)end_send_message_.tv_sec * 1e+9 +
+        (double)end_send_message_.tv_nsec) -
+      ((double)start_send_message_.tv_sec * 1e+9 +
+       (double)start_send_message_.tv_nsec);
+    total_send_message_time_ += time_taken;
+    ++num_send_message_;
   } else if (work_completion->opcode == IBV_WC_COMP_SWAP) {
     // completion of compare-and-swap, i.e. remote exclusive locking
 
@@ -538,6 +564,8 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
 // Requests lock table MR region of from lock manager via IBV_WR_SEND op.
 int LockClient::SendLockTableRequest(Context* context) {
 
+  clock_gettime(CLOCK_MONOTONIC, &start_send_message_);
+
   context->send_message->type = Message::LOCK_TABLE_MR_REQUEST;
 
   struct ibv_send_wr send_work_request;
@@ -613,13 +641,13 @@ int LockClient::LockRemotely(Context* context, int user_id, int lock_type,
   context->last_obj_index = obj_index;
   context->last_lock_task = LockManager::TASK_LOCK;
 
-  sge.addr = (uint64_t)context->original_value;
+  sge.addr   = (uint64_t)context->original_value;
   sge.length = sizeof(uint64_t);
-  sge.lkey = context->original_value_mr->lkey;
+  sge.lkey   = context->original_value_mr->lkey;
 
-  send_work_request.wr_id      = (uint64_t)context;
-  send_work_request.num_sge    = 1;
-  send_work_request.sg_list    = &sge;
+  send_work_request.wr_id          = (uint64_t)context;
+  send_work_request.num_sge        = 1;
+  send_work_request.sg_list        = &sge;
   send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
 
   if (lock_type == LockManager::SHARED) {
@@ -671,13 +699,13 @@ int LockClient::UnlockRemotely(Context* context, int user_id, int lock_type,
   context->last_obj_index = obj_index;
   context->last_lock_task = LockManager::TASK_UNLOCK;
 
-  sge.addr = (uint64_t)context->original_value;
+  sge.addr   = (uint64_t)context->original_value;
   sge.length = sizeof(uint64_t);
-  sge.lkey = context->original_value_mr->lkey;
+  sge.lkey   = context->original_value_mr->lkey;
 
-  send_work_request.wr_id      = (uint64_t)context;
-  send_work_request.num_sge    = 1;
-  send_work_request.sg_list    = &sge;
+  send_work_request.wr_id          = (uint64_t)context;
+  send_work_request.num_sge        = 1;
+  send_work_request.sg_list        = &sge;
   send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
 
   if (lock_type == LockManager::SHARED) {
@@ -753,6 +781,16 @@ double LockClient::GetAverageRemoteSharedLockTime() const {
 double LockClient::GetAverageRemoteExclusiveLockTime() const {
   return num_exclusive_lock_ > 0 ?
     total_exclusive_lock_remote_time_ / num_exclusive_lock_ : 0;
+}
+
+double LockClient::GetAverageSendMessageTime() const {
+  return num_send_message_ > 0 ?
+    total_send_message_time_ / num_send_message_ : 0;
+}
+
+double LockClient::GetAverageReceiveMessageTime() const {
+  return num_receive_message_ > 0 ?
+    total_receive_message_time_ / num_receive_message_ : 0;
 }
 
 // Polls work completion from completion queue

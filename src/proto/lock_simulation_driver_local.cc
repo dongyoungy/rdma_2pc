@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
         duration,
         false, // verbose
         false, // measure lock
-        true, // is all local?
+        false, // is all local?
         lock_mode
         );
     lock_manager->RegisterUser(rank*num_managers+(i+1), simulator);
