@@ -15,6 +15,7 @@ class Message {
       LOCK_REQUEST_RESULT,
       UNLOCK_REQUEST,
       UNLOCK_REQUEST_RESULT,
+      LOCAL_MANAGER_ID
     } type;
     int lock_type;
     struct ibv_mr lock_table_mr;

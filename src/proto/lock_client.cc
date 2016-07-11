@@ -42,8 +42,8 @@ int LockClient::Run() {
     return -1;
   }
 
-  cout << "connecting to server: " << server_name_ << ":" << server_port_
-    << endl;
+  //cout << "connecting to server: " << server_name_ << ":" << server_port_
+    //<< endl;
   int ret = 0;
   if ((ret = getaddrinfo(server_name_.c_str(), server_port_.c_str(), NULL,
           &address_))) {
@@ -202,7 +202,7 @@ int LockClient::HandleAddressResolved(struct rdma_cm_id* id) {
     return -1;
   }
 
-  cout << "address resolved." << endl;
+  //cout << "address resolved." << endl;
 
   return 0;
 }
@@ -220,7 +220,7 @@ int LockClient::HandleRouteResolved(struct rdma_cm_id* id) {
     return -1;
   }
 
-  cout << "route resolved." << endl;
+  //cout << "route resolved." << endl;
 
   return 0;
 }
@@ -566,7 +566,9 @@ int LockClient::SendLockTableRequest(Context* context) {
 
   clock_gettime(CLOCK_MONOTONIC, &start_send_message_);
 
-  context->send_message->type = Message::LOCK_TABLE_MR_REQUEST;
+  context->send_message->type       = Message::LOCK_TABLE_MR_REQUEST;
+  context->send_message->manager_id = local_manager_->GetID();
+  context->send_message->user_id    = local_user_->GetID();
 
   struct ibv_send_wr send_work_request;
   struct ibv_send_wr* bad_work_request;

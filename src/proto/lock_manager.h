@@ -78,6 +78,7 @@ class LockManager {
     void BuildQueuePairAttr(Context* context,
         struct ibv_exp_qp_init_attr* attributes);
     int BuildConnectionManagerParams(struct rdma_conn_param* params);
+    int RegisterContext(Context* context);
     int RegisterMemoryRegion(Context* context);
     int ReceiveMessage(Context* context);
     int SendMessage(Context* context);
@@ -87,7 +88,11 @@ class LockManager {
     int SendUnlockRequestResult(Context* context, int user_id,
         int lock_type, int obj_index, int result);
     int LockLocally(Context* context);
+    int LockLocally(Context* context, int user_id, int lock_type,
+        int obj_index);
     int UnlockLocally(Context* context);
+    int UnlockLocally(Context* context, int user_id, int lock_type,
+        int obj_index);
     int HandleWorkCompletion(struct ibv_wc* work_completion);
     int HandleEvent(struct rdma_cm_event* event);
     int HandleConnectRequest(struct rdma_cm_id* id);
@@ -97,6 +102,7 @@ class LockManager {
 
     // each client connects to each lock manager in the cluster
     map<int, LockClient*> lock_clients_;
+    map<int, Context*> context_map_;
     vector<pthread_t*> lock_client_threads_;
 
     // vector for actual user/sclients/simulators

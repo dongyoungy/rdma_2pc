@@ -14,7 +14,7 @@ LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
   duration_                 = duration;
   verbose_                  = false;
   measure_lock_time_        = false;
-  is_all_local_             = false;
+  workload_type_            = WORKLOAD_UNIFORM;
   lock_mode_                = LockManager::LOCK_REMOTE;
   total_num_locks_          = 0;
   total_num_unlocks_        = 0;
@@ -27,7 +27,7 @@ LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
 
 LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
     int num_lock_object, int duration, bool verbose, bool measure_lock_time,
-    bool is_all_local, int lock_mode) {
+    int workload_type, int lock_mode) {
   manager_                  = manager;
   id_                       = id;
   num_manager_              = num_manager;
@@ -38,7 +38,7 @@ LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
   duration_                 = duration;
   verbose_                  = verbose;
   measure_lock_time_        = measure_lock_time;
-  is_all_local_             = is_all_local;
+  workload_type_            = workload_type;
   lock_mode_                = lock_mode;
   total_num_locks_          = 0;
   total_num_unlocks_        = 0;
@@ -57,7 +57,8 @@ void LockSimulator::Run() {
   time(&start_time_);
   srand(time(NULL)+id_);
 
-  if (is_all_local_ && lock_mode_ == LockManager::LOCK_LOCAL) {
+  if (workload_type_ == WORKLOAD_ALL_LOCAL &&
+      lock_mode_ == LockManager::LOCK_LOCAL) {
     while (true) {
       CreateLockRequests();
       time(&current_time_);
@@ -100,11 +101,34 @@ void LockSimulator::CreateLockRequests() {
   for (int i = 0; i < request_size_; ++i) {
     //requests_[i]->lm_id = 0;
     //requests_[i]->lm_id = rand() % num_manager_;
-    if (is_all_local_) {
-      requests_[i]->lm_id = manager_->GetID(); // local only
-    } else {
-      requests_[i]->lm_id = rand() % num_manager_;
+    switch (workload_type_) {
+      case WORKLOAD_UNIFORM:
+        requests_[i]->lm_id = rand() % num_manager_;
+        break;
+      case WORKLOAD_HOTSPOT:
+        if (drand48() < 0.95) {
+          if (num_manager_ > 1)
+            requests_[i]->lm_id = rand() % 2;
+          else
+            requests_[i]->lm_id = rand() % num_manager_;
+        } else {
+          if (num_manager_ > 2)
+            requests_[i]->lm_id = 2 + (rand() % num_manager_ - 2);
+          else
+            requests_[i]->lm_id = rand() % num_manager_;
+        }
+      case WORKLOAD_ALL_LOCAL:
+        requests_[i]->lm_id = manager_->GetID(); // local only
+        break;
+      default:
+        break;
     }
+
+    //if (is_all_local_) {
+      //requests_[i]->lm_id = manager_->GetID(); // local only
+    //} else {
+      //requests_[i]->lm_id = rand() % num_manager_;
+    //}
     requests_[i]->obj_index = rand() % num_lock_object_;
     requests_[i]->lock_type = rand() % 2;
     //requests_[i]->lock_type = 0;
@@ -122,7 +146,8 @@ void LockSimulator::CreateLockRequests() {
   last_request_idx_ = 0;
   current_request_idx_ = 0;
 
-  if (is_all_local_ && lock_mode_ == LockManager::LOCK_LOCAL) {
+  if (workload_type_ == WORKLOAD_ALL_LOCAL &&
+      lock_mode_ == LockManager::LOCK_LOCAL) {
     SubmitLockRequestLocal();
   } else {
     SubmitLockRequest();
@@ -173,11 +198,20 @@ void LockSimulator::SubmitLockRequestLocal() {
   int lock_result;
   state_ = LockSimulator::STATE_LOCKING;
   while (current_request_idx_ < request_size_) {
+    if (measure_lock_time_)
+      clock_gettime(CLOCK_MONOTONIC, &start_lock_);
     lock_result = manager_->LockLocalDirect(
         id_,
         requests_[current_request_idx_]->lock_type,
         requests_[current_request_idx_]->obj_index
         );
+    if (measure_lock_time_) {
+      clock_gettime(CLOCK_MONOTONIC, &end_lock_);
+      double time_taken = ((double)end_lock_.tv_sec * 1e+9 +
+          (double)end_lock_.tv_nsec) - ((double)start_lock_.tv_sec * 1e+9 +
+            (double)start_lock_.tv_nsec);
+      total_time_taken_to_lock_ += time_taken;
+    }
     ++total_num_locks_;
     if (lock_result == LockManager::RESULT_SUCCESS) {
       ++total_num_lock_success_;

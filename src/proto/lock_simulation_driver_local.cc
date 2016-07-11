@@ -23,9 +23,9 @@ struct CPUUsage {
 
 int main(int argc, char** argv) {
 
-  if (argc != 6) {
+  if (argc != 7) {
     cout << argv[0] << " <work_dir> <num_lock_object>" <<
-      " <num_users> <lock_mode> <duration>" << endl;
+      " <num_users> <lock_mode> <workload_type> <duration>" << endl;
     exit(1);
   }
 
@@ -41,9 +41,20 @@ int main(int argc, char** argv) {
   int num_lock_object = atoi(argv[2]);
   int num_users = atoi(argv[3]);
   int lock_mode = atoi(argv[4]);
-  int duration = atoi(argv[5]);
+  int workload_type = atoi(argv[5]);
+  int duration = atoi(argv[6]);
+
+  string workload_type_str;
+  if (workload_type == LockSimulator::WORKLOAD_UNIFORM) {
+    workload_type_str = "UNIFORM";
+  } else if (workload_type == LockSimulator::WORKLOAD_HOTSPOT) {
+    workload_type_str = "HOTSPOT";
+  } else if (workload_type == LockSimulator::WORKLOAD_ALL_LOCAL) {
+    workload_type_str = "ALL_LOCAL";
+  }
 
   if (rank == 0) {
+    cout << "Type of Workload = " << workload_type_str << endl;
     cout << "Duration = " << duration << " seconds"  << endl;
   }
 
@@ -71,7 +82,7 @@ int main(int argc, char** argv) {
         duration,
         false, // verbose
         false, // measure lock
-        false, // is all local?
+        workload_type, // is all local?
         lock_mode
         );
     lock_manager->RegisterUser(rank*num_managers+(i+1), simulator);

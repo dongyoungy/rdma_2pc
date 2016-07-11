@@ -25,9 +25,9 @@ int main(int argc, char** argv) {
 
   MPI_Init(&argc, &argv);
 
-  if (argc != 6) {
+  if (argc != 7) {
     cout << argv[0] << " <work_dir> <num_lock_object>" <<
-      " <num_users> <lock_mode> <duration>" << endl;
+      " <num_users> <lock_mode> <workload_type> <duration>" << endl;
     exit(1);
   }
 
@@ -36,16 +36,19 @@ int main(int argc, char** argv) {
   MPI_Comm_size(MPI_COMM_WORLD, &num_managers);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-  if (1 == htons(1)) {
-    cout << "The current machine uses BIG ENDIAN" << endl;
-  } else {
-    cout << "The current machine uses LITTLE ENDIAN" << endl;
+  if (rank == 0) {
+    if (1 == htons(1)) {
+      cout << "The current machine uses BIG ENDIAN" << endl;
+    } else {
+      cout << "The current machine uses LITTLE ENDIAN" << endl;
+    }
   }
 
   int num_lock_object = atoi(argv[2]);
   int num_users = atoi(argv[3]);
   int lock_mode = atoi(argv[4]);
-  int duration = atoi(argv[5]);
+  int workload_type = atoi(argv[5]);
+  int duration = atoi(argv[6]);
 
   string lock_mode_str;
   if (lock_mode == LockManager::LOCK_LOCAL) {
@@ -54,7 +57,17 @@ int main(int argc, char** argv) {
     lock_mode_str = "LOCK_MODE_REMOTE";
   }
 
+  string workload_type_str;
+  if (workload_type == LockSimulator::WORKLOAD_UNIFORM) {
+    workload_type_str = "UNIFORM";
+  } else if (workload_type == LockSimulator::WORKLOAD_HOTSPOT) {
+    workload_type_str = "HOTSPOT";
+  } else if (workload_type == LockSimulator::WORKLOAD_ALL_LOCAL) {
+    workload_type_str = "ALL_LOCAL";
+  }
+
   if (rank == 0) {
+    cout << "Type of Workload = " << workload_type_str << endl;
     cout << "Duration = " << duration << " seconds"  << endl;
   }
 
@@ -82,7 +95,7 @@ int main(int argc, char** argv) {
         duration,
         false, // verbose
         true, // measure lock time
-        false, // is all local?
+        workload_type, // type of workload
         lock_mode
         );
     lock_manager->RegisterUser(rank*num_managers+(i+1), simulator);
@@ -215,6 +228,9 @@ int main(int argc, char** argv) {
       1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 
   MPI_Barrier(MPI_COMM_WORLD);
+    cout << "Local Avg CPU Usage = " << local_cpu_usage << "% "
+      "(" << "ID = " << rank <<  " ,# nodes: " << num_managers <<
+      ", duration: " << duration << ", mode: " << lock_mode_str << ")" << endl;
   if (rank==0) {
     cout << "Global Total Lock # = " << global_sum << "(# nodes: " <<
       num_managers << ", duration: " <<
@@ -255,7 +271,8 @@ int main(int argc, char** argv) {
       global_receive_message_time / num_managers <<
       " ns " << "(# nodes: " << num_managers << ", duration: " <<
       duration << ", mode: " << lock_mode_str << ")" << endl;
-    cout << "Avg CPU Usage = " << global_cpu_usage / num_managers << "% "
+    cout << "Overall Avg CPU Usage = " <<
+      global_cpu_usage / num_managers << "% "
       "(# nodes: " << num_managers << ", duration: " <<
       duration << ", mode: " << lock_mode_str << ")" << endl;
   }
