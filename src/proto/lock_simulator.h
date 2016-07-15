@@ -23,7 +23,8 @@ class LockSimulator {
         int num_lock_object, int duration);
     LockSimulator(LockManager* manager, int id, int num_manager,
         int num_lock_object, int duration, bool verbose,
-        bool measure_lock_time, int workload_type, int lock_mode);
+        bool measure_lock_time, int workload_type, int lock_mode,
+        double local_percentage = 0.5);
     ~LockSimulator();
     void Run();
     int NotifyResult(int task, int lock_type, int obj_index, int result);
@@ -45,8 +46,10 @@ class LockSimulator {
     static const int WORKLOAD_UNIFORM = 0;
     static const int WORKLOAD_HOTSPOT = 1;
     static const int WORKLOAD_ALL_LOCAL = 2;
+    static const int WORKLOAD_MIXED = 3;
 
   private:
+    void StartLockRequests();
     void CreateLockRequests();
     void SubmitLockRequest();
     void SubmitLockRequestLocal();
@@ -59,6 +62,7 @@ class LockSimulator {
     bool measure_lock_time_;
     bool verbose_;
     double total_time_taken_to_lock_;
+    double local_percentage_;
     int state_;
     int id_;
     int num_manager_;

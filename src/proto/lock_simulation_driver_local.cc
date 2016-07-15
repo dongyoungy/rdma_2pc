@@ -23,9 +23,10 @@ struct CPUUsage {
 
 int main(int argc, char** argv) {
 
-  if (argc != 7) {
+  if (argc != 8) {
     cout << argv[0] << " <work_dir> <num_lock_object>" <<
-      " <num_users> <lock_mode> <workload_type> <duration>" << endl;
+      " <num_users> <lock_mode> <workload_type> <local_workload_ratio> "<<
+      "<duration>" << endl;
     exit(1);
   }
 
@@ -38,11 +39,12 @@ int main(int argc, char** argv) {
     cout << "The current machine uses LITTLE ENDIAN" << endl;
   }
 
-  int num_lock_object = atoi(argv[2]);
-  int num_users = atoi(argv[3]);
-  int lock_mode = atoi(argv[4]);
-  int workload_type = atoi(argv[5]);
-  int duration = atoi(argv[6]);
+  int num_lock_object         = atoi(argv[2]);
+  int num_users               = atoi(argv[3]);
+  int lock_mode               = atoi(argv[4]);
+  int workload_type           = atoi(argv[5]);
+  double local_workload_ratio = atof(argv[6]);
+  int duration                = atoi(argv[7]);
 
   string workload_type_str;
   if (workload_type == LockSimulator::WORKLOAD_UNIFORM) {
@@ -51,6 +53,10 @@ int main(int argc, char** argv) {
     workload_type_str = "HOTSPOT";
   } else if (workload_type == LockSimulator::WORKLOAD_ALL_LOCAL) {
     workload_type_str = "ALL_LOCAL";
+  } else if (workload_type == LockSimulator::WORKLOAD_MIXED) {
+    char buf[32];
+    sprintf(buf, "MIXED (local: %.2f %%)", local_workload_ratio * 100);
+    workload_type_str = buf;
   }
 
   if (rank == 0) {
@@ -83,7 +89,8 @@ int main(int argc, char** argv) {
         false, // verbose
         false, // measure lock
         workload_type, // is all local?
-        lock_mode
+        lock_mode,
+        local_workload_ratio
         );
     lock_manager->RegisterUser(rank*num_managers+(i+1), simulator);
     users.push_back(simulator);
@@ -197,7 +204,6 @@ void* MeasureCPUUsage(void* args) {
 
     usage->total_cpu += percent;
     usage->num_sample += 1;
-    cout << percent << endl;
     sleep(1);
   }
 }

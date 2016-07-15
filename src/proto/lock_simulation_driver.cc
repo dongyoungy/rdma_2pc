@@ -25,9 +25,10 @@ int main(int argc, char** argv) {
 
   MPI_Init(&argc, &argv);
 
-  if (argc != 7) {
+  if (argc != 8) {
     cout << argv[0] << " <work_dir> <num_lock_object>" <<
-      " <num_users> <lock_mode> <workload_type> <duration>" << endl;
+      " <num_users> <lock_mode> <workload_type> <local_workload_ratio> " <<
+      "<duration>" << endl;
     exit(1);
   }
 
@@ -44,11 +45,12 @@ int main(int argc, char** argv) {
     }
   }
 
-  int num_lock_object = atoi(argv[2]);
-  int num_users = atoi(argv[3]);
-  int lock_mode = atoi(argv[4]);
-  int workload_type = atoi(argv[5]);
-  int duration = atoi(argv[6]);
+  int num_lock_object         = atoi(argv[2]);
+  int num_users               = atoi(argv[3]);
+  int lock_mode               = atoi(argv[4]);
+  int workload_type           = atoi(argv[5]);
+  double local_workload_ratio = atof(argv[6]);
+  int duration                = atoi(argv[7]);
 
   string lock_mode_str;
   if (lock_mode == LockManager::LOCK_LOCAL) {
@@ -64,6 +66,10 @@ int main(int argc, char** argv) {
     workload_type_str = "HOTSPOT";
   } else if (workload_type == LockSimulator::WORKLOAD_ALL_LOCAL) {
     workload_type_str = "ALL_LOCAL";
+  } else if (workload_type == LockSimulator::WORKLOAD_MIXED) {
+    char buf[32];
+    sprintf(buf, "MIXED (local: %.0f %%)", local_workload_ratio * 100);
+    workload_type_str = buf;
   }
 
   if (rank == 0) {
@@ -96,7 +102,8 @@ int main(int argc, char** argv) {
         false, // verbose
         true, // measure lock time
         workload_type, // type of workload
-        lock_mode
+        lock_mode,
+        local_workload_ratio
         );
     lock_manager->RegisterUser(rank*num_managers+(i+1), simulator);
     users.push_back(simulator);
@@ -137,30 +144,30 @@ int main(int argc, char** argv) {
     }
   }
 
-  int local_sum = 0;
-  int global_sum = 0;
-  int local_unlock_sum = 0;
-  int global_unlock_sum = 0;
-  int local_lock_success = 0;
-  int global_lock_success = 0;
-  int local_lock_failure = 0;
-  int global_lock_failure = 0;
-  double local_lock_time = 0;
-  double global_lock_time = 0;
-  double local_cpu_usage = 0;
-  double global_cpu_usage = 0;
-  double local_remote_exclusive_lock_time = 0;
+  int local_sum                            = 0;
+  int global_sum                           = 0;
+  int local_unlock_sum                     = 0;
+  int global_unlock_sum                    = 0;
+  int local_lock_success                   = 0;
+  int global_lock_success                  = 0;
+  int local_lock_failure                   = 0;
+  int global_lock_failure                  = 0;
+  double local_lock_time                   = 0;
+  double global_lock_time                  = 0;
+  double local_cpu_usage                   = 0;
+  double global_cpu_usage                  = 0;
+  double local_remote_exclusive_lock_time  = 0;
   double global_remote_exclusive_lock_time = 0;
-  double local_remote_shared_lock_time = 0;
-  double global_remote_shared_lock_time = 0;
-  double local_local_exclusive_lock_time = 0;
-  double global_local_exclusive_lock_time = 0;
-  double local_local_shared_lock_time = 0;
-  double global_local_shared_lock_time = 0;
-  double local_send_message_time = 0;
-  double global_send_message_time = 0;
-  double local_receive_message_time = 0;
-  double global_receive_message_time = 0;
+  double local_remote_shared_lock_time     = 0;
+  double global_remote_shared_lock_time    = 0;
+  double local_local_exclusive_lock_time   = 0;
+  double global_local_exclusive_lock_time  = 0;
+  double local_local_shared_lock_time      = 0;
+  double global_local_shared_lock_time     = 0;
+  double local_send_message_time           = 0;
+  double global_send_message_time          = 0;
+  double local_receive_message_time        = 0;
+  double global_receive_message_time       = 0;
 
   MPI_Barrier(MPI_COMM_WORLD);
 

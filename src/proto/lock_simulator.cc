@@ -21,13 +21,14 @@ LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
   total_num_lock_success_   = 0;
   total_num_lock_failure_   = 0;
   total_time_taken_to_lock_ = 0;
+  is_all_local_             = false;
 
   pthread_mutex_init(&mutex_, NULL);
 }
 
 LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
     int num_lock_object, int duration, bool verbose, bool measure_lock_time,
-    int workload_type, int lock_mode) {
+    int workload_type, int lock_mode, double local_percentage) {
   manager_                  = manager;
   id_                       = id;
   num_manager_              = num_manager;
@@ -40,11 +41,13 @@ LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
   measure_lock_time_        = measure_lock_time;
   workload_type_            = workload_type;
   lock_mode_                = lock_mode;
+  local_percentage_         = local_percentage;
   total_num_locks_          = 0;
   total_num_unlocks_        = 0;
   total_num_lock_success_   = 0;
   total_num_lock_failure_   = 0;
   total_time_taken_to_lock_ = 0;
+  is_all_local_             = false;
 
   pthread_mutex_init(&mutex_, NULL);
 }
@@ -56,22 +59,34 @@ LockSimulator::~LockSimulator() {
 void LockSimulator::Run() {
   time(&start_time_);
   srand(time(NULL)+id_);
+  srand48(time(NULL)+id_);
 
-  if (workload_type_ == WORKLOAD_ALL_LOCAL &&
-      lock_mode_ == LockManager::LOCK_LOCAL) {
-    while (true) {
-      CreateLockRequests();
-      time(&current_time_);
+  StartLockRequests();
+  //if (workload_type_ == WORKLOAD_ALL_LOCAL &&
+      //lock_mode_ == LockManager::LOCK_LOCAL) {
+    //while (true) {
+      //CreateLockRequests();
+      //time(&current_time_);
 
-      if (difftime(current_time_, start_time_) >= duration_) {
-        if (verbose_)
-          cout << "Time limit of " << duration_ << " has reached. Terminating.";
-        state_ = LockSimulator::STATE_DONE;
-        return;
-      }
-    }
-  } else {
-    CreateLockRequests();
+      //if (difftime(current_time_, start_time_) >= duration_) {
+        //if (verbose_)
+          //cout << "Time limit of " << duration_ << " has reached. Terminating.";
+        //state_ = LockSimulator::STATE_DONE;
+        //return;
+      //}
+    //}
+  //} else {
+    //CreateLockRequests();
+  //}
+}
+
+void LockSimulator::StartLockRequests() {
+begin_lock:
+  CreateLockRequests();
+
+  if (is_all_local_ && lock_mode_ == LockManager::LOCK_LOCAL &&
+      state_ != LockSimulator::STATE_DONE) {
+    goto begin_lock;
   }
 }
 
@@ -98,6 +113,16 @@ void LockSimulator::CreateLockRequests() {
     }
   }
 
+  if (workload_type_ == WORKLOAD_MIXED) {
+    if (drand48() < local_percentage_) {
+      is_all_local_ = true;
+    } else {
+      is_all_local_ = false;
+    }
+  } else if (workload_type_ == WORKLOAD_ALL_LOCAL) {
+    is_all_local_ = true;
+  }
+
   for (int i = 0; i < request_size_; ++i) {
     //requests_[i]->lm_id = 0;
     //requests_[i]->lm_id = rand() % num_manager_;
@@ -120,34 +145,26 @@ void LockSimulator::CreateLockRequests() {
       case WORKLOAD_ALL_LOCAL:
         requests_[i]->lm_id = manager_->GetID(); // local only
         break;
+      case WORKLOAD_MIXED:
+        if (is_all_local_) {
+          requests_[i]->lm_id = manager_->GetID(); // local only
+        } else {
+          requests_[i]->lm_id = rand() % num_manager_;
+        }
+        break;
       default:
         break;
     }
 
-    //if (is_all_local_) {
-      //requests_[i]->lm_id = manager_->GetID(); // local only
-    //} else {
-      //requests_[i]->lm_id = rand() % num_manager_;
-    //}
     requests_[i]->obj_index = rand() % num_lock_object_;
     requests_[i]->lock_type = rand() % 2;
-    //requests_[i]->lock_type = 0;
-    //if (total_num_locks_ == 0) {
-      //requests_[i]->lock_type = 0;
-    //} else {
-      //if (i==0)
-        //requests_[i]->lock_type = 1;
-      //else
-        //requests_[i]->lock_type = 0;
-    //}
     requests_[i]->task = LockManager::TASK_LOCK;
   }
 
   last_request_idx_ = 0;
   current_request_idx_ = 0;
 
-  if (workload_type_ == WORKLOAD_ALL_LOCAL &&
-      lock_mode_ == LockManager::LOCK_LOCAL) {
+  if (is_all_local_ && lock_mode_ == LockManager::LOCK_LOCAL) {
     SubmitLockRequestLocal();
   } else {
     SubmitLockRequest();
@@ -190,7 +207,7 @@ void LockSimulator::SubmitUnlockRequest() {
     last_request_idx_ = current_request_idx_;
     --current_request_idx_;
   } else {
-    CreateLockRequests();
+    StartLockRequests();
   }
 }
 
