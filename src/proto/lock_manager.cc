@@ -10,6 +10,7 @@ LockManager::LockManager(const string& work_dir, uint32_t rank,
   num_manager_                     = num_manager;
   num_lock_object_                 = num_lock_object;
   lock_table_                      = new uint64_t[num_lock_object_];
+  lock_mode_table_                 = new int[num_manager_];
   listener_                        = NULL;
   event_channel_                   = NULL;
   registered_memory_region_        = NULL;
@@ -19,9 +20,24 @@ LockManager::LockManager(const string& work_dir, uint32_t rank,
   total_local_shared_lock_time_    = 0;
   num_local_exclusive_lock_        = 0;
   num_local_shared_lock_           = 0;
+  num_local_lock_                  = 0;
+  num_remote_lock_                 = 0;
+
+  if (lock_mode_ == LOCK_ADAPTIVE) {
+    current_lock_mode_ = LOCK_REMOTE;
+  } else {
+    current_lock_mode_ = lock_mode_;
+  }
 
   // initialize lock table with 0
   memset(lock_table_, 0x00, num_lock_object_*sizeof(uint64_t));
+
+  lock_mode_table_[rank_] = current_lock_mode_;
+
+  //for (int i=0;i<num_manager_;++i) {
+    //// every lock manager starts in remote mode.
+    //lock_mode_table_[i] = LockManager::LOCK_REMOTE;
+  //}
 
   // initialize local lock mutex
   lock_mutex_ = new pthread_mutex_t*[num_lock_object_];
@@ -31,6 +47,9 @@ LockManager::LockManager(const string& work_dir, uint32_t rank,
 LockManager::~LockManager() {
   if (lock_table_)
     delete[] lock_table_;
+
+  if (lock_mode_table_)
+    delete[] lock_mode_table_;
 
   // destroy mutex and free the resource
   for (int i=0;i<num_lock_object_;++i) {
@@ -320,13 +339,65 @@ int LockManager::HandleConnectRequest(struct rdma_cm_id* id) {
 int LockManager::HandleConnection(Context* context) {
   //cout << "Client connected." << endl;
   context->connected = true;
+  context_set_.insert(context);
+  // if lock mode == local (i.e., proxy, we disable atomic operations)
+  if (current_lock_mode_ == LOCK_LOCAL) {
+    struct ibv_qp_attr attr;
+    memset(&attr, 0x00, sizeof(attr));
+    attr.qp_access_flags = IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE;
+    if (ibv_modify_qp(context->queue_pair, &attr, IBV_QP_ACCESS_FLAGS)) {
+      cerr << "ibv_modify_qp() failed." << endl;
+      return -1;
+    }
+  }
+  return 0;
+}
 
+int LockManager::UpdateLockModeTable(int manager_id, int mode) {
+  lock_mode_table_[manager_id] = mode;
+  return 0;
+}
+
+int LockManager::DisableRemoteAtomicAccess() {
+  struct ibv_qp_attr attr;
+  memset(&attr, 0x00, sizeof(attr));
+
+  attr.qp_access_flags = IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE;
+
+  for (set<Context*>::iterator it = context_set_.begin();
+      it != context_set_.end(); ++it) {
+    Context* context = *it;
+    if (ibv_modify_qp(context->queue_pair, &attr, IBV_QP_ACCESS_FLAGS)) {
+      cerr << "ibv_modify_qp() failed." << endl;
+      return -1;
+    }
+  }
+  return 0;
+}
+
+int LockManager::EnableRemoteAtomicAccess() {
+  struct ibv_qp_attr attr;
+  memset(&attr, 0x00, sizeof(attr));
+
+  attr.qp_access_flags = IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE |
+    IBV_ACCESS_REMOTE_ATOMIC;
+
+  for (set<Context*>::iterator it = context_set_.begin();
+      it != context_set_.end(); ++it) {
+    Context* context = *it;
+    if (ibv_modify_qp(context->queue_pair, &attr, IBV_QP_ACCESS_FLAGS)) {
+      cerr << "ibv_modify_qp() failed." << endl;
+      return -1;
+    }
+  }
   return 0;
 }
 
 int LockManager::HandleDisconnect(Context* context) {
   // rdma_destroy_qp() causes seg fault when client disconnects. why?
   //rdma_destroy_qp(context->id);
+
+  context_set_.erase(context);
 
   if (context->send_mr)
     ibv_dereg_mr(context->send_mr);
@@ -347,10 +418,12 @@ int LockManager::HandleDisconnect(Context* context) {
   return 0;
 }
 
-// Send local lock table memory region to client.
+// Send local lock table memory region + current lock mode to client.
 int LockManager::SendLockTableMemoryRegion(Context* context) {
-  RegisterContext(context);
-  context->send_message->type = Message::LOCK_TABLE_MR;
+  context->send_message->type       = Message::LOCK_TABLE_MR;
+  context->send_message->lock_mode  = current_lock_mode_;
+  context->send_message->manager_id = rank_;
+
   memcpy(&context->send_message->lock_table_mr, context->lock_table_mr,
       sizeof(context->send_message->lock_table_mr));
   if (SendMessage(context)) {
@@ -396,35 +469,92 @@ int LockManager::SendUnlockRequestResult(Context* context, int user_id,
   return 0;
 }
 
+int LockManager::NotifyLockModeAll() {
+  for (set<Context*>::iterator it = context_set_.begin();
+      it != context_set_.end(); ++it) {
+    Context* context = *it;
+    NotifyLockMode(context);
+  }
+}
+
+int LockManager::NotifyLockMode(Context* context) {
+  context->send_message->type       = Message::LOCK_MODE;
+  context->send_message->manager_id = rank_;
+  context->send_message->lock_mode  = current_lock_mode_;
+  if (SendMessage(context)) {
+    cerr << "SendUnlockRequestResult(): SendMessage() failed." << endl;
+    return -1;
+  }
+  return 0;
+}
+
 int LockManager::Lock(int user_id, int manager_id, int lock_type,
     int obj_index) {
   LockClient* lock_client = lock_clients_[manager_id*MAX_USER+user_id];
-  return lock_client->RequestLock(user_id, lock_type, obj_index, lock_mode_);
-  //Context* context = context_map_[manager_id*MAX_USER+user_id];
+  if (lock_mode_ == LockManager::LOCK_ADAPTIVE) {
+    if (manager_id == this->GetID()) {
+      ++num_local_lock_;
+      if (num_local_lock_ + num_remote_lock_ > NUM_LOCK_HISTORY) {
+        if (num_local_lock_ > NUM_LOCK_HISTORY) {
+          num_local_lock_ = NUM_LOCK_HISTORY;
+        } else {
+          --num_remote_lock_;
+        }
+      }
+    } else {
+      ++num_remote_lock_;
+      if (num_local_lock_ + num_remote_lock_ > NUM_LOCK_HISTORY) {
+        if (num_remote_lock_ > NUM_LOCK_HISTORY) {
+          num_remote_lock_ = NUM_LOCK_HISTORY;
+        } else {
+          --num_local_lock_;
+        }
+      }
+    }
 
-  //if (lock_mode_ == LockManager::LOCK_LOCAL && rank_ == manager_id) {
-    //return LockLocally(context, user_id, lock_type, obj_index);
-  //} else {
-    //return lock_client->RequestLock(user_id, lock_type, obj_index, lock_mode_);
-  //}
+    if ((double)num_local_lock_ / (double)(num_local_lock_ + num_remote_lock_) >=
+        ADAPT_THRESHOLD && current_lock_mode_ == LockManager::LOCK_REMOTE) {
+      SwitchToLocal();
+    } else if ((double)num_local_lock_ / (double)(num_local_lock_ + num_remote_lock_) <
+        ADAPT_THRESHOLD && current_lock_mode_ == LockManager::LOCK_LOCAL) {
+      SwitchToRemote();
+    }
+  }
+
+  return lock_client->RequestLock(user_id, lock_type, obj_index,
+      lock_mode_table_[manager_id]);
+}
+
+int LockManager::SwitchToLocal() {
+  current_lock_mode_ = LOCK_LOCAL;
+  NotifyLockModeAll();
+  usleep(100000);
+  DisableRemoteAtomicAccess();
+  return 0;
+}
+
+int LockManager::SwitchToRemote() {
+  current_lock_mode_ = LOCK_REMOTE;
+  NotifyLockModeAll();
+  usleep(100000);
+  EnableRemoteAtomicAccess();
+  return 0;
 }
 
 int LockManager::Unlock(int user_id, int manager_id, int lock_type,
     int obj_index) {
   LockClient* lock_client = lock_clients_[manager_id*MAX_USER+user_id];
-  return lock_client->RequestUnlock(user_id, lock_type, obj_index, lock_mode_);
-  //Context* context = context_map_[manager_id*MAX_USER+user_id];
-
-  //if (lock_mode_ == LockManager::LOCK_LOCAL && rank_ == manager_id) {
-    //return UnlockLocally(context, user_id, lock_type, obj_index);
-  //}
-  //else {
-    //return lock_client->RequestUnlock(user_id, lock_type, obj_index, lock_mode_);
-  //}
+  return lock_client->RequestUnlock(user_id, lock_type, obj_index,
+      lock_mode_table_[manager_id]);
 }
 
 int LockManager::LockLocally(Context* context) {
 
+  // if current lock mode is remote (i.e. direct), then notify back.
+  if (current_lock_mode_ == LOCK_REMOTE) {
+    NotifyLockMode(context);
+    return -1;
+  }
   // get time
   clock_gettime(CLOCK_MONOTONIC, &start_local_lock_);
 
@@ -490,6 +620,12 @@ int LockManager::LockLocally(Context* context) {
 
 int LockManager::LockLocally(Context* context, int user_id, int lock_type,
     int obj_index) {
+
+  // if current lock mode is remote (i.e. direct), then notify back.
+  if (current_lock_mode_ == LOCK_REMOTE) {
+    NotifyLockMode(context);
+    return -1;
+  }
 
   // get time
   clock_gettime(CLOCK_MONOTONIC, &start_local_lock_);
@@ -589,6 +725,12 @@ int LockManager::LockLocalDirect(int user_id, int lock_type, int obj_index) {
 
 int LockManager::UnlockLocally(Context* context) {
 
+  // if current lock mode is remote (i.e. direct), then notify back.
+  if (current_lock_mode_ == LOCK_REMOTE) {
+    NotifyLockMode(context);
+    return -1;
+  }
+
   int lock_result;
   int user_id   = context->receive_message->user_id;
   int obj_index = context->receive_message->obj_index;
@@ -638,6 +780,12 @@ int LockManager::UnlockLocally(Context* context) {
 
 int LockManager::UnlockLocally(Context* context, int user_id, int lock_type,
     int obj_index) {
+
+  // if current lock mode is remote (i.e. direct), then notify back.
+  if (current_lock_mode_ == LOCK_REMOTE) {
+    NotifyLockMode(context);
+    return -1;
+  }
 
   int lock_result;
   uint64_t* lock_object = (lock_table_+obj_index);
@@ -720,6 +868,14 @@ int LockManager::UnlockLocalDirect(int user_id, int lock_type, int obj_index) {
   pthread_mutex_unlock(lock_mutex_[obj_index]);
 
   return lock_result;
+}
+
+int LockManager::UpdateLockTableLocal(Context* context) {
+  return 0;
+}
+
+int LockManager::UpdateLockTableRemote(Context* context) {
+  return 0;
 }
 
 int LockManager::NotifyLockRequestResult(int user_id, int lock_type,
@@ -896,8 +1052,7 @@ int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
 }
 
 int LockManager::RegisterContext(Context* context) {
-  context_map_[MAX_USER * context->receive_message->manager_id +
-    context->receive_message->user_id] = context;
+  context_set_.insert(context);
   return 0;
 }
 
@@ -977,7 +1132,7 @@ void* LockManager::PollCompletionQueue(void* arg) {
 }
 
 int LockManager::GetLockMode() const {
-  return lock_mode_;
+  return current_lock_mode_;
 }
 
 void* LockManager::RunLockClient(void* args) {

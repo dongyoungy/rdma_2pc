@@ -15,6 +15,7 @@
 #include <iostream>
 #include <vector>
 #include <map>
+#include <set>
 
 #include "lock_simulator.h"
 #include "lock_client.h"
@@ -40,6 +41,7 @@ class LockManager {
     int Unlock(int user_id, int manager_id, int lock_type, int obj_index);
     int LockLocalDirect(int user_id, int lock_type, int obj_index);
     int UnlockLocalDirect(int user_id, int lock_type, int obj_index);
+    int UpdateLockModeTable(int manager_id, int mode);
     int NotifyLockRequestResult(int user_id, int lock_type, int obj_index,
         int result);
     int NotifyUnlockRequestResult(int user_id, int lock_type, int obj_index,
@@ -53,6 +55,8 @@ class LockManager {
     double GetAverageRemoteSharedLockTime() const;
     double GetAverageSendMessageTime() const;
     double GetAverageReceiveMessageTime() const;
+    int SwitchToLocal();
+    int SwitchToRemote();
     static void* PollCompletionQueue(void* context);
     static void* RunLockClient(void* args);
 
@@ -61,6 +65,7 @@ class LockManager {
 
     static const int LOCK_LOCAL = 0;
     static const int LOCK_REMOTE = 1;
+    static const int LOCK_ADAPTIVE = 2;
 
     static const int TASK_LOCK = 0;
     static const int TASK_UNLOCK = 1;
@@ -70,6 +75,8 @@ class LockManager {
     static const int RESULT_RETRY = 2;
 
     static const int MAX_USER = 65536;
+    static const int NUM_LOCK_HISTORY = 10000;
+    static const double ADAPT_THRESHOLD = 0.8;
 
   private:
     Context* BuildContext(struct rdma_cm_id* id);
@@ -81,6 +88,8 @@ class LockManager {
     int RegisterContext(Context* context);
     int RegisterMemoryRegion(Context* context);
     int ReceiveMessage(Context* context);
+    int NotifyLockMode(Context* context);
+    int NotifyLockModeAll();
     int SendMessage(Context* context);
     int SendLockTableMemoryRegion(Context* context);
     int SendLockRequestResult(Context* context, int user_id,
@@ -93,6 +102,10 @@ class LockManager {
     int UnlockLocally(Context* context);
     int UnlockLocally(Context* context, int user_id, int lock_type,
         int obj_index);
+    int DisableRemoteAtomicAccess();
+    int EnableRemoteAtomicAccess();
+    int UpdateLockTableLocal(Context* context);
+    int UpdateLockTableRemote(Context* context);
     int HandleWorkCompletion(struct ibv_wc* work_completion);
     int HandleEvent(struct rdma_cm_event* event);
     int HandleConnectRequest(struct rdma_cm_id* id);
@@ -102,20 +115,24 @@ class LockManager {
 
     // each client connects to each lock manager in the cluster
     map<int, LockClient*> lock_clients_;
-    map<int, Context*> context_map_;
+    set<Context*> context_set_;
     vector<pthread_t*> lock_client_threads_;
 
-    // vector for actual user/sclients/simulators
+    // vector for actual user/clients/simulators
     vector<LockSimulator*> users;
     map<int, LockSimulator*> user_map;
     map<int, pthread_mutex_t*> user_mutex_map;
 
     string work_dir_;
     uint64_t* lock_table_;
+    int* lock_mode_table_;
     uint32_t rank_;
     int lock_mode_;
+    int current_lock_mode_;
     int num_manager_;
     int num_lock_object_;
+    int num_local_lock_;
+    int num_remote_lock_;
     struct ibv_mr* registered_memory_region_;
     struct rdma_cm_id* listener_;
     struct rdma_event_channel* event_channel_;

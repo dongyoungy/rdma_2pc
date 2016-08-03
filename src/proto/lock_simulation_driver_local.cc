@@ -85,10 +85,11 @@ int main(int argc, char** argv) {
         rank*num_managers+(i+1), // id
         num_managers,
         num_lock_object,
+        10, // num lock requests
         duration,
         false, // verbose
-        false, // measure lock
-        workload_type, // is all local?
+        true, // measure lock
+        workload_type,
         lock_mode,
         local_workload_ratio
         );
@@ -124,10 +125,16 @@ int main(int argc, char** argv) {
      exit(-1);
   }
 
+
+  int count = 0;
   for (int i=0;i<users.size();++i) {
     LockSimulator* simulator = users[i];
     while (simulator->GetState() != LockSimulator::STATE_DONE) {
        sleep(1);
+       //++count;
+       //if (count == 3) {
+         //lock_manager->SwitchToLocal();
+       //}
     }
   }
 

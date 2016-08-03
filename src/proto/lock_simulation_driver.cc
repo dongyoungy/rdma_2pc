@@ -25,10 +25,10 @@ int main(int argc, char** argv) {
 
   MPI_Init(&argc, &argv);
 
-  if (argc != 8) {
-    cout << argv[0] << " <work_dir> <num_lock_object>" <<
+  if (argc < 9) {
+    cout << argv[0] << " <work_dir> <num_lock_object> <num_requests>" <<
       " <num_users> <lock_mode> <workload_type> <local_workload_ratio> " <<
-      "<duration>" << endl;
+      "<shared_lock_ratio> <duration> <transaction_delay> <transaction_delay_min> <transaction_delay_max>" << endl;
     exit(1);
   }
 
@@ -46,17 +46,24 @@ int main(int argc, char** argv) {
   }
 
   int num_lock_object         = atoi(argv[2]);
-  int num_users               = atoi(argv[3]);
-  int lock_mode               = atoi(argv[4]);
-  int workload_type           = atoi(argv[5]);
-  double local_workload_ratio = atof(argv[6]);
-  int duration                = atoi(argv[7]);
+  int num_requests            = atoi(argv[3]);
+  int num_users               = atoi(argv[4]);
+  int lock_mode               = atoi(argv[5]);
+  int workload_type           = atoi(argv[6]);
+  double local_workload_ratio = atof(argv[7]);
+  double shared_lock_ratio    = atof(argv[8]);
+  int duration                = atoi(argv[9]);
+  int transaction_delay_num   = atoi(argv[10]);
+  int transaction_delay_min   = atoi(argv[11]);
+  int transaction_delay_max   = atoi(argv[12]);
+
+  bool transaction_delay = (transaction_delay_num == 0) ? false : true;
 
   string lock_mode_str;
   if (lock_mode == LockManager::LOCK_LOCAL) {
-    lock_mode_str = "LOCK_MODE_LOCAL";
+    lock_mode_str = "LOCK_MODE_PROXY";
   } else if (lock_mode == LockManager::LOCK_REMOTE) {
-    lock_mode_str = "LOCK_MODE_REMOTE";
+    lock_mode_str = "LOCK_MODE_DIRECT";
   }
 
   string workload_type_str;
@@ -72,8 +79,23 @@ int main(int argc, char** argv) {
     workload_type_str = buf;
   }
 
+  string local_workload_ratio_str;
+  char buf[32];
+  sprintf(buf, "%.0f%%", local_workload_ratio * 100);
+  local_workload_ratio_str = buf;
+  if (workload_type == LockSimulator::WORKLOAD_HOTSPOT) {
+    local_workload_ratio_str = "N/A";
+  }
+
+  string shared_lock_ratio_str;
+  sprintf(buf, "%.0f%%", shared_lock_ratio * 100);
+  shared_lock_ratio_str = buf;
+
+  string transaction_delay_str = (transaction_delay ? "TRUE" : "FALSE");
+
   if (rank == 0) {
-    cout << "Type of Workload = " << workload_type_str << endl;
+    cout << "Type of Workload = " << workload_type_str << " (Shared Lock: " <<
+      shared_lock_ratio * 100.0 << "%)" << endl;
     cout << "Duration = " << duration << " seconds"  << endl;
   }
 
@@ -98,12 +120,17 @@ int main(int argc, char** argv) {
         rank*num_managers+(i+1), // id
         num_managers,
         num_lock_object,
+        num_requests,
         duration,
         false, // verbose
         true, // measure lock time
         workload_type, // type of workload
         lock_mode,
-        local_workload_ratio
+        local_workload_ratio,
+        shared_lock_ratio,
+        transaction_delay,
+        transaction_delay_min,
+        transaction_delay_max
         );
     lock_manager->RegisterUser(rank*num_managers+(i+1), simulator);
     users.push_back(simulator);
@@ -168,6 +195,8 @@ int main(int argc, char** argv) {
   double global_send_message_time          = 0;
   double local_receive_message_time        = 0;
   double global_receive_message_time       = 0;
+  double local_99_lock_time                = 0;
+  double global_99_lock_time               = 0;
 
   MPI_Barrier(MPI_COMM_WORLD);
 
@@ -182,6 +211,7 @@ int main(int argc, char** argv) {
         local_lock_failure += simulator->GetTotalNumLockFailure();
         if (simulator->IsLockTimeMeasured()) {
           local_lock_time += simulator->GetAverageTimeTakenToLock();
+          local_99_lock_time += simulator->Get99PercentileLockTime();
         }
       }
       //MPI_Barrier(MPI_COMM_WORLD);
@@ -215,6 +245,8 @@ int main(int argc, char** argv) {
       MPI_COMM_WORLD);
   MPI_Reduce(&local_cpu_usage, &global_cpu_usage, 1, MPI_DOUBLE, MPI_SUM, 0,
       MPI_COMM_WORLD);
+  MPI_Reduce(&local_99_lock_time, &global_99_lock_time, 1, MPI_DOUBLE, MPI_SUM, 0,
+      MPI_COMM_WORLD);
   MPI_Reduce(&local_remote_shared_lock_time,
       &global_remote_shared_lock_time,
       1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
@@ -234,11 +266,13 @@ int main(int argc, char** argv) {
       &global_receive_message_time,
       1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 
-  MPI_Barrier(MPI_COMM_WORLD);
     cout << "Local Avg CPU Usage = " << local_cpu_usage << "% "
       "(" << "ID = " << rank <<  " ,# nodes: " << num_managers <<
       ", duration: " << duration << ", mode: " << lock_mode_str << ")" << endl;
+  MPI_Barrier(MPI_COMM_WORLD);
+
   if (rank==0) {
+    cout << endl;
     cout << "Global Total Lock # = " << global_sum << "(# nodes: " <<
       num_managers << ", duration: " <<
       duration << ", mode: " << lock_mode_str << ")" << endl;
@@ -282,6 +316,19 @@ int main(int argc, char** argv) {
       global_cpu_usage / num_managers << "% "
       "(# nodes: " << num_managers << ", duration: " <<
       duration << ", mode: " << lock_mode_str << ")" << endl;
+
+    cerr << lock_mode_str << "," << workload_type_str << "," << num_managers
+      << "," << num_lock_object << "," << num_requests << "," <<
+      local_workload_ratio_str << "," << shared_lock_ratio_str << "," <<
+      transaction_delay_str << ",";
+    if (transaction_delay) {
+      cerr << transaction_delay_min << "," << transaction_delay_max << ",";
+    } else {
+      cerr << "N/A,N/A,";
+    }
+    cerr << global_lock_time / num_managers <<
+      "," << global_99_lock_time / num_managers << "," <<
+      global_sum / duration << "," << global_cpu_usage / num_managers << endl;
   }
 
   MPI_Finalize();

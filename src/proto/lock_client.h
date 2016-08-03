@@ -34,6 +34,8 @@ class LockClient {
     Context* GetContext();
     int RequestLock(int user_id, int lock_type, int obj_index, int lock_mode);
     int RequestUnlock(int user_id, int lock_type, int obj_index, int lock_mode);
+    //int SendSwitchToLocal();
+    //int SendSwitchToRemote();
     double GetAverageRemoteExclusiveLockTime() const;
     double GetAverageRemoteSharedLockTime() const;
     double GetAverageSendMessageTime() const;
@@ -55,6 +57,7 @@ class LockClient {
     int UnlockRemotely(Context* context, int user_id, int lock_type,
         int obj_index);
     int SendLockTableRequest(Context* context);
+    int SendLockModeRequest(Context* context);
     int SendLockRequest(Context* context, int user_id,
         int lock_type, int obj_index);
     int SendUnlockRequest(Context* context, int user_id,

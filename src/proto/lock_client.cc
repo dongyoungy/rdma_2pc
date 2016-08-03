@@ -426,23 +426,43 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
   Context* context = (Context *)work_completion->wr_id;
 
   if (work_completion->status != IBV_WC_SUCCESS) {
-    cerr << "Work completion status is not IBV_WC_SUCCESS: " <<
-      work_completion->status << endl;
-    return -1;
+    if (work_completion->opcode == IBV_WC_COMP_SWAP ||
+        work_completion->opcode == IBV_WC_FETCH_ADD) {
+      SendLockModeRequest(context);
+      local_manager_->NotifyLockRequestResult(context->last_user_id,
+          context->last_lock_type,
+          context->last_obj_index,
+          LockManager::RESULT_FAILURE);
+      return 0;
+    }
+    else {
+      cerr << "Work completion status is not IBV_WC_SUCCESS: " <<
+        work_completion->status << endl;
+      return -1;
+    }
   }
 
   if (work_completion->opcode == IBV_WC_RECV) {
     // post receive first.
     ReceiveMessage(context);
 
-    // if received lock table MR info
+    // if received lock table MR info + current lock mode
     if (context->receive_message->type == Message::LOCK_TABLE_MR) {
       //cout << "received lock table MR." << endl;
       // copy server rdma semaphore region
+      local_manager_->UpdateLockModeTable(
+          context->receive_message->manager_id,
+          context->receive_message->lock_mode
+          );
       context->lock_table_mr = new ibv_mr;
       memcpy(context->lock_table_mr,
           &context->receive_message->lock_table_mr,
           sizeof(*context->lock_table_mr));
+    } else if (context->receive_message->type == Message::LOCK_MODE) {
+      local_manager_->UpdateLockModeTable(
+          context->receive_message->manager_id,
+          context->receive_message->lock_mode
+          );
     } else if (context->receive_message->type == Message::LOCK_REQUEST_RESULT) {
       //cout << "received lock request result." << endl;
       local_manager_->NotifyLockRequestResult(context->receive_message->user_id,
@@ -558,6 +578,40 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     }
   }
 
+  return 0;
+}
+
+// Requests lock mode of lock manager via IBV_WR_SEND op.
+int LockClient::SendLockModeRequest(Context* context) {
+
+  clock_gettime(CLOCK_MONOTONIC, &start_send_message_);
+
+  context->send_message->type       = Message::LOCK_MODE_REQUEST;
+  context->send_message->manager_id = local_manager_->GetID();
+  context->send_message->user_id    = local_user_->GetID();
+
+  struct ibv_send_wr send_work_request;
+  struct ibv_send_wr* bad_work_request;
+  struct ibv_sge sge;
+
+  memset(&send_work_request, 0x00, sizeof(send_work_request));
+
+  send_work_request.wr_id      = (uint64_t)context;
+  send_work_request.opcode     = IBV_WR_SEND;
+  send_work_request.sg_list    = &sge;
+  send_work_request.num_sge    = 1;
+  send_work_request.send_flags = IBV_SEND_SIGNALED;
+
+  sge.addr   = (uint64_t)context->send_message;
+  sge.length = sizeof(*context->send_message);
+  sge.lkey   = context->send_mr->lkey;
+
+  int ret = 0;
+  if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
+          &bad_work_request))) {
+    cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
+    return -1;
+  }
   return 0;
 }
 
@@ -736,6 +790,34 @@ int LockClient::UnlockRemotely(Context* context, int user_id, int lock_type,
 
   return 0;
 }
+
+//int LockClient::SendSwitchToLocal() {
+  //pthread_mutex_lock(&lock_mutex_);
+  //context_->send_message->type = Message::SWITCH_TO_LOCAL;
+  //context_->send_message->manager_id = local_manager_->GetID();
+
+  //if (SendMessage(context_)) {
+    //cerr << "SendSwitchToLocal(): SendMessage() failed." << endl;
+    //pthread_mutex_unlock(&lock_mutex_);
+    //return -1;
+  //}
+
+  //pthread_mutex_unlock(&lock_mutex_);
+//}
+
+//int LockClient::SendSwitchToRemote() {
+  //pthread_mutex_lock(&lock_mutex_);
+  //context_->send_message->type = Message::SWITCH_TO_REMOTE;
+  //context_->send_message->manager_id = local_manager_->GetID();
+
+  //if (SendMessage(context_)) {
+    //cerr << "SendSwitchToRemote(): SendMessage() failed." << endl;
+    //pthread_mutex_unlock(&lock_mutex_);
+    //return -1;
+  //}
+
+  //pthread_mutex_unlock(&lock_mutex_);
+//}
 
 int LockClient::SendLockRequest(Context* context, int user_id,
     int lock_type, int obj_index) {
