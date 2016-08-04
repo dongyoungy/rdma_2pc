@@ -171,14 +171,14 @@ int main(int argc, char** argv) {
     }
   }
 
-  int local_sum                            = 0;
-  int global_sum                           = 0;
-  int local_unlock_sum                     = 0;
-  int global_unlock_sum                    = 0;
-  int local_lock_success                   = 0;
-  int global_lock_success                  = 0;
-  int local_lock_failure                   = 0;
-  int global_lock_failure                  = 0;
+  long local_sum                            = 0;
+  long global_sum                           = 0;
+  long local_unlock_sum                     = 0;
+  long global_unlock_sum                    = 0;
+  long local_lock_success                   = 0;
+  long global_lock_success                  = 0;
+  long local_lock_failure                   = 0;
+  long global_lock_failure                  = 0;
   double local_lock_time                   = 0;
   double global_lock_time                  = 0;
   double local_cpu_usage                   = 0;
@@ -234,12 +234,12 @@ int main(int argc, char** argv) {
   local_cpu_usage = usage.total_cpu / usage.num_sample;
   MPI_Barrier(MPI_COMM_WORLD);
 
-  MPI_Reduce(&local_sum, &global_sum, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-  MPI_Reduce(&local_unlock_sum, &global_unlock_sum, 1, MPI_INT, MPI_SUM, 0,
+  MPI_Reduce(&local_sum, &global_sum, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_unlock_sum, &global_unlock_sum, 1, MPI_LONG, MPI_SUM, 0,
       MPI_COMM_WORLD);
-  MPI_Reduce(&local_lock_success, &global_lock_success, 1, MPI_INT, MPI_SUM, 0,
+  MPI_Reduce(&local_lock_success, &global_lock_success, 1, MPI_LONG, MPI_SUM, 0,
       MPI_COMM_WORLD);
-  MPI_Reduce(&local_lock_failure, &global_lock_failure, 1, MPI_INT, MPI_SUM, 0,
+  MPI_Reduce(&local_lock_failure, &global_lock_failure, 1, MPI_LONG, MPI_SUM, 0,
       MPI_COMM_WORLD);
   MPI_Reduce(&local_lock_time, &global_lock_time, 1, MPI_DOUBLE, MPI_SUM, 0,
       MPI_COMM_WORLD);
@@ -328,7 +328,7 @@ int main(int argc, char** argv) {
     }
     cerr << global_lock_time / num_managers <<
       "," << global_99_lock_time / num_managers << "," <<
-      global_sum / duration << "," << global_cpu_usage / num_managers << endl;
+      (long)((double)global_sum / (double)duration) << "," << global_cpu_usage / num_managers << endl;
   }
 
   MPI_Finalize();

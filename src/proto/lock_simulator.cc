@@ -463,6 +463,16 @@ int LockSimulator::NotifyResult(int task, int lock_type, int obj_index,
   pthread_mutex_lock(&mutex_);
 
   if (task == LockManager::TASK_LOCK) {
+
+    if (measure_lock_time_) {
+      clock_gettime(CLOCK_MONOTONIC, &end_lock_);
+      double time_taken = ((double)end_lock_.tv_sec * 1e+9 +
+          (double)end_lock_.tv_nsec) - ((double)start_lock_.tv_sec * 1e+9 +
+            (double)start_lock_.tv_nsec);
+      lock_times_[total_num_locks_-1] = time_taken;
+      total_time_taken_to_lock_ += time_taken;
+    }
+
     if (result == LockManager::RESULT_SUCCESS &&
         requests_[last_request_idx_]->lock_type == lock_type &&
         requests_[last_request_idx_]->obj_index == obj_index) {
@@ -472,14 +482,6 @@ int LockSimulator::NotifyResult(int task, int lock_type, int obj_index,
           requests_[last_request_idx_]->lm_id <<
           " of type " << requests_[last_request_idx_]->lock_type <<
           " for object " << requests_[last_request_idx_]->obj_index << endl;
-      }
-      if (measure_lock_time_) {
-        clock_gettime(CLOCK_MONOTONIC, &end_lock_);
-        double time_taken = ((double)end_lock_.tv_sec * 1e+9 +
-            (double)end_lock_.tv_nsec) - ((double)start_lock_.tv_sec * 1e+9 +
-            (double)start_lock_.tv_nsec);
-        lock_times_[total_num_locks_] = time_taken;
-        total_time_taken_to_lock_ += time_taken;
       }
       ++total_num_lock_success_;
       if (current_request_idx_ < request_size_) {
@@ -571,12 +573,12 @@ uint64_t LockSimulator::GetTotalNumLockFailure() const {
 }
 
 double LockSimulator::GetAverageTimeTakenToLock() const {
-  return total_time_taken_to_lock_ / (double)total_num_lock_success_;
+  return total_time_taken_to_lock_ / (double)total_num_locks_;
 }
 
 double LockSimulator::Get99PercentileLockTime() {
   sort(lock_times_, lock_times_ + total_num_locks_);
-  int pos = (int)((double)total_num_locks_ * 0.99);
+  size_t pos = (size_t)((double)total_num_locks_ * 0.99);
   return lock_times_[pos];
 }
 
