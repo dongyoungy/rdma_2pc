@@ -197,7 +197,7 @@ void LockSimulator::CreateLockRequests() {
   }
 
   if (workload_type_ == WORKLOAD_MIXED) {
-    if (drand48() < local_percentage_) {
+    if (drand48() < local_percentage_ || num_manager_ == 1) {
       is_all_local_ = true;
     } else {
       is_all_local_ = false;
@@ -206,21 +206,21 @@ void LockSimulator::CreateLockRequests() {
     is_all_local_ = true;
   }
 
-  bool check_all_local = true;
   for (int i = 0; i < request_size_; ++i) {
     if (is_all_local_) {
       requests_[i]->lm_id = local_manager_id_;
     } else {
-      double val = drand48();
-      for (int j = 0; j < num_manager_; ++j) {
-        if (val <= cdf_[j]) {
-          requests_[i]->lm_id = j;
-          if (j != local_manager_id_) {
-            check_all_local = false;
-          }
-          break;
-        }
-      }
+      requests_[i]->lm_id = rand() % num_manager_;
+      //double val = drand48();
+      //for (int j = 0; j < num_manager_; ++j) {
+        //if (val <= cdf_[j]) {
+          //requests_[i]->lm_id = j;
+          //if (j != local_manager_id_) {
+            //check_all_local = false;
+          //}
+          //break;
+        //}
+      //}
     }
     requests_[i]->obj_index = rand() % num_lock_object_;
     if (drand48() < shared_lock_ratio_) {
@@ -229,10 +229,6 @@ void LockSimulator::CreateLockRequests() {
       requests_[i]->lock_type = LockManager::EXCLUSIVE;
     }
     requests_[i]->task = LockManager::TASK_LOCK;
-  }
-
-  if (check_all_local) {
-    is_all_local_ = true;
   }
 
   //for (int i = 0; i < request_size_; ++i) {
