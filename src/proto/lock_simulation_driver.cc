@@ -81,14 +81,14 @@ int main(int argc, char** argv) {
 
   string local_workload_ratio_str;
   char buf[32];
-  sprintf(buf, "%.0f%%", local_workload_ratio * 100);
+  sprintf(buf, "%.4f%%", local_workload_ratio * 100);
   local_workload_ratio_str = buf;
   if (workload_type == LockSimulator::WORKLOAD_HOTSPOT) {
     local_workload_ratio_str = "N/A";
   }
 
   string shared_lock_ratio_str;
-  sprintf(buf, "%.0f%%", shared_lock_ratio * 100);
+  sprintf(buf, "%.4f%%", shared_lock_ratio * 100);
   shared_lock_ratio_str = buf;
 
   string transaction_delay_str = (transaction_delay ? "TRUE" : "FALSE");
