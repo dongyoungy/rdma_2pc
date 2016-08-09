@@ -12,7 +12,7 @@
 #BSUB -q normal                         # use the normal queue
 
 # mpirun.lsf --mca pml ob1 --mca btl self,sm,openib /gpfs/gpfs0/groups/mozafari/dyoon/work/rdma_2pc/bin/lock_simulation /gpfs/gpfs0/groups/mozafari/dyoon/work/temp 1 1 1 30
-mpirun.lsf --mca btl self,sm,openib /gpfs/gpfs0/groups/mozafari/dyoon/work/rdma_2pc/bin/lock_simulation /gpfs/gpfs0/groups/mozafari/dyoon/work/temp 512 2 0 0 $1 $2 60
+mpirun.lsf --mca btl self,sm,openib /gpfs/gpfs0/groups/mozafari/dyoon/work/rdma_2pc/bin/lock_simulation /gpfs/gpfs0/groups/mozafari/dyoon/work/temp $@
 
 # end of bsub
 
