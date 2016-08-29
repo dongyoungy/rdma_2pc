@@ -25,12 +25,11 @@ int main(int argc, char** argv) {
 
   if (argc != 8) {
     cout << argv[0] << " <work_dir> <num_lock_object>" <<
-      " <num_users> <lock_mode> <workload_type> <local_workload_ratio> "<<
+      " <num_nodes> <lock_mode> <workload_type> <local_workload_ratio> "<<
       "<duration>" << endl;
     exit(1);
   }
 
-  int num_managers = 1;
   int rank = 0;
 
   if (1 == htons(1)) {
@@ -40,7 +39,7 @@ int main(int argc, char** argv) {
   }
 
   int num_lock_object         = atoi(argv[2]);
-  int num_users               = atoi(argv[3]);
+  int num_nodes               = atoi(argv[3]);
   int lock_mode               = atoi(argv[4]);
   int workload_type           = atoi(argv[5]);
   double local_workload_ratio = atof(argv[6]);
@@ -59,31 +58,37 @@ int main(int argc, char** argv) {
     workload_type_str = buf;
   }
 
-  if (rank == 0) {
-    cout << "Type of Workload = " << workload_type_str << endl;
-    cout << "Duration = " << duration << " seconds"  << endl;
-  }
+  LockManager** nodes = new LockManager*[num_nodes];
 
-  LockManager* lock_manager = new LockManager(argv[1], rank, num_managers,
-      num_lock_object, lock_mode);
+  for (int i = 0; i < num_nodes;++i) {
+    if (i == 0) {
+      cout << "Type of Workload = " << workload_type_str << endl;
+      cout << "Duration = " << duration << " seconds"  << endl;
+    }
 
-  if (lock_manager->Initialize()) {
-    cerr << "LockManager initialization failure." << endl;
-    exit(-1);
-  }
+    LockManager* lock_manager = new LockManager(argv[1], i+1, num_nodes,
+        num_lock_object, lock_mode);
 
-  pthread_t lock_manager_thread;
-  if (pthread_create(&lock_manager_thread, NULL, RunLockManager,
-        (void*)lock_manager)) {
-     cerr << "pthread_create() error." << endl;
-     exit(-1);
+    nodes[i] = lock_manager;
+
+    if (lock_manager->Initialize()) {
+      cerr << "LockManager initialization failure." << endl;
+      exit(-1);
+    }
+
+    pthread_t lock_manager_thread;
+    if (pthread_create(&lock_manager_thread, NULL, RunLockManager,
+          (void*)lock_manager)) {
+      cerr << "pthread_create() error." << endl;
+      exit(-1);
+    }
   }
 
   vector<LockSimulator*> users;
-  for (int i=0;i<num_users;++i) {
-    LockSimulator* simulator = new LockSimulator(lock_manager,
-        rank*num_managers+(i+1), // id
-        num_managers,
+  for (int i=0;i<num_nodes;++i) {
+    LockSimulator* simulator = new LockSimulator(nodes[i],
+        i+1, // id
+        num_nodes,
         num_lock_object,
         1, // num lock requests
         duration,
@@ -93,20 +98,23 @@ int main(int argc, char** argv) {
         lock_mode,
         local_workload_ratio
         );
-    lock_manager->RegisterUser(rank*num_managers+(i+1), simulator);
+    nodes[i]->RegisterUser(i+1, simulator);
     users.push_back(simulator);
   }
 
-  sleep(3);
+  sleep(2);
 
-  if (lock_manager->InitializeLockClients()) {
-     cerr << "InitializeLockClients() failed." << endl;
-     exit(-1);
+  for (int i=0;i<num_nodes;++i) {
+    if (nodes[i]->InitializeLockClients()) {
+      cerr << "InitializeLockClients() failed." << endl;
+      exit(-1);
+    }
   }
+
 
   sleep(1);
 
-  for (int i=0;i<num_users;++i) {
+  for (int i=0;i<users.size();++i) {
     //users[i]->Run();
     pthread_t lock_simulator_thread;
     if (pthread_create(&lock_simulator_thread, NULL, &RunLockSimulator,
@@ -138,15 +146,10 @@ int main(int argc, char** argv) {
     }
   }
 
-  for (int i=0;i<num_managers;++i) {
-    if (rank==i) {
-      cout << "Node = " << rank << endl;
-      for (int j=0;j<users.size();++j) {
-        LockSimulator* simulator = users[j];
-        cout << "Total Lock # = " << simulator->GetTotalNumLocks() << endl;
-        cout << "Total Unlock # = " << simulator->GetTotalNumUnlocks() << endl;
-      }
-    }
+  for (int j=0;j<users.size();++j) {
+    LockSimulator* simulator = users[j];
+    cout << "Total Lock # = " << simulator->GetTotalNumLocks() << endl;
+    cout << "Total Unlock # = " << simulator->GetTotalNumUnlocks() << endl;
   }
   usage.terminate = true;
   pthread_join(cpu_measure_thread, NULL);

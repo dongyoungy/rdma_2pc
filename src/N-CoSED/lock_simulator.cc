@@ -207,33 +207,37 @@ void LockSimulator::CreateLockRequests() {
   }
 
   for (int i = 0; i < request_size_; ++i) {
-    if (workload_type_ == WORKLOAD_MIXED ||
-        workload_type_ == WORKLOAD_ALL_LOCAL) {
-      if (is_all_local_) {
-        requests_[i]->lm_id = local_manager_id_;
-      } else {
-        requests_[i]->lm_id = rand() % num_manager_;
-      }
-    } else {
-      double val = drand48();
-      for (int j = 0; j < num_manager_; ++j) {
-        if (val <= cdf_[j]) {
-          requests_[i]->lm_id = j;
-          break;
-        }
-      }
-    }
+    //if (workload_type_ == WORKLOAD_MIXED ||
+        //workload_type_ == WORKLOAD_ALL_LOCAL) {
+      //if (is_all_local_) {
+        //requests_[i]->lm_id = local_manager_id_;
+      //} else {
+        //requests_[i]->lm_id = 1 + rand() % num_manager_;
+      //}
+    //} else {
+      //double val = drand48();
+      //for (int j = 0; j < num_manager_; ++j) {
+        //if (val <= cdf_[j]) {
+          //requests_[i]->lm_id = j + 1;
+          //break;
+        //}
+      //}
+    //}
+    requests_[i]->lm_id = 1;
     requests_[i]->obj_index = rand() % num_lock_object_;
     if (drand48() < shared_lock_ratio_) {
-      requests_[i]->lock_type = LockManager::SHARED;
+      //requests_[i]->lock_type = LockManager::SHARED;
+      requests_[i]->lock_type = LockManager::EXCLUSIVE;
     } else {
       //requests_[i]->lock_type = LockManager::SHARED;
       requests_[i]->lock_type = LockManager::EXCLUSIVE;
     }
     //if (id_ == 1) {
       //requests_[i]->lock_type = LockManager::SHARED;
+      ////requests_[i]->lock_type = LockManager::EXCLUSIVE;
     //} else {
-      //requests_[i]->lock_type = LockManager::EXCLUSIVE;
+      //requests_[i]->lock_type = LockManager::SHARED;
+      ////requests_[i]->lock_type = LockManager::EXCLUSIVE;
     //}
     requests_[i]->task = LockManager::TASK_LOCK;
   }
@@ -290,7 +294,7 @@ void LockSimulator::CreateLockRequests() {
 
 void LockSimulator::SubmitLockRequest() {
 
-  //sleep(1);
+  //usleep(1000000+rand()%1000000);
 
   int lock_result = LockManager::RESULT_SUCCESS;
   state_ = LockSimulator::STATE_LOCKING;
@@ -346,11 +350,14 @@ void LockSimulator::SubmitLockRequest() {
   //}
 
   if (current_request_idx_ < request_size_) {
-    if (verbose_)
+    if (verbose_) {
+      pthread_mutex_lock(&LockManager::print_mutex);
       cout << "(REMOTE) Simulator " << id_ << ": " << "Sending lock request at LM " <<
         requests_[current_request_idx_]->lm_id <<
         " of type " << requests_[current_request_idx_]->lock_type <<
         " for object " << requests_[current_request_idx_]->obj_index << endl;
+      pthread_mutex_unlock(&LockManager::print_mutex);
+    }
     if (measure_lock_time_)
       clock_gettime(CLOCK_MONOTONIC, &start_lock_);
     manager_->Lock(id_, requests_[current_request_idx_]->lm_id,
@@ -368,7 +375,7 @@ void LockSimulator::SubmitLockRequest() {
 
 void LockSimulator::SubmitUnlockRequest() {
 
-  //sleep(1);
+  //usleep(1000000+rand()%1000000);
 
   int lock_result = LockManager::RESULT_SUCCESS;
   state_ = LockSimulator::STATE_UNLOCKING;
@@ -403,11 +410,14 @@ void LockSimulator::SubmitUnlockRequest() {
   //}
 
   if (current_request_idx_ >= 0) {
-    if (verbose_)
+    if (verbose_) {
+      pthread_mutex_lock(&LockManager::print_mutex);
       cout << "(REMOTE) Simulator " << id_ << ": " << "Sending unlock request at LM " <<
         requests_[current_request_idx_]->lm_id <<
         " of type " << requests_[current_request_idx_]->lock_type <<
         " for object " << requests_[current_request_idx_]->obj_index << endl;
+      pthread_mutex_unlock(&LockManager::print_mutex);
+    }
     manager_->Unlock(id_, requests_[current_request_idx_]->lm_id,
         requests_[current_request_idx_]->lock_type,
         requests_[current_request_idx_]->obj_index);
@@ -494,11 +504,13 @@ int LockSimulator::NotifyResult(int task, int lock_type, int home_id,
         requests_[last_request_idx_]->lock_type == lock_type &&
         requests_[last_request_idx_]->obj_index == obj_index) {
       if (verbose_) {
+        pthread_mutex_lock(&LockManager::print_mutex);
         cout << "Simulator " << id_ << ": " <<
           "Successful lock request at LM " <<
           requests_[last_request_idx_]->lm_id <<
           " of type " << requests_[last_request_idx_]->lock_type <<
           " for object " << requests_[last_request_idx_]->obj_index << endl;
+        pthread_mutex_unlock(&LockManager::print_mutex);
       }
       ++total_num_lock_success_;
       if (current_request_idx_ < request_size_) {
@@ -516,11 +528,13 @@ int LockSimulator::NotifyResult(int task, int lock_type, int home_id,
       //}
       current_request_idx_ = last_request_idx_ - 1;
       if (verbose_) {
+        pthread_mutex_lock(&LockManager::print_mutex);
         cout << "Simulator " << id_ << ": " <<
           "Unsuccessful lock request at LM " <<
           requests_[last_request_idx_]->lm_id <<
           " of type " << requests_[last_request_idx_]->lock_type <<
           " for object " << requests_[last_request_idx_]->obj_index << endl;
+        pthread_mutex_unlock(&LockManager::print_mutex);
       }
       ++total_num_lock_failure_;
       SubmitUnlockRequest();
@@ -530,31 +544,37 @@ int LockSimulator::NotifyResult(int task, int lock_type, int home_id,
         requests_[last_request_idx_]->lock_type == lock_type &&
         requests_[last_request_idx_]->obj_index == obj_index) {
       if (verbose_) {
+        pthread_mutex_lock(&LockManager::print_mutex);
         cout << "Simulator " << id_ << ": " <<
           "Successful unlock request at LM " <<
           requests_[last_request_idx_]->lm_id <<
           " of type " << requests_[last_request_idx_]->lock_type <<
           " for object " << requests_[last_request_idx_]->obj_index << endl;
+        pthread_mutex_unlock(&LockManager::print_mutex);
       }
       ++total_num_unlocks_;
       SubmitUnlockRequest();
     } else if (result == LockManager::RESULT_RETRY) {
       current_request_idx_ = last_request_idx_;
       if (verbose_) {
+        pthread_mutex_lock(&LockManager::print_mutex);
         cout << "Simulator " << id_ << ": " <<
           "retrying unlock request at LM " <<
           requests_[last_request_idx_]->lm_id <<
           " of type " << requests_[last_request_idx_]->lock_type <<
           " for object " << requests_[last_request_idx_]->obj_index << endl;
+        pthread_mutex_unlock(&LockManager::print_mutex);
       }
       SubmitUnlockRequest();
     } else {
       if (verbose_) {
+        pthread_mutex_lock(&LockManager::print_mutex);
         cout << "Simulator " << id_ << ": " <<
           "Unsuccessful unlock request at LM " <<
           requests_[last_request_idx_]->lm_id <<
           " of type " << requests_[last_request_idx_]->lock_type <<
           " for object " << requests_[last_request_idx_]->obj_index << endl;
+        pthread_mutex_unlock(&LockManager::print_mutex);
       }
       SubmitUnlockRequest();
     }

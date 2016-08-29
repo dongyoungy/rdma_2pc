@@ -34,17 +34,18 @@ class LockClient {
     Context* GetContext();
     int RequestLock(int home_id, int user_id, int lock_type, int obj_index, int lock_mode,
         uint64_t old_value = 0);
-    int RequestUnlock(int user_id, int lock_type, int obj_index,
+    int RequestUnlock(int home_id, int user_id, int lock_type, int obj_index,
         int lock_mode, uint64_t old_value = 0);
-    int SendExclusiveLockRequest(int current_owner, int new_owner, int home_id,
+    int SendSharedToExclusiveLockRequest(int new_owner, int home_id,
         int user_id, int obj_index, int shared_count = 0);
-    int SendSharedLockRequest(int current_owner, int new_owner, int home_id,
+    int SendExclusiveToExclusiveLockRequest(int new_owner, int home_id,
         int user_id, int obj_index);
-    int SendExclusiveLockGrant(int home_id, int current_user_id, int next_user_id,
-        int obj_index, int lock_type);
-    int SendSharedLockGrant(int home_id, int current_user_id, int next_user_id,
-        int obj_index);
-    int UnlockShared(int obj_index, int count);
+    int SendExclusiveToSharedLockRequest(int current_owner, int new_owner, int home_id,
+        int user_id, int obj_index);
+    int SendSharedToExclusiveLockGrant(int home_id, int user_id, int obj_index);
+    int SendExclusiveToExclusiveLockGrant(int home_id, int prev_user_id, int user_id, int obj_index);
+    int SendExclusiveToSharedLockGrant(int current_owner, int new_owner, int home_id, int user_id, int obj_index);
+    int UnlockShared(int home_id, int obj_index, int count);
     //int SendSwitchToLocal();
     //int SendSwitchToRemote();
     double GetAverageRemoteExclusiveLockTime() const;
@@ -71,7 +72,7 @@ class LockClient {
     int SendLockModeRequest(Context* context);
     int SendLockRequest(Context* context, int user_id,
         int lock_type, int obj_index);
-    int SendUnlockRequest(Context* context, int user_id,
+    int SendUnlockRequest(Context* context, int home_id, int user_id,
         int lock_type, int obj_index);
     int HandleEvent(struct rdma_cm_event* event);
     int HandleAddressResolved(struct rdma_cm_id* id);

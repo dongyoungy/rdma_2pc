@@ -47,10 +47,14 @@ class LockManager {
         int result);
     int NotifyUnlockRequestResult(int user_id, int lock_type, int home_id, int obj_index,
         int result, bool reset_counter = false);
-    int SendExclusiveLockRequest(int current_owner, int home_id, int user_id,
+    int SendExclusiveToExclusiveLockRequest(int current_owner, int home_id,
+        int user_id, int obj_index);
+    void ResetByUnlock(int home_id, int obj_index, int shared_count = 0);
+    void ResetExclusiveToExclusive(int home_id, int obj_index);
+    void ResetSharedToExclusive(int home_id, int obj_index);
+    int SendExclusiveToSharedLockRequest(int current_owner, int home_id, int user_id,
         int obj_index);
-    int SendSharedLockRequest(int current_owner, int home_id, int user_id,
-        int obj_index);
+    int BroadcastExclusiveToSharedLockGrant(int home_id, int obj_index);
     int GetID() const;
     int GetLockMode() const;
     void Stop();
@@ -82,12 +86,17 @@ class LockManager {
     static const int MAX_USER = 65536;
     static const int NUM_LOCK_HISTORY = 10000;
     static const double ADAPT_THRESHOLD = 0.8;
+    static pthread_mutex_t print_mutex;
 
     inline void PrintFirstElem() {
-      uint64_t first_value = lock_table_[0];
-      uint32_t exclusive = first_value >> 32;
-      uint32_t shared = (uint32_t)first_value;
-      cerr << "(" << exclusive << "," << shared << ")" << endl;
+      if (rank_ == 1) {
+        uint64_t first_value = lock_table_[0];
+        uint32_t exclusive = first_value >> 32;
+        uint32_t shared = (uint32_t)first_value;
+        pthread_mutex_lock(&print_mutex);
+        cerr << "(" << exclusive << "," << shared << ")" << endl;
+        pthread_mutex_unlock(&print_mutex);
+      }
     }
 
   private:
@@ -108,10 +117,12 @@ class LockManager {
         int lock_type, int obj_index, int result);
     int SendUnlockRequestResult(Context* context, int user_id,
         int lock_type, int obj_index, int result);
-    int SendSharedLockGrantAck(Context* context, int user_id,
+    int SendExclusiveToSharedLockGrantAck(Context* context, int user_id,
         int home_id, int obj_index);
-    int SendExclusiveLockGrantAck(Context* context, int user_id,
-        int home_id, int obj_index, int lock_type);
+    int SendSharedToExclusiveLockGrantAck(Context* context,
+        int home_id, int user_id, int obj_index);
+    int SendExclusiveToExclusiveLockGrantAck(Context* context,
+        int home_id, int user_id, int obj_index);
     int LockLocally(Context* context);
     int LockLocally(Context* context, int user_id, int lock_type,
         int obj_index);
@@ -129,10 +140,14 @@ class LockManager {
     int HandleDisconnect(Context* context);
 
     int HandleSharedLockRelease(Context* context);
-    int HandleSharedLockRequest(Context* context);
-    int HandleSharedLockGrant(Context* context);
-    int HandleExclusiveLockRequest(Context* context);
-    int HandleExclusiveLockGrant(Context* context);
+
+    int HandleExclusiveToSharedLockRequest(Context* context);
+    int HandleExclusiveToSharedLockGrant(Context* context);
+
+    int HandleSharedToExclusiveLockRequest(Context* context);
+    int HandleExclusiveToExclusiveLockRequest(Context* context);
+    int HandleSharedToExclusiveLockGrant(Context* context);
+    int HandleExclusiveToExclusiveLockGrant(Context* context);
     void DestroyListener();
 
     // each client connects to each lock manager in the cluster
@@ -154,12 +169,18 @@ class LockManager {
     LockClient* local_client_; // dedicated local lock client
     string work_dir_;
     uint64_t* lock_table_;
+    bool* has_unlocked_shared_;
     int* shared_lock_counter_;
     int* shared_lock_to_receive_;
-    int* node_to_release_shared_lock_;
-    int* next_exclusive_lock_owner_;
-    int* next_exclusive_lock_user_id_;
+    //int* node_to_release_shared_lock_;
+    int* node_to_send_shared_release_;
+    int* node_to_unlock_exclusive_shared_;
+    int* shared_to_exclusive_home_id_;
+    int* shared_to_exclusive_user_id_;
+    int* exclusive_to_exclusive_home_id_;
+    int* exclusive_to_exclusive_user_id_;
     int* exclusive_lock_holders_;
+    int* has_unlocked_exclusive_;
     int* lock_mode_table_;
     uint32_t rank_;
     int lock_mode_;

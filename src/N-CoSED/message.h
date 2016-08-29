@@ -18,19 +18,23 @@ class Message {
       LOCAL_MANAGER_ID,
       LOCK_MODE_REQUEST,
       LOCK_MODE,
-      SHARED_LOCK_REQUEST,
+      EXCLUSIVE_TO_SHARED_LOCK_REQUEST,
       SHARED_LOCK_RELEASE,
-      EXCLUSIVE_LOCK_REQUEST,
-      SHARED_LOCK_GRANT,
-      SHARED_LOCK_GRANT_ACK,
-      EXCLUSIVE_LOCK_GRANT,
-      EXCLUSIVE_LOCK_GRANT_ACK
+      SHARED_TO_EXCLUSIVE_LOCK_REQUEST,
+      EXCLUSIVE_TO_EXCLUSIVE_LOCK_REQUEST,
+      EXCLUSIVE_TO_SHARED_LOCK_GRANT,
+      EXCLUSIVE_TO_SHARED_LOCK_GRANT_ACK,
+      SHARED_TO_EXCLUSIVE_LOCK_GRANT,
+      EXCLUSIVE_TO_EXCLUSIVE_LOCK_GRANT,
+      SHARED_TO_EXCLUSIVE_LOCK_GRANT_ACK,
+      EXCLUSIVE_TO_EXCLUSIVE_LOCK_GRANT_ACK
     } type;
     int lock_type;
     int lock_mode;
     struct ibv_mr lock_table_mr;
     int user_id;
     int next_user_id;
+    int prev_user_id;
     int home_id;
     int current_owner;
     int new_owner;
