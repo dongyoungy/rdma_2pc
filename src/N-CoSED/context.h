@@ -24,6 +24,7 @@ struct Context {
   Message* receive_message;
   struct ibv_mr* receive_mr;
 
+  int last_shared_lock_holder;
   int last_home_id;
   int last_user_id;
   int last_lock_type;
@@ -31,6 +32,7 @@ struct Context {
   int last_lock_task;
   int last_shared_count;
   uint64_t last_compare_value;
+  uint64_t last_new_value;
 
   uint64_t* lock_table;
   struct ibv_mr* lock_table_mr;

@@ -207,27 +207,27 @@ void LockSimulator::CreateLockRequests() {
   }
 
   for (int i = 0; i < request_size_; ++i) {
-    //if (workload_type_ == WORKLOAD_MIXED ||
-        //workload_type_ == WORKLOAD_ALL_LOCAL) {
-      //if (is_all_local_) {
-        //requests_[i]->lm_id = local_manager_id_;
-      //} else {
-        //requests_[i]->lm_id = 1 + rand() % num_manager_;
-      //}
-    //} else {
-      //double val = drand48();
-      //for (int j = 0; j < num_manager_; ++j) {
-        //if (val <= cdf_[j]) {
-          //requests_[i]->lm_id = j + 1;
-          //break;
-        //}
-      //}
-    //}
-    requests_[i]->lm_id = 1;
+    if (workload_type_ == WORKLOAD_MIXED ||
+        workload_type_ == WORKLOAD_ALL_LOCAL) {
+      if (is_all_local_) {
+        requests_[i]->lm_id = local_manager_id_;
+      } else {
+        requests_[i]->lm_id = 1 + rand() % num_manager_;
+      }
+    } else {
+      double val = drand48();
+      for (int j = 0; j < num_manager_; ++j) {
+        if (val <= cdf_[j]) {
+          requests_[i]->lm_id = j + 1;
+          break;
+        }
+      }
+    }
+    //requests_[i]->lm_id = 1;
     requests_[i]->obj_index = rand() % num_lock_object_;
     if (drand48() < shared_lock_ratio_) {
-      //requests_[i]->lock_type = LockManager::SHARED;
-      requests_[i]->lock_type = LockManager::EXCLUSIVE;
+      requests_[i]->lock_type = LockManager::SHARED;
+      //requests_[i]->lock_type = LockManager::EXCLUSIVE;
     } else {
       //requests_[i]->lock_type = LockManager::SHARED;
       requests_[i]->lock_type = LockManager::EXCLUSIVE;
@@ -519,6 +519,21 @@ int LockSimulator::NotifyResult(int task, int lock_type, int home_id,
         current_request_idx_ = request_size_ - 1;
         SubmitUnlockRequest();
       }
+    //} else if (result == LockManager::RESULT_RETRY &&
+        //requests_[last_request_idx_]->lm_id == home_id &&
+        //requests_[last_request_idx_]->lock_type == lock_type &&
+        //requests_[last_request_idx_]->obj_index == obj_index) {
+      //if (verbose_) {
+        //pthread_mutex_lock(&LockManager::print_mutex);
+        //cout << "Simulator " << id_ << ": " <<
+          //"Retrying lock request at LM " <<
+          //requests_[last_request_idx_]->lm_id <<
+          //" of type " << requests_[last_request_idx_]->lock_type <<
+          //" for object " << requests_[last_request_idx_]->obj_index << endl;
+        //pthread_mutex_unlock(&LockManager::print_mutex);
+      //}
+      //current_request_idx_ = last_request_idx_;
+      //SubmitLockRequest();
     } else {
       //if (lock_type == LockManager::SHARED &&
           //manager_->GetLockMode() == LockManager::LOCK_REMOTE) {

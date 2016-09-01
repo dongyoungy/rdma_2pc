@@ -55,6 +55,8 @@ class LockManager {
     int SendExclusiveToSharedLockRequest(int current_owner, int home_id, int user_id,
         int obj_index);
     int BroadcastExclusiveToSharedLockGrant(int home_id, int obj_index);
+    int SendSharedUnlockRequestResult(int node_id, int home_id, int obj_index, int result);
+    int RelaySharedUnlockRequest(int home_id, int user_id, int obj_index);
     int GetID() const;
     int GetLockMode() const;
     void Stop();
@@ -140,6 +142,7 @@ class LockManager {
     int HandleDisconnect(Context* context);
 
     int HandleSharedLockRelease(Context* context);
+    int HandleSharedUnlockResult(Context* context);
 
     int HandleExclusiveToSharedLockRequest(Context* context);
     int HandleExclusiveToSharedLockGrant(Context* context);
@@ -169,9 +172,11 @@ class LockManager {
     LockClient* local_client_; // dedicated local lock client
     string work_dir_;
     uint64_t* lock_table_;
+    bool* is_unlocking_shared_;
     bool* has_unlocked_shared_;
     int* shared_lock_counter_;
-    int* shared_lock_to_receive_;
+    int* exclusive_to_shared_unlock_to_receive_;
+    int* shared_to_exclusive_unlock_to_receive_;
     //int* node_to_release_shared_lock_;
     int* node_to_send_shared_release_;
     int* node_to_unlock_exclusive_shared_;

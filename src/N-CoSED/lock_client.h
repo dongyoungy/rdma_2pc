@@ -35,7 +35,8 @@ class LockClient {
     int RequestLock(int home_id, int user_id, int lock_type, int obj_index, int lock_mode,
         uint64_t old_value = 0);
     int RequestUnlock(int home_id, int user_id, int lock_type, int obj_index,
-        int lock_mode, uint64_t old_value = 0);
+        int lock_mode, uint64_t old_value = 0, int last_user_id = -1);
+    int SendSharedUnlockRequestResult(int home_id, int obj_index, int result);
     int SendSharedToExclusiveLockRequest(int new_owner, int home_id,
         int user_id, int obj_index, int shared_count = 0);
     int SendExclusiveToExclusiveLockRequest(int new_owner, int home_id,
@@ -45,7 +46,7 @@ class LockClient {
     int SendSharedToExclusiveLockGrant(int home_id, int user_id, int obj_index);
     int SendExclusiveToExclusiveLockGrant(int home_id, int prev_user_id, int user_id, int obj_index);
     int SendExclusiveToSharedLockGrant(int current_owner, int new_owner, int home_id, int user_id, int obj_index);
-    int UnlockShared(int home_id, int obj_index, int count);
+    int UnlockShared(int home_id, int user_id, int obj_index, int count);
     //int SendSwitchToLocal();
     //int SendSwitchToRemote();
     double GetAverageRemoteExclusiveLockTime() const;
@@ -66,8 +67,8 @@ class LockClient {
     int ReadServerAddress();
     int LockRemotely(Context* context, int home_id, int user_id, int lock_type,
         int obj_index, uint64_t old_value = 0);
-    int UnlockRemotely(Context* context, int user_id, int lock_type,
-        int obj_index, uint64_t old_value = 0);
+    int UnlockRemotely(Context* context, int home_id, int user_id, int lock_type,
+        int obj_index, uint64_t old_value = 0, int last_user_id = -1);
     int SendLockTableRequest(Context* context);
     int SendLockModeRequest(Context* context);
     int SendLockRequest(Context* context, int user_id,
@@ -86,6 +87,7 @@ class LockClient {
     static const int TEST_MODE_SEM = 0;
     static const int TEST_MODE_DATA = 1;
 
+    bool previous_unlock_shared_running_;
     LockManager* local_manager_;
     LockSimulator* local_user_;
     Context* context_;
