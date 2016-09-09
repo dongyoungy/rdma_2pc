@@ -88,17 +88,20 @@ class LockManager {
     static const int MAX_USER = 65536;
     static const int NUM_LOCK_HISTORY = 10000;
     static const double ADAPT_THRESHOLD = 0.8;
+    static const bool PRINT_DEBUG = false;
     static pthread_mutex_t print_mutex;
 
     inline void PrintFirstElem() {
-      if (rank_ == 1) {
-        uint64_t first_value = lock_table_[0];
-        uint32_t exclusive = first_value >> 32;
-        uint32_t shared = (uint32_t)first_value;
-        pthread_mutex_lock(&print_mutex);
-        cerr << "(" << exclusive << "," << shared << ")" << endl;
-        pthread_mutex_unlock(&print_mutex);
-      }
+      //if (PRINT_DEBUG) {
+        //if (rank_ == 1) {
+          //uint64_t first_value = lock_table_[0];
+          //uint32_t exclusive = first_value >> 32;
+          //uint32_t shared = (uint32_t)first_value;
+          //pthread_mutex_lock(&print_mutex);
+          //cerr << "(" << exclusive << "," << shared << ")" << endl;
+          //pthread_mutex_unlock(&print_mutex);
+        //}
+      //}
     }
 
   private:
@@ -208,6 +211,9 @@ class LockManager {
     uint16_t port_;
     size_t data_size_;
     pthread_mutex_t mutex_;
+    pthread_cond_t cond_;
+    pthread_mutex_t wc_mutex_;
+    pthread_mutex_t user_mutex_;
     pthread_mutex_t** lock_mutex_;
 
 };

@@ -55,6 +55,8 @@ class LockManager {
     double GetAverageRemoteSharedLockTime() const;
     double GetAverageSendMessageTime() const;
     double GetAverageReceiveMessageTime() const;
+    double GetAverageRDMAReadCount() const;
+    double GetAverageRDMAAtomicCount() const;
     int SwitchToLocal();
     int SwitchToRemote();
     static void* PollCompletionQueue(void* context);

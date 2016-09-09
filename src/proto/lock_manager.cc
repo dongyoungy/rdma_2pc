@@ -1106,6 +1106,26 @@ double LockManager::GetAverageReceiveMessageTime() const {
   return total_time / num_clients;
 }
 
+double LockManager::GetAverageRDMAReadCount() const {
+  double num_clients = lock_clients_.size();
+  double total_count = 0.0;
+  map<int, LockClient*>::const_iterator it;
+  for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
+    total_count += (double)it->second->GetRDMAReadCount();
+  }
+  return total_count / num_clients;
+}
+
+double LockManager::GetAverageRDMAAtomicCount() const {
+  double num_clients = lock_clients_.size();
+  double total_count = 0.0;
+  map<int, LockClient*>::const_iterator it;
+  for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
+    total_count += (double)it->second->GetRDMAAtomicCount();
+  }
+  return total_count / num_clients;
+}
+
 // Polls work completion from completion queue
 void* LockManager::PollCompletionQueue(void* arg) {
   struct ibv_cq* cq;

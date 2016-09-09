@@ -23,10 +23,10 @@ struct CPUUsage {
 
 int main(int argc, char** argv) {
 
-  if (argc != 8) {
+  if (argc != 9) {
     cout << argv[0] << " <work_dir> <num_lock_object>" <<
       " <num_nodes> <lock_mode> <workload_type> <local_workload_ratio> "<<
-      "<duration>" << endl;
+      "<shared_lock_ratio> <duration>" << endl;
     exit(1);
   }
 
@@ -43,7 +43,8 @@ int main(int argc, char** argv) {
   int lock_mode               = atoi(argv[4]);
   int workload_type           = atoi(argv[5]);
   double local_workload_ratio = atof(argv[6]);
-  int duration                = atoi(argv[7]);
+  double shared_lock_ratio    = atof(argv[7]);
+  int duration                = atoi(argv[8]);
 
   string workload_type_str;
   if (workload_type == LockSimulator::WORKLOAD_UNIFORM) {
@@ -92,17 +93,19 @@ int main(int argc, char** argv) {
         num_lock_object,
         1, // num lock requests
         duration,
-        true, // verbose
+        LockManager::PRINT_DEBUG, // verbose
         true, // measure lock
         workload_type,
         lock_mode,
-        local_workload_ratio
+        local_workload_ratio,
+        shared_lock_ratio
         );
     nodes[i]->RegisterUser(i+1, simulator);
     users.push_back(simulator);
   }
 
   sleep(2);
+  //sleep(10);
 
   for (int i=0;i<num_nodes;++i) {
     if (nodes[i]->InitializeLockClients()) {
@@ -111,8 +114,8 @@ int main(int argc, char** argv) {
     }
   }
 
-
   sleep(1);
+  //sleep(10);
 
   for (int i=0;i<users.size();++i) {
     //users[i]->Run();
@@ -135,15 +138,20 @@ int main(int argc, char** argv) {
 
 
   int count = 0;
-  for (int i=0;i<users.size();++i) {
-    LockSimulator* simulator = users[i];
-    while (simulator->GetState() != LockSimulator::STATE_DONE) {
-       sleep(1);
-       //++count;
-       //if (count == 3) {
-         //lock_manager->SwitchToLocal();
-       //}
+  bool done = false;
+  while (true) {
+    for (int i=0;i<users.size();++i) {
+      LockSimulator* simulator = users[i];
+      if (simulator->GetState() == LockSimulator::STATE_DONE) {
+        done = true;
+      }
+        //++count;
+        //if (count == 3) {
+        //lock_manager->SwitchToLocal();
+        //}
     }
+    if (done) break;
+    sleep(1);
   }
 
   for (int j=0;j<users.size();++j) {

@@ -26,6 +26,7 @@ LockClient::LockClient(const string& work_dir, LockManager* local_manager,
 
   // initialize local lock mutex
   pthread_mutex_init(&lock_mutex_, NULL);
+  pthread_cond_init(&cond_, NULL);
 }
 
 // destructor
@@ -279,6 +280,14 @@ int LockClient::SendMessage(Context* context) {
   sge.length = sizeof(*context->send_message);
   sge.lkey   = context->send_mr->lkey;
 
+  if (context->send_message->type == Message::SHARED_UNLOCK_RESULT) {
+    if (LockManager::PRINT_DEBUG) {
+      pthread_mutex_lock(&LockManager::print_mutex);
+      cerr << "Sending SHARED_UNLOCK_RESULT!" << endl;
+      pthread_mutex_unlock(&LockManager::print_mutex);
+    }
+  }
+
   int ret = 0;
   if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
           &bad_work_request))) {
@@ -310,10 +319,6 @@ int LockClient::ReceiveMessage(Context* context) {
   sge.addr   = (uint64_t)context->receive_message;
   sge.length = sizeof(*context->receive_message);
   sge.lkey   = context->receive_mr->lkey;
-
-  pthread_mutex_lock(&LockManager::print_mutex);
-  cerr << "ReceiveMessage() Size = " << sge.length << endl;
-  pthread_mutex_unlock(&LockManager::print_mutex);
 
   int ret = 0;
   if ((ret = ibv_post_recv(context->queue_pair, &receive_work_request,
@@ -451,6 +456,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     //}
   }
 
+  pthread_mutex_lock(&lock_mutex_);
   uint64_t compare_value      = context->last_compare_value;
   uint64_t new_value          = context->last_new_value;
   int last_home_id            = context->last_home_id;
@@ -461,10 +467,14 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
   int last_shared_count       = context->last_shared_count;
   int last_shared_lock_holder = context->last_shared_lock_holder;
   int opcode                  = work_completion->opcode;
+  pthread_mutex_unlock(&lock_mutex_);
 
   if (last_lock_task == LockManager::TASK_UNLOCK && last_lock_type == LockManager::SHARED &&
       previous_unlock_shared_running_) {
+    pthread_mutex_lock(&lock_mutex_);
     previous_unlock_shared_running_ = false;
+    pthread_cond_signal(&cond_);
+    pthread_mutex_unlock(&lock_mutex_);
   }
 
   if (opcode == IBV_WC_RECV) {
@@ -473,7 +483,9 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     ReceiveMessage(context);
 
     if (context->receive_message->type == Message::EXCLUSIVE_TO_SHARED_LOCK_GRANT_ACK) {
-      cerr << "Exclusive-to-Shared Lock Grant Ack Received." << endl;
+      if (LockManager::PRINT_DEBUG) {
+        cerr << "Exclusive-to-Shared Lock Grant Ack Received." << endl;
+      }
       //local_manager_->NotifyUnlockRequestResult(
           //context->receive_message->user_id,
           //LockManager::EXCLUSIVE,
@@ -481,16 +493,25 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           //context->receive_message->obj_index,
           //LockManager::RESULT_SUCCESS);
     } else if (context->receive_message->type == Message::SHARED_UNLOCK_RESULT) {
-      cerr << "Shared Unlock Result Received." << endl;
-      local_manager_->NotifyUnlockRequestResult(context->receive_message->user_id,
-          LockManager::SHARED,
-          context->receive_message->user_id,
-          context->receive_message->obj_index,
-          context->receive_message->lock_result);
+      if (LockManager::PRINT_DEBUG) {
+        pthread_mutex_lock(&LockManager::print_mutex);
+        cerr << "Shared Unlock Result Received: " <<
+          local_manager_->GetID() << ", " <<
+          context->receive_message->home_id << ", " <<
+          context->receive_message->obj_index << endl;
+        pthread_mutex_unlock(&LockManager::print_mutex);
+      }
+      //local_manager_->NotifyUnlockRequestResult(local_manager_->GetID(),
+          //LockManager::SHARED,
+          //context->receive_message->home_id,
+          //context->receive_message->obj_index,
+          //context->receive_message->lock_result);
     } else if (context->receive_message->type == Message::EXCLUSIVE_TO_EXCLUSIVE_LOCK_GRANT_ACK) {
-      pthread_mutex_lock(&LockManager::print_mutex);
-      cerr << "Exclusive-to-Exclusive Lock Grant Ack Received." << endl;
-      pthread_mutex_unlock(&LockManager::print_mutex);
+      if (LockManager::PRINT_DEBUG) {
+        pthread_mutex_lock(&LockManager::print_mutex);
+        cerr << "Exclusive-to-Exclusive Lock Grant Ack Received." << endl;
+        pthread_mutex_unlock(&LockManager::print_mutex);
+      }
       //local_manager_->ResetExclusiveToExclusive(
           //context->receive_message->home_id,
           //context->receive_message->obj_index
@@ -502,9 +523,11 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           context->receive_message->obj_index,
           LockManager::RESULT_SUCCESS);
     } else if (context->receive_message->type == Message::SHARED_TO_EXCLUSIVE_LOCK_GRANT_ACK) {
-      pthread_mutex_lock(&LockManager::print_mutex);
-      cerr << "Shared-to-Exclusive Lock Grant Ack Received." << endl;
-      pthread_mutex_unlock(&LockManager::print_mutex);
+      if (LockManager::PRINT_DEBUG) {
+        pthread_mutex_lock(&LockManager::print_mutex);
+        cerr << "Shared-to-Exclusive Lock Grant Ack Received." << endl;
+        pthread_mutex_unlock(&LockManager::print_mutex);
+      }
 
       // this is probably wrong..
       //local_manager_->ResetSharedToExclusive(
@@ -535,17 +558,21 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           context->receive_message->lock_mode
           );
     } else if (context->receive_message->type == Message::LOCK_REQUEST_RESULT) {
-      pthread_mutex_lock(&LockManager::print_mutex);
-      cout << "received lock request result." << endl;
-      pthread_mutex_unlock(&LockManager::print_mutex);
+      if (LockManager::PRINT_DEBUG) {
+        pthread_mutex_lock(&LockManager::print_mutex);
+        cout << "received lock request result." << endl;
+        pthread_mutex_unlock(&LockManager::print_mutex);
+      }
       //local_manager_->NotifyLockRequestResult(context->receive_message->user_id,
           //context->receive_message->lock_type,
           //context->receive_message->obj_index,
           //context->receive_message->lock_result);
     } else if (context->receive_message->type == Message::UNLOCK_REQUEST_RESULT) {
-      pthread_mutex_lock(&LockManager::print_mutex);
-      cout << "received unlock request result" << endl;
-      pthread_mutex_unlock(&LockManager::print_mutex);
+      if (LockManager::PRINT_DEBUG) {
+        pthread_mutex_lock(&LockManager::print_mutex);
+        cout << "received unlock request result" << endl;
+        pthread_mutex_unlock(&LockManager::print_mutex);
+      }
       local_manager_->NotifyUnlockRequestResult(
           context->receive_message->user_id,
           context->receive_message->lock_type,
@@ -566,9 +593,11 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     //
     local_manager_->PrintFirstElem();
 
-    pthread_mutex_lock(&LockManager::print_mutex);
-    cerr << local_manager_->GetID() << ", op code : COMP_SWAP" << endl;
-    pthread_mutex_unlock(&LockManager::print_mutex);
+    if (LockManager::PRINT_DEBUG) {
+      pthread_mutex_lock(&LockManager::print_mutex);
+      cerr << local_manager_->GetID() << ", op code : COMP_SWAP" << endl;
+      pthread_mutex_unlock(&LockManager::print_mutex);
+    }
 
     // get time
     clock_gettime(CLOCK_MONOTONIC, &end_remote_exclusive_lock_);
@@ -596,30 +625,38 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     if (new_value == 0 && exclusive == 0 && shared > 0 &&
         exclusive == compare_exclusive && shared == compare_shared) {
       // Unlocking shared lock (success)
-      pthread_mutex_lock(&LockManager::print_mutex);
-      cerr << "Unlocking Shared Lock: (" << exclusive << "," << shared <<  ")"
-        << " -> (" << new_exclusive << "," << new_shared << ")" << endl;
-      pthread_mutex_unlock(&LockManager::print_mutex);
+      if (LockManager::PRINT_DEBUG) {
+        pthread_mutex_lock(&LockManager::print_mutex);
+        cerr << "Unlocking Shared Lock: (" << exclusive << "," << shared <<  ")"
+          << " -> (" << new_exclusive << "," << new_shared << ")" << endl;
+        pthread_mutex_unlock(&LockManager::print_mutex);
+      }
       local_manager_->ResetByUnlock(
           last_home_id,
           last_obj_index,
           compare_shared
           );
-      local_manager_->SendSharedUnlockRequestResult(
-          last_user_id,
-          last_home_id,
-          last_obj_index,
-          LockManager::RESULT_SUCCESS
-          );
+      //local_manager_->SendSharedUnlockRequestResult(
+          //last_user_id,
+          //last_home_id,
+          //last_obj_index,
+          //LockManager::RESULT_SUCCESS
+          //);
     } else if (new_value == 0 && exclusive == 0 && shared > 0 &&
         exclusive == compare_exclusive && shared != compare_shared) {
       // Unlocking shared lock (failure due to additional shared locks)
-      local_manager_->SendSharedUnlockRequestResult(
-          last_user_id,
-          last_home_id,
-          last_obj_index,
-          LockManager::RESULT_SUCCESS
-          );
+      if (LockManager::PRINT_DEBUG) {
+        pthread_mutex_lock(&LockManager::print_mutex);
+        cerr << "Unlocking Shared Lock Failed: (" << exclusive << "," << shared <<  ")"
+          << " -> (" << new_exclusive << "," << new_shared << ")" << endl;
+        pthread_mutex_unlock(&LockManager::print_mutex);
+      }
+      //local_manager_->SendSharedUnlockRequestResult(
+          //last_user_id,
+          //last_home_id,
+          //last_obj_index,
+          //LockManager::RESULT_SUCCESS
+          //);
     } else if (last_lock_type == LockManager::TASK_LOCK &&
         new_exclusive > 0 && exclusive > 0 && shared > 0) {
       // exclusive lock failed -- should retry
@@ -647,12 +684,14 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       } else if (exclusive != compare_exclusive ||
           shared != compare_shared) {
         // exclusive -> exclusive (failure, retry)
-        pthread_mutex_lock(&LockManager::print_mutex);
-        cerr << "Retrying Exclusive_1: Expected = (" << compare_exclusive <<
-          "," << compare_shared << "), Actual = (" << exclusive <<
-          "," << shared << "), Trying = (" << new_exclusive << "," << new_shared << ")"
-          << endl;
-        pthread_mutex_unlock(&LockManager::print_mutex);
+        if (LockManager::PRINT_DEBUG) {
+          pthread_mutex_lock(&LockManager::print_mutex);
+          cerr << "Retrying Exclusive_1: Expected = (" << compare_exclusive <<
+            "," << compare_shared << "), Actual = (" << exclusive <<
+            "," << shared << "), Trying = (" << new_exclusive << "," << new_shared << ")"
+            << endl;
+          pthread_mutex_unlock(&LockManager::print_mutex);
+        }
         this->LockRemotely(context,
             last_home_id,
             last_user_id,
@@ -665,9 +704,11 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             //context->last_obj_index,
             //LockManager::RESULT_FAILURE);
       } else if (exclusive == 0 && shared > 0) {
+        if (LockManager::PRINT_DEBUG) {
           pthread_mutex_lock(&LockManager::print_mutex);
-          cerr << "should be shared -> exclusive" << endl;
+          cerr << "should be shared -> exclusive: " << endl;
           pthread_mutex_unlock(&LockManager::print_mutex);
+        }
         // shared -> exclusive
         if (shared == compare_shared) {
           // success
@@ -677,10 +718,12 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               last_obj_index, shared);
         } else if (shared != compare_shared) {
           // retry with new value
-        cerr << "Retrying Exclusive_2: Expected = (" << compare_exclusive <<
-          "," << compare_shared << "), Actual = (" << exclusive <<
-          "," << shared << "), Trying = (" << last_user_id << ",0)"
-          << endl;
+          if (LockManager::PRINT_DEBUG) {
+            cerr << "Retrying Exclusive_2: Expected = (" << compare_exclusive <<
+              "," << compare_shared << "), Actual = (" << exclusive <<
+              "," << shared << "), Trying = (" << last_user_id << ",0)"
+              << endl;
+          }
           this->LockRemotely(context,
               last_home_id,
               last_user_id,
@@ -688,32 +731,33 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               last_obj_index,
               value);
         } else {
-          pthread_mutex_lock(&LockManager::print_mutex);
-          cerr << "hole 1" << endl;
-          pthread_mutex_unlock(&LockManager::print_mutex);
+          if (LockManager::PRINT_DEBUG) {
+            pthread_mutex_lock(&LockManager::print_mutex);
+            cerr << "hole 1" << endl;
+            pthread_mutex_unlock(&LockManager::print_mutex);
+          }
         }
       } else if (exclusive != compare_exclusive && shared != 0) {
         // exclusive -> exclusive (failure)
-        cerr << "HERE!!!!!!!!!!" << endl;
         local_manager_->NotifyLockRequestResult(last_user_id,
             last_lock_type,
             last_home_id,
             last_obj_index,
             LockManager::RESULT_FAILURE);
       } else {
-        cerr << "??????" << endl;
       }
     } else if (context->last_lock_task == LockManager::TASK_UNLOCK) {
       if (value == compare_value) {
         int shared_count = 0;
         if (last_lock_type == LockManager::SHARED) {
           shared_count = compare_shared;
-          cerr << "This should be unreachable." << endl;
         }
-        pthread_mutex_lock(&LockManager::print_mutex);
-        cout << "Unlock Succeeded: expected = " << compare_value <<
-          ", actual = " << value << endl;
-        pthread_mutex_unlock(&LockManager::print_mutex);
+        if (LockManager::PRINT_DEBUG) {
+          pthread_mutex_lock(&LockManager::print_mutex);
+          cout << "Unlock Succeeded: expected = " << compare_value <<
+            ", actual = " << value << endl;
+          pthread_mutex_unlock(&LockManager::print_mutex);
+        }
         local_manager_->ResetByUnlock(
             last_home_id,
             last_obj_index,
@@ -739,10 +783,12 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           }
         }
       } else {
-        pthread_mutex_lock(&LockManager::print_mutex);
-        cout << "Unlock failed: expected = " << compare_value <<
-          ", actual = " << value << endl;
-        pthread_mutex_unlock(&LockManager::print_mutex);
+        if (LockManager::PRINT_DEBUG) {
+          pthread_mutex_lock(&LockManager::print_mutex);
+          cout << "Unlock failed: expected = " << compare_value <<
+            ", actual = " << value << endl;
+          pthread_mutex_unlock(&LockManager::print_mutex);
+        }
         //sleep(1);
         //if (context->last_lock_type == LockManager::EXCLUSIVE)
         //local_manager_->NotifyUnlockRequestResult(context->last_user_id,
@@ -823,9 +869,11 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     // completion of fetch-and-add, i.e. remote shared locking
     local_manager_->PrintFirstElem();
 
-    pthread_mutex_lock(&LockManager::print_mutex);
-    cerr << local_manager_->GetID() << ", op code : FETCH_ADD" << endl;
-    pthread_mutex_unlock(&LockManager::print_mutex);
+    if (LockManager::PRINT_DEBUG) {
+      pthread_mutex_lock(&LockManager::print_mutex);
+      cerr << local_manager_->GetID() << ", op code : FETCH_ADD" << endl;
+      pthread_mutex_unlock(&LockManager::print_mutex);
+    }
     // get time
     clock_gettime(CLOCK_MONOTONIC, &end_remote_shared_lock_);
     double time_taken = ((double)end_remote_shared_lock_.tv_sec * 1e+9 +
@@ -883,6 +931,8 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
 // Requests lock mode of lock manager via IBV_WR_SEND op.
 int LockClient::SendLockModeRequest(Context* context) {
 
+  pthread_mutex_lock(&lock_mutex_);
+
   clock_gettime(CLOCK_MONOTONIC, &start_send_message_);
 
   context->send_message->type       = Message::LOCK_MODE_REQUEST;
@@ -909,14 +959,18 @@ int LockClient::SendLockModeRequest(Context* context) {
   if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
           &bad_work_request))) {
     cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
+    pthread_mutex_unlock(&lock_mutex_);
     return -1;
   }
+  pthread_mutex_unlock(&lock_mutex_);
   return 0;
 }
 
 int LockClient::SendSharedToExclusiveLockRequest(int new_owner,
     int home_id, int user_id,
     int obj_index, int shared_count) {
+
+  pthread_mutex_lock(&lock_mutex_);
 
   context_->send_message->type                = Message::SHARED_TO_EXCLUSIVE_LOCK_REQUEST;
   context_->send_message->new_owner           = new_owner;
@@ -945,9 +999,11 @@ int LockClient::SendSharedToExclusiveLockRequest(int new_owner,
   if ((ret = ibv_post_send(context_->queue_pair, &send_work_request,
           &bad_work_request))) {
     cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
+    pthread_mutex_unlock(&lock_mutex_);
     return -1;
   }
 
+  pthread_mutex_unlock(&lock_mutex_);
   return 0;
 }
 
@@ -955,6 +1011,7 @@ int LockClient::SendExclusiveToExclusiveLockRequest(int new_owner,
     int home_id, int user_id,
     int obj_index) {
 
+  pthread_mutex_lock(&lock_mutex_);
   context_->send_message->type                = Message::EXCLUSIVE_TO_EXCLUSIVE_LOCK_REQUEST;
   context_->send_message->new_owner           = new_owner;
   context_->send_message->home_id             = home_id;
@@ -981,26 +1038,31 @@ int LockClient::SendExclusiveToExclusiveLockRequest(int new_owner,
   if ((ret = ibv_post_send(context_->queue_pair, &send_work_request,
           &bad_work_request))) {
     cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
+    pthread_mutex_unlock(&lock_mutex_);
     return -1;
   }
 
+  pthread_mutex_unlock(&lock_mutex_);
   return 0;
 }
 
 int LockClient::SendSharedToExclusiveLockGrant(int home_id, int user_id,
     int obj_index) {
 
-  context_->send_message->type         = Message::SHARED_TO_EXCLUSIVE_LOCK_GRANT;
-  context_->send_message->manager_id   = home_id;
-  context_->send_message->home_id      = home_id;
-  context_->send_message->user_id      = user_id;
-  context_->send_message->obj_index    = obj_index;
-  context_->send_message->lock_type    = LockManager::EXCLUSIVE;
+  pthread_mutex_lock(&lock_mutex_);
+  context_->send_message->type       = Message::SHARED_TO_EXCLUSIVE_LOCK_GRANT;
+  context_->send_message->manager_id = home_id;
+  context_->send_message->home_id    = home_id;
+  context_->send_message->user_id    = user_id;
+  context_->send_message->obj_index  = obj_index;
+  context_->send_message->lock_type  = LockManager::EXCLUSIVE;
 
-  pthread_mutex_lock(&LockManager::print_mutex);
-  cerr << "Sending Shared-To-Exclusive Lock Grant: " << home_id
-    << ", " << user_id << endl;
-  pthread_mutex_unlock(&LockManager::print_mutex);
+  if (LockManager::PRINT_DEBUG) {
+    pthread_mutex_lock(&LockManager::print_mutex);
+    cerr << "Sending Shared-To-Exclusive Lock Grant: " << home_id
+      << ", " << user_id << endl;
+    pthread_mutex_unlock(&LockManager::print_mutex);
+  }
 
   struct ibv_send_wr send_work_request;
   struct ibv_send_wr* bad_work_request;
@@ -1022,9 +1084,11 @@ int LockClient::SendSharedToExclusiveLockGrant(int home_id, int user_id,
   if ((ret = ibv_post_send(context_->queue_pair, &send_work_request,
           &bad_work_request))) {
     cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
+    pthread_mutex_unlock(&lock_mutex_);
     return -1;
   }
 
+  pthread_mutex_unlock(&lock_mutex_);
   return 0;
 }
 
@@ -1036,6 +1100,7 @@ int LockClient::SendExclusiveToExclusiveLockGrant(int home_id, int prev_user_id,
      cerr << "WRONG" << endl;
   }
 
+  pthread_mutex_lock(&lock_mutex_);
   context_->send_message->type         = Message::EXCLUSIVE_TO_EXCLUSIVE_LOCK_GRANT;
   context_->send_message->home_id      = home_id;
   context_->send_message->user_id      = user_id;
@@ -1063,13 +1128,16 @@ int LockClient::SendExclusiveToExclusiveLockGrant(int home_id, int prev_user_id,
   if ((ret = ibv_post_send(context_->queue_pair, &send_work_request,
           &bad_work_request))) {
     cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
+    pthread_mutex_unlock(&lock_mutex_);
     return -1;
   }
 
+  pthread_mutex_unlock(&lock_mutex_);
   return 0;
 }
 
 int LockClient::SendSharedUnlockRequestResult(int home_id, int obj_index, int result) {
+  pthread_mutex_lock(&lock_mutex_);
   context_->send_message->type        = Message::SHARED_UNLOCK_RESULT;
   context_->send_message->home_id     = home_id;
   context_->send_message->obj_index   = obj_index;
@@ -1078,6 +1146,7 @@ int LockClient::SendSharedUnlockRequestResult(int home_id, int obj_index, int re
   struct ibv_send_wr send_work_request;
   struct ibv_send_wr* bad_work_request;
   struct ibv_sge sge;
+
 
   memset(&send_work_request, 0x00, sizeof(send_work_request));
 
@@ -1095,15 +1164,18 @@ int LockClient::SendSharedUnlockRequestResult(int home_id, int obj_index, int re
   if ((ret = ibv_post_send(context_->queue_pair, &send_work_request,
           &bad_work_request))) {
     cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
+    pthread_mutex_unlock(&lock_mutex_);
     return -1;
   }
 
+  pthread_mutex_unlock(&lock_mutex_);
   return 0;
 }
 
 int LockClient::SendExclusiveToSharedLockRequest(int current_owner, int new_owner,
     int home_id, int user_id, int obj_index) {
 
+  pthread_mutex_lock(&lock_mutex_);
   context_->send_message->type          = Message::EXCLUSIVE_TO_SHARED_LOCK_REQUEST;
   context_->send_message->current_owner = current_owner;
   context_->send_message->new_owner     = new_owner;
@@ -1132,15 +1204,18 @@ int LockClient::SendExclusiveToSharedLockRequest(int current_owner, int new_owne
   if ((ret = ibv_post_send(context_->queue_pair, &send_work_request,
           &bad_work_request))) {
     cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
+    pthread_mutex_unlock(&lock_mutex_);
     return -1;
   }
 
+  pthread_mutex_unlock(&lock_mutex_);
   return 0;
 }
 
 int LockClient::SendExclusiveToSharedLockGrant(int current_owner, int new_owner,
     int home_id, int user_id, int obj_index) {
 
+  pthread_mutex_lock(&lock_mutex_);
   context_->send_message->type          = Message::EXCLUSIVE_TO_SHARED_LOCK_GRANT;
   context_->send_message->manager_id    = home_id;
   context_->send_message->current_owner = current_owner;
@@ -1169,9 +1244,11 @@ int LockClient::SendExclusiveToSharedLockGrant(int current_owner, int new_owner,
   if ((ret = ibv_post_send(context_->queue_pair, &send_work_request,
           &bad_work_request))) {
     cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
+    pthread_mutex_unlock(&lock_mutex_);
     return -1;
   }
 
+  pthread_mutex_unlock(&lock_mutex_);
   return 0;
 }
 
@@ -1180,6 +1257,7 @@ int LockClient::SendLockTableRequest(Context* context) {
 
   clock_gettime(CLOCK_MONOTONIC, &start_send_message_);
 
+  pthread_mutex_lock(&lock_mutex_);
   context->send_message->type       = Message::LOCK_TABLE_MR_REQUEST;
   context->send_message->manager_id = local_manager_->GetID();
   if (local_user_)
@@ -1205,20 +1283,24 @@ int LockClient::SendLockTableRequest(Context* context) {
   if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
           &bad_work_request))) {
     cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
+    pthread_mutex_unlock(&lock_mutex_);
     return -1;
   }
 
   //cout << "requested lock table MR" << endl;
+  pthread_mutex_unlock(&lock_mutex_);
 
   return 0;
 }
 
 int LockClient::RequestLock(int home_id, int user_id, int lock_type, int obj_index,
     int lock_mode, uint64_t old_value) {
-  pthread_mutex_lock(&LockManager::print_mutex);
-  cerr << "RequestLock: " << home_id << ", " << user_id << ", " << obj_index << ", " << lock_type
-    << endl;
-  pthread_mutex_unlock(&LockManager::print_mutex);
+  if (LockManager::PRINT_DEBUG) {
+    pthread_mutex_lock(&LockManager::print_mutex);
+    cerr << "RequestLock: " << home_id << ", " << user_id << ", " << obj_index << ", " << lock_type
+      << endl;
+    pthread_mutex_unlock(&LockManager::print_mutex);
+  }
   return this->LockRemotely(context_, home_id, user_id, lock_type, obj_index, old_value);
   //if (lock_mode == LockManager::LOCK_LOCAL) {
     //// ask lock manager to place the lock
@@ -1233,10 +1315,12 @@ int LockClient::RequestLock(int home_id, int user_id, int lock_type, int obj_ind
 
 int LockClient::RequestUnlock(int home_id, int user_id, int lock_type, int obj_index,
     int lock_mode, uint64_t old_value, int last_user_id) {
-  pthread_mutex_lock(&LockManager::print_mutex);
-  cerr << "RequestUnlock: " << home_id << ", " << user_id << ", " << obj_index << ", " << lock_type
-    << endl;
-  pthread_mutex_unlock(&LockManager::print_mutex);
+  if (LockManager::PRINT_DEBUG) {
+    pthread_mutex_lock(&LockManager::print_mutex);
+    cerr << "RequestUnlock: " << home_id << ", " << user_id << ", " << obj_index << ", " << lock_type
+      << endl;
+    pthread_mutex_unlock(&LockManager::print_mutex);
+  }
   if (lock_type == LockManager::SHARED) {
     return this->SendUnlockRequest(context_, home_id, user_id, lock_type, obj_index);
   } else if (lock_type == LockManager::EXCLUSIVE) {
@@ -1254,9 +1338,11 @@ int LockClient::RequestUnlock(int home_id, int user_id, int lock_type, int obj_i
 
 int LockClient::UnlockShared(int home_id, int user_id, int obj_index, int count) {
 
-  pthread_mutex_lock(&LockManager::print_mutex);
-  cerr << "UnlockShared: " << count << endl;
-  pthread_mutex_unlock(&LockManager::print_mutex);
+  if (LockManager::PRINT_DEBUG) {
+    pthread_mutex_lock(&LockManager::print_mutex);
+    cerr << "UnlockShared: " << count << endl;
+    pthread_mutex_unlock(&LockManager::print_mutex);
+  }
 
   pthread_mutex_lock(&lock_mutex_);
 
@@ -1269,9 +1355,10 @@ int LockClient::UnlockShared(int home_id, int user_id, int obj_index, int count)
 
   memset(&send_work_request, 0x00, sizeof(send_work_request));
 
-  while (previous_unlock_shared_running_) {
-     // busy-wait
-  }
+  //while (previous_unlock_shared_running_) {
+     //// busy-wait
+     //pthread_cond_wait(&cond_, &lock_mutex_);
+  //}
 
   context_->last_lock_type    = LockManager::SHARED;
   context_->last_home_id      = home_id;
@@ -1280,7 +1367,7 @@ int LockClient::UnlockShared(int home_id, int user_id, int obj_index, int count)
   context_->last_shared_count = count;
   context_->last_lock_task    = LockManager::TASK_UNLOCK;
 
-  previous_unlock_shared_running_ = true;
+  //previous_unlock_shared_running_ = true;
 
   sge.addr   = (uint64_t)context_->original_value;
   sge.length = sizeof(uint64_t);
@@ -1512,6 +1599,13 @@ int LockClient::SendUnlockRequest(Context* context, int home_id, int user_id,
   context->send_message->lock_type = lock_type;
   context->send_message->obj_index = obj_index;
   context->send_message->user_id   = user_id;
+
+  if (LockManager::PRINT_DEBUG) {
+    pthread_mutex_lock(&LockManager::print_mutex);
+    cerr << "Sending Shared Unlock Request: " << user_id <<
+      ", " << home_id << ", " << obj_index << endl;
+    pthread_mutex_unlock(&LockManager::print_mutex);
+  }
   if (SendMessage(context)) {
     pthread_mutex_unlock(&lock_mutex_);
     cerr << "SendUnlockRequest(): SendMessage() failed." << endl;

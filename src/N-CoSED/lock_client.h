@@ -124,6 +124,7 @@ class LockClient {
     time_t test_start_;
     time_t test_end_;
     pthread_mutex_t lock_mutex_;
+    pthread_cond_t cond_;
 };
 
 }}

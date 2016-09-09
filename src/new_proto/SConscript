@@ -1,0 +1,6 @@
+Import("env")
+CommonObjs = env.Object(['lock_simulator.cc', 'lock_manager.cc', 'lock_client.cc'])
+lockSimulation = env.Program(target = 'lock_simulation', source = ['lock_simulation_driver.cc', CommonObjs], LIBS=['rdmacm', 'ibverbs', 'pthread' ,'rt'])
+lockSimulationLocal = env.Program(target = 'lock_simulation_local', source = ['lock_simulation_driver_local.cc', CommonObjs], LIBS=['rdmacm', 'ibverbs', 'pthread' ,'rt'])
+binaries = [lockSimulation, lockSimulationLocal]
+Return("binaries")

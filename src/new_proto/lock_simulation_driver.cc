@@ -1,5 +1,6 @@
 #include <iostream>
 #include <vector>
+#include <cmath>
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <infiniband/verbs.h>
@@ -25,10 +26,13 @@ int main(int argc, char** argv) {
 
   MPI_Init(&argc, &argv);
 
-  if (argc < 9) {
-    cout << argv[0] << " <work_dir> <num_lock_object> <num_requests>" <<
-      " <num_users> <lock_mode> <workload_type> <local_workload_ratio> " <<
-      "<shared_lock_ratio> <duration> <transaction_delay> <transaction_delay_min> <transaction_delay_max>" << endl;
+  if (argc != 17) {
+    cout << argv[0] << " <work_dir> <num_lock_object> <num_tx>" <<
+      " <num_request_per_tx> <num_users> <lock_mode>" <<
+      " <shaared_exclusive_rule> <exclusive_shared_rule> <exclusive_exclusive_rule>" <<
+      " <workload_type> <local_workload_ratio> " <<
+      "<shared_lock_ratio> <transaction_delay> <transaction_delay_min> " <<
+      "<transaction_delay_max> <rand_seed>" << endl;
     exit(1);
   }
 
@@ -45,28 +49,42 @@ int main(int argc, char** argv) {
     }
   }
 
-  int num_lock_object         = atoi(argv[2]);
-  int num_requests            = atoi(argv[3]);
-  int num_users               = atoi(argv[4]);
-  int lock_mode               = atoi(argv[5]);
-  int workload_type           = atoi(argv[6]);
-  double local_workload_ratio = atof(argv[7]);
-  double shared_lock_ratio    = atof(argv[8]);
-  int duration                = atoi(argv[9]);
-  int transaction_delay_num   = atoi(argv[10]);
-  int transaction_delay_min   = atoi(argv[11]);
-  int transaction_delay_max   = atoi(argv[12]);
+  int k=2;
+  int num_lock_object          = atoi(argv[k++]);
+  long num_tx                  = atol(argv[k++]);
+  int num_request_per_tx       = atoi(argv[k++]);
+  int num_users                = atoi(argv[k++]);
+  int lock_mode                = atoi(argv[k++]);
+  int shared_exclusive_rule    = atoi(argv[k++]);
+  int exclusive_shared_rule    = atoi(argv[k++]);
+  int exclusive_exclusive_rule = atoi(argv[k++]);
+  int workload_type            = atoi(argv[k++]);
+  double local_workload_ratio  = atof(argv[k++]);
+  double shared_lock_ratio     = atof(argv[k++]);
+  int transaction_delay_num    = atoi(argv[k++]);
+  int transaction_delay_min    = atoi(argv[k++]);
+  int transaction_delay_max    = atoi(argv[k++]);
+  long seed                    = atol(argv[k++]);
+
+  if (num_users != 1) {
+     cerr << "# of users must be 1." << endl;
+     exit(-1);
+  }
+  if (num_managers > 32) {
+     cerr << "# of nodes must be less than 33" << endl;
+     exit(-1);
+  }
 
   bool transaction_delay = (transaction_delay_num == 0) ? false : true;
 
   string lock_mode_str;
   if (lock_mode == LockManager::LOCK_LOCAL) {
-    lock_mode_str = "LOCK_MODE_PROXY";
+    lock_mode_str = "SERVER-BASED/PROXY";
   } else if (lock_mode == LockManager::LOCK_REMOTE) {
-    lock_mode_str = "LOCK_MODE_DIRECT";
+    lock_mode_str = "CLIENT-BASED/DIRECT";
   }
 
-  string workload_type_str;
+  string workload_type_str, shared_lock_ratio_str;
   if (workload_type == LockSimulator::WORKLOAD_UNIFORM) {
     workload_type_str = "UNIFORM";
   } else if (workload_type == LockSimulator::WORKLOAD_HOTSPOT) {
@@ -83,21 +101,72 @@ int main(int argc, char** argv) {
   char buf[32];
   sprintf(buf, "%.4f%%", local_workload_ratio * 100);
   local_workload_ratio_str = buf;
-  if (workload_type == LockSimulator::WORKLOAD_HOTSPOT) {
+  if (workload_type != LockSimulator::WORKLOAD_MIXED) {
     local_workload_ratio_str = "N/A";
   }
 
-  string shared_lock_ratio_str;
   sprintf(buf, "%.4f%%", shared_lock_ratio * 100);
   shared_lock_ratio_str = buf;
 
   string transaction_delay_str = (transaction_delay ? "TRUE" : "FALSE");
+  string shared_exclusive_rule_str, exclusive_shared_rule_str, exclusive_exclusive_rule_str;
+  switch (shared_exclusive_rule) {
+    case RULE_FAIL:
+      shared_exclusive_rule_str = "FAIL";
+      break;
+    case RULE_POLL:
+      shared_exclusive_rule_str = "POLL";
+      break;
+    case RULE_QUEUE:
+      shared_exclusive_rule_str = "QUEUE";
+      break;
+    default:
+      cerr << "Unsupported Rule: " << shared_exclusive_rule << endl;
+      exit(-1);
+  }
+  switch (exclusive_shared_rule) {
+    case RULE_FAIL:
+      exclusive_shared_rule_str = "FAIL";
+      break;
+    case RULE_POLL:
+      exclusive_shared_rule_str = "POLL";
+      break;
+    case RULE_QUEUE:
+      exclusive_shared_rule_str = "QUEUE";
+      break;
+    default:
+      cerr << "Unsupported Rule: " << exclusive_shared_rule << endl;
+      exit(-1);
+  }
+  switch (exclusive_exclusive_rule) {
+    case RULE_FAIL:
+      exclusive_exclusive_rule_str = "FAIL";
+      break;
+    case RULE_POLL:
+      exclusive_exclusive_rule_str = "POLL";
+      break;
+    case RULE_QUEUE:
+      exclusive_exclusive_rule_str = "QUEUE";
+      break;
+    default:
+      cerr << "Unsupported Rule: " << exclusive_exclusive_rule << endl;
+      exit(-1);
+  }
 
   if (rank == 0) {
     cout << "Type of Workload = " << workload_type_str << " (Shared Lock: " <<
       shared_lock_ratio * 100.0 << "%)" << endl;
-    cout << "Duration = " << duration << " seconds"  << endl;
+    cout << "Shared Lock Ratio = " << shared_lock_ratio_str << endl;
+    cout << "SHARED -> EXCLUSIVE = " << shared_exclusive_rule_str << endl;
+    cout << "EXCLUSIVE -> SHARED = " << exclusive_shared_rule_str << endl;
+    cout << "EXCLUSIVE -> EXCLUSIVE = " << exclusive_exclusive_rule_str << endl;
+    cout << "Num Tx = " << num_tx << endl;
+    cout << "Num Requests per Tx = " << num_request_per_tx << endl;
   }
+
+  LockManager::SetSharedExclusiveRule(shared_exclusive_rule);
+  LockManager::SetExclusiveSharedRule(exclusive_shared_rule);
+  LockManager::SetExclusiveExclusiveRule(exclusive_exclusive_rule);
 
   LockManager* lock_manager = new LockManager(argv[1], rank, num_managers,
       num_lock_object, lock_mode);
@@ -117,11 +186,12 @@ int main(int argc, char** argv) {
   vector<LockSimulator*> users;
   for (int i=0;i<num_users;++i) {
     LockSimulator* simulator = new LockSimulator(lock_manager,
-        rank*num_managers+(i+1), // id
+        (int)pow(2.0, rank), // id
         num_managers,
         num_lock_object,
-        num_requests,
-        duration,
+        num_tx,
+        num_request_per_tx,
+        seed,
         false, // verbose
         true, // measure lock time
         workload_type, // type of workload
@@ -132,7 +202,7 @@ int main(int argc, char** argv) {
         transaction_delay_min,
         transaction_delay_max
         );
-    lock_manager->RegisterUser(rank*num_managers+(i+1), simulator);
+    lock_manager->RegisterUser((int)pow(2.0, rank), simulator);
     users.push_back(simulator);
   }
 
@@ -144,6 +214,11 @@ int main(int argc, char** argv) {
   }
 
   sleep(1);
+
+  time_t start_time;
+  time_t end_time;
+
+  time(&start_time);
 
   for (int i=0;i<num_users;++i) {
     //users[i]->Run();
@@ -164,21 +239,26 @@ int main(int argc, char** argv) {
      exit(-1);
   }
 
+  int time_taken2 = 0;
   for (int i=0;i<users.size();++i) {
     LockSimulator* simulator = users[i];
     while (simulator->GetState() != LockSimulator::STATE_DONE) {
+      ++time_taken2;
        sleep(1);
     }
   }
 
-  long local_sum                            = 0;
-  long global_sum                           = 0;
-  long local_unlock_sum                     = 0;
-  long global_unlock_sum                    = 0;
-  long local_lock_success                   = 0;
-  long global_lock_success                  = 0;
-  long local_lock_failure                   = 0;
-  long global_lock_failure                  = 0;
+  time(&end_time);
+  double time_taken = difftime(end_time, start_time);
+
+  long local_sum                           = 0;
+  long global_sum                          = 0;
+  long local_unlock_sum                    = 0;
+  long global_unlock_sum                   = 0;
+  long local_lock_success                  = 0;
+  long global_lock_success                 = 0;
+  long local_lock_failure                  = 0;
+  long global_lock_failure                 = 0;
   double local_lock_time                   = 0;
   double global_lock_time                  = 0;
   double local_cpu_usage                   = 0;
@@ -281,65 +361,67 @@ int main(int argc, char** argv) {
 
     cout << "Local Avg CPU Usage = " << local_cpu_usage << "% "
       "(" << "ID = " << rank <<  " ,# nodes: " << num_managers <<
-      ", duration: " << duration << ", mode: " << lock_mode_str << ")" << endl;
+      ", mode: " << lock_mode_str << ")" << endl;
   MPI_Barrier(MPI_COMM_WORLD);
 
   if (rank==0) {
     cout << endl;
     cout << "Global Total Lock # = " << global_sum << "(# nodes: " <<
-      num_managers << ", duration: " <<
-      duration << ", mode: " << lock_mode_str << ")" << endl;
+      num_managers <<
+      ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Total Unlock # = " << global_unlock_sum << "(# nodes: " <<
-      num_managers << ", duration: " <<
-      duration << ", mode: " << lock_mode_str << ")" << endl;
+      num_managers <<
+      ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Total Lock Success # = " << global_lock_success <<
-      "(# nodes: " << num_managers << ", duration: " <<
-      duration << ", mode: " << lock_mode_str << ")" << endl;
+      "(# nodes: " << num_managers <<
+      ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Total Lock Failure # = " << global_lock_failure <<
-      "(# nodes: " << num_managers << ", duration: " <<
-      duration << ", mode: " << lock_mode_str << ")" << endl;
+      "(# nodes: " << num_managers <<
+      ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average Lock Time = " << global_lock_time / num_managers <<
-      " ns " << "(# nodes: " << num_managers << ", duration: " <<
-      duration << ", mode: " << lock_mode_str << ")" << endl;
+      " ns " << "(# nodes: " << num_managers <<
+      ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average Remote Shared Lock Time = " <<
       global_remote_shared_lock_time / num_managers <<
-      " ns " << "(# nodes: " << num_managers << ", duration: " <<
-      duration << ", mode: " << lock_mode_str << ")" << endl;
+      " ns " << "(# nodes: " << num_managers <<
+      ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average Remote Exclusive Lock Time = " <<
       global_remote_exclusive_lock_time / num_managers <<
-      " ns " << "(# nodes: " << num_managers << ", duration: " <<
-      duration << ", mode: " << lock_mode_str << ")" << endl;
+      " ns " << "(# nodes: " << num_managers <<
+      ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average Local Shared Lock Time = " <<
       global_local_shared_lock_time / num_managers <<
-      " ns " << "(# nodes: " << num_managers << ", duration: " <<
-      duration << ", mode: " << lock_mode_str << ")" << endl;
+      " ns " << "(# nodes: " << num_managers <<
+      ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average Local Exclusive Lock Time = " <<
       global_local_exclusive_lock_time / num_managers <<
-      " ns " << "(# nodes: " << num_managers << ", duration: " <<
-      duration << ", mode: " << lock_mode_str << ")" << endl;
+      " ns " << "(# nodes: " << num_managers <<
+      ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average Send Message Time = " <<
       global_send_message_time / num_managers <<
-      " ns " << "(# nodes: " << num_managers << ", duration: " <<
-      duration << ", mode: " << lock_mode_str << ")" << endl;
+      " ns " << "(# nodes: " << num_managers <<
+      ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average Receive Message Time = " <<
       global_receive_message_time / num_managers <<
-      " ns " << "(# nodes: " << num_managers << ", duration: " <<
-      duration << ", mode: " << lock_mode_str << ")" << endl;
+      " ns " << "(# nodes: " << num_managers <<
+      ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average RDMA Read Count = " <<
       global_rdma_read_count / num_managers <<
-      " ns " << "(# nodes: " << num_managers << ", duration: " <<
-      duration << ", mode: " << lock_mode_str << ")" << endl;
+      " ns " << "(# nodes: " << num_managers <<
+      ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average RDMA Atomic Count = " <<
       global_rdma_atomic_count / num_managers <<
-      " ns " << "(# nodes: " << num_managers << ", duration: " <<
-      duration << ", mode: " << lock_mode_str << ")" << endl;
+      " ns " << "(# nodes: " << num_managers <<
+      ", mode: " << lock_mode_str << ")" << endl;
     cout << "Overall Avg CPU Usage = " <<
       global_cpu_usage / num_managers << "% "
-      "(# nodes: " << num_managers << ", duration: " <<
-      duration << ", mode: " << lock_mode_str << ")" << endl;
+      "(# nodes: " << num_managers <<
+      ", mode: " << lock_mode_str << ")" << endl;
 
-    cerr << lock_mode_str << "," << workload_type_str << "," << num_managers
-      << "," << num_lock_object << "," << num_requests << "," <<
+    cerr << lock_mode_str << "," << workload_type_str <<
+      "," << shared_exclusive_rule_str << "," << exclusive_shared_rule_str << "," <<
+      exclusive_exclusive_rule_str << "," << num_managers <<
+      "," << num_lock_object << "," << num_tx << "," << num_request_per_tx << "," <<
       local_workload_ratio_str << "," << shared_lock_ratio_str << "," <<
       transaction_delay_str << ",";
     if (transaction_delay) {
@@ -349,7 +431,8 @@ int main(int argc, char** argv) {
     }
     cerr << global_lock_time / num_managers <<
       "," << global_99_lock_time / num_managers << "," <<
-      (long)((double)global_sum / (double)duration) << "," << global_cpu_usage / num_managers << endl;
+      (long)((double)global_sum / (double)time_taken) << "," << global_cpu_usage / num_managers <<
+      "," << time_taken << endl;
   }
 
   MPI_Finalize();

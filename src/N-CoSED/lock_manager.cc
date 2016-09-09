@@ -12,7 +12,7 @@ LockManager::LockManager(const string& work_dir, uint32_t rank,
   num_manager_                           = num_manager;
   num_lock_object_                       = num_lock_object;
   lock_table_                            = new uint64_t[num_lock_object_];
-  lock_mode_table_                       = new int[num_manager_];
+  lock_mode_table_                       = new int[num_manager_+1];
   shared_lock_counter_                   = new int[num_lock_object_*(num_manager_+1)];
   exclusive_to_shared_unlock_to_receive_ = new int[num_lock_object_*(num_manager_+1)];
   shared_to_exclusive_unlock_to_receive_ = new int[num_lock_object_*(num_manager_+1)];
@@ -76,6 +76,9 @@ LockManager::LockManager(const string& work_dir, uint32_t rank,
   // initialize local lock mutex
   lock_mutex_ = new pthread_mutex_t*[num_lock_object_];
   pthread_mutex_init(&mutex_, NULL);
+  pthread_mutex_init(&wc_mutex_, NULL);
+  pthread_mutex_init(&user_mutex_, NULL);
+  pthread_cond_init(&cond_, NULL);
 }
 
 // destructor
@@ -637,7 +640,19 @@ int LockManager::SendExclusiveToSharedLockRequest(int current_owner, int home_id
 int LockManager::SendSharedUnlockRequestResult(int node_id, int home_id, int obj_index,
     int result) {
   int index = num_lock_object_ * home_id + obj_index;
+
+  pthread_mutex_lock(&mutex_);
   is_unlocking_shared_[index] = false;
+  pthread_cond_signal(&cond_);
+  pthread_mutex_unlock(&mutex_);
+  if (LockManager::PRINT_DEBUG) {
+    pthread_mutex_lock(&LockManager::print_mutex);
+    cerr << "Sending Shared Unlock Result: from = " << rank_ <<
+      ", to = " << node_id << ", " <<
+      home_id << ", " <<
+      obj_index << ", " << result << endl;
+    pthread_mutex_unlock(&LockManager::print_mutex);
+  }
   LockClient* client = lock_clients_[node_id];
   return client->SendSharedUnlockRequestResult(home_id, obj_index, result);
 }
@@ -763,10 +778,20 @@ int LockManager::Unlock(int user_id, int manager_id, int lock_type,
       LockClient* lock_client =
         lock_clients_[node_to_send_shared_release_[index]];
       node_to_send_shared_release_[index] = 0;
+      if (LockManager::PRINT_DEBUG) {
+        pthread_mutex_lock(&LockManager::print_mutex);
+        cerr << "Sending RequestUnlock to " << node_to_send_shared_release_[index] << endl;
+        pthread_mutex_unlock(&LockManager::print_mutex);
+      }
       ret = lock_client->RequestUnlock(manager_id, user_id, lock_type, obj_index,
           lock_mode_table_[manager_id]);
     } else {
       LockClient* lock_client = lock_clients_[manager_id];
+      if (LockManager::PRINT_DEBUG) {
+        pthread_mutex_lock(&LockManager::print_mutex);
+        cerr << "Sending RequestUnlock to " << manager_id << endl;
+        pthread_mutex_unlock(&LockManager::print_mutex);
+      }
       ret = lock_client->RequestUnlock(manager_id, user_id, lock_type, obj_index,
           lock_mode_table_[manager_id]);
     }
@@ -1126,17 +1151,22 @@ int LockManager::NotifyLockRequestResult(int user_id, int lock_type,
     pthread_mutex_unlock(&mutex_);
     //exclusive_lock_holders_[index] = user_id;
   }
+  pthread_mutex_lock(&user_mutex_);
   LockSimulator* user = user_map[user_id];
   //pthread_mutex_lock(user_mutex_map[user_id]);
   user->NotifyResult(LockManager::TASK_LOCK, lock_type, home_id, obj_index,
       result);
+  pthread_mutex_unlock(&user_mutex_);
   //pthread_mutex_unlock(user_mutex_map[user_id]);
 }
 
 int LockManager::NotifyUnlockRequestResult(int user_id, int lock_type,
     int home_id, int obj_index, int result, bool reset_counter) {
-  if (result != LockManager::RESULT_SUCCESS) {
-    cerr << "Unlock failure" << endl;
+    pthread_mutex_lock(&user_mutex_);
+  if (LockManager::PRINT_DEBUG) {
+    if (result != LockManager::RESULT_SUCCESS) {
+      cerr << "Unlock failure" << endl;
+    }
   }
   //int index = num_lock_object_ * home_id + obj_index;
   //if (result == LockManager::RESULT_SUCCESS) {
@@ -1167,6 +1197,7 @@ int LockManager::NotifyUnlockRequestResult(int user_id, int lock_type,
   user->NotifyResult(LockManager::TASK_UNLOCK, lock_type, home_id, obj_index,
       result);
   //pthread_mutex_unlock(user_mutex_map[user_id]);
+    pthread_mutex_unlock(&user_mutex_);
 }
 
 int LockManager::SendMessage(Context* context) {
@@ -1185,10 +1216,6 @@ int LockManager::SendMessage(Context* context) {
   sge.addr   = (uint64_t)context->send_message;
   sge.length = sizeof(*context->send_message);
   sge.lkey   = context->send_mr->lkey;
-
-  pthread_mutex_lock(&LockManager::print_mutex);
-  cerr << "SendMessage() Size = " << sge.length << endl;
-  pthread_mutex_unlock(&LockManager::print_mutex);
 
   int ret = 0;
   if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
@@ -1304,6 +1331,8 @@ int LockManager::HandleEvent(struct rdma_cm_event* event) {
 
 // Handles work completions.
 int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
+
+  //pthread_mutex_lock(&wc_mutex_);
   Context* context = (Context *)work_completion->wr_id;
 
   if (work_completion->status != IBV_WC_SUCCESS) {
@@ -1311,53 +1340,62 @@ int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
     cerr << "(LockManager) Work completion status is not IBV_WC_SUCCESS: " <<
       rank_ << ":" << work_completion->status << "," << work_completion->opcode << endl;
     pthread_mutex_unlock(&LockManager::print_mutex);
+    pthread_mutex_unlock(&wc_mutex_);
     return -1;
   }
 
   if (work_completion->opcode & IBV_WC_RECV) {
+    int type = context->receive_message->type;
+
     // Post receive
     ReceiveMessage(context);
 
     // if client is requesting semaphore MR
-    if (context->receive_message->type == Message::LOCK_TABLE_MR_REQUEST) {
+    if (type == Message::LOCK_TABLE_MR_REQUEST) {
       SendLockTableMemoryRegion(context);
-    } else if (context->receive_message->type == Message::LOCK_REQUEST) {
+    } else if (type == Message::LOCK_REQUEST) {
       LockLocally(context);
-    } else if (context->receive_message->type == Message::UNLOCK_REQUEST) {
+    } else if (type == Message::UNLOCK_REQUEST) {
       //UnlockLocally(context);
       if (context->receive_message->lock_type == LockManager::SHARED) {
         HandleSharedLockRelease(context);
+      } else {
+        cerr << "SOMETHING IS WRONG!" << endl;
       }
-    } else if (context->receive_message->type == Message::SHARED_UNLOCK_RESULT) {
+    } else if (type == Message::SHARED_UNLOCK_RESULT) {
       HandleSharedUnlockResult(context);
-    } else if (context->receive_message->type == Message::EXCLUSIVE_TO_SHARED_LOCK_REQUEST) {
+    } else if (type == Message::EXCLUSIVE_TO_SHARED_LOCK_REQUEST) {
       HandleExclusiveToSharedLockRequest(context);
-    } else if (context->receive_message->type == Message::EXCLUSIVE_TO_SHARED_LOCK_GRANT) {
+    } else if (type == Message::EXCLUSIVE_TO_SHARED_LOCK_GRANT) {
       HandleExclusiveToSharedLockGrant(context);
-    } else if (context->receive_message->type == Message::SHARED_TO_EXCLUSIVE_LOCK_REQUEST) {
+    } else if (type == Message::SHARED_TO_EXCLUSIVE_LOCK_REQUEST) {
       HandleSharedToExclusiveLockRequest(context);
-    } else if (context->receive_message->type == Message::SHARED_TO_EXCLUSIVE_LOCK_GRANT) {
+    } else if (type == Message::SHARED_TO_EXCLUSIVE_LOCK_GRANT) {
       HandleSharedToExclusiveLockGrant(context);
-    } else if (context->receive_message->type == Message::EXCLUSIVE_TO_EXCLUSIVE_LOCK_REQUEST) {
+    } else if (type == Message::EXCLUSIVE_TO_EXCLUSIVE_LOCK_REQUEST) {
       HandleExclusiveToExclusiveLockRequest(context);
-    } else if (context->receive_message->type == Message::EXCLUSIVE_TO_EXCLUSIVE_LOCK_GRANT) {
+    } else if (type == Message::EXCLUSIVE_TO_EXCLUSIVE_LOCK_GRANT) {
       HandleExclusiveToExclusiveLockGrant(context);
     } else {
-      cerr << "Unknown message type: " << context->receive_message->type
+      cerr << "Unknown message type: " << type
         << endl;
+      //pthread_mutex_unlock(&wc_mutex_);
       return -1;
     }
 
   }
+  //pthread_mutex_unlock(&wc_mutex_);
   return 0;
 }
 
 int LockManager::BroadcastExclusiveToSharedLockGrant(int home_id, int obj_index) {
 
-  pthread_mutex_lock(&LockManager::print_mutex);
-  cerr << "Broadcasting Exclusive-to-Shared Lock Grant: " << rank_ << ", " <<
-    home_id << ", " << obj_index << endl;
-  pthread_mutex_unlock(&LockManager::print_mutex);
+  if (LockManager::PRINT_DEBUG) {
+    pthread_mutex_lock(&LockManager::print_mutex);
+    cerr << "Broadcasting Exclusive-to-Shared Lock Grant: " << rank_ << ", " <<
+      home_id << ", " << obj_index << endl;
+    pthread_mutex_unlock(&LockManager::print_mutex);
+  }
 
   int index = num_lock_object_ * home_id + obj_index;
   pthread_mutex_lock(&mutex_);
@@ -1386,12 +1424,14 @@ int LockManager::HandleExclusiveToSharedLockRequest(Context* context) {
   int obj_index = context->receive_message->obj_index;
   int index = num_lock_object_ * home_id + obj_index;
 
-  pthread_mutex_lock(&LockManager::print_mutex);
-  cerr << "Exclusive-to-Shared Lock Request received: " << rank_ << ", "
-    << current_owner << ", " << new_owner << ", " << home_id << ", " << obj_index << ", "
-    << has_unlocked_exclusive_[index] << ", " << exclusive_to_shared_unlock_to_receive_[index]
-    << endl;
-  pthread_mutex_unlock(&LockManager::print_mutex);
+  if (LockManager::PRINT_DEBUG) {
+    pthread_mutex_lock(&LockManager::print_mutex);
+    cerr << "Exclusive-to-Shared Lock Request received: " << rank_ << ", "
+      << current_owner << ", " << new_owner << ", " << home_id << ", " << obj_index << ", "
+      << has_unlocked_exclusive_[index] << ", " << exclusive_to_shared_unlock_to_receive_[index]
+      << endl;
+    pthread_mutex_unlock(&LockManager::print_mutex);
+  }
 
   pthread_mutex_lock(&mutex_);
   node_to_unlock_exclusive_shared_[index] = home_id;
@@ -1421,9 +1461,12 @@ int LockManager::HandleSharedLockRelease(Context* context) {
   exclusive = (uint32_t)((*lock_object)>>32);
   shared = (uint32_t)(*lock_object);
 
-  pthread_mutex_lock(&LockManager::print_mutex);
-  cerr << "Shared Lock Release received: " << rank_ << ", " <<  shared_lock_counter_[index] << endl;
-  pthread_mutex_unlock(&LockManager::print_mutex);
+  if (LockManager::PRINT_DEBUG) {
+    pthread_mutex_lock(&LockManager::print_mutex);
+    cerr << "Shared Lock Release received: " << rank_ << ", " <<
+      home_id << ", " << obj_index << ", " << shared_lock_counter_[index] << endl;
+    pthread_mutex_unlock(&LockManager::print_mutex);
+  }
 
   // lock locally on lock table
   pthread_mutex_lock(&mutex_);
@@ -1435,9 +1478,11 @@ int LockManager::HandleSharedLockRelease(Context* context) {
       node_to_unlock_exclusive_shared_[index] == 0) {
     // if no one else is waiting for exclusive lock, unlock it
     if (shared_lock_counter_[index] == shared) {
-      pthread_mutex_lock(&LockManager::print_mutex);
-      cerr << "path 1: " << index << ", " << shared_lock_counter_[index] << endl;
-      pthread_mutex_unlock(&LockManager::print_mutex);
+      if (LockManager::PRINT_DEBUG) {
+        pthread_mutex_lock(&LockManager::print_mutex);
+        cerr << "path 1: " << index << ", " << shared_lock_counter_[index] << endl;
+        pthread_mutex_unlock(&LockManager::print_mutex);
+      }
       //if (home_id != rank_) {
         //cerr << "This should not happen?" << endl;
         //LockClient* lock_client = lock_clients_[home_id];
@@ -1447,31 +1492,35 @@ int LockManager::HandleSharedLockRelease(Context* context) {
       //}
       LockClient* lock_client = lock_clients_[home_id];
       //lock_client->UnlockShared(home_id, user_id, obj_index, shared_lock_counter_[index]);
-      while (is_unlocking_shared_[index]) {
-        // busy-wait
-      }
+      //while (is_unlocking_shared_[index]) {
+        //pthread_cond_wait(&cond_, &mutex_);
+      //}
       local_client_->UnlockShared(home_id, user_id, obj_index, shared_lock_counter_[index]);
       is_unlocking_shared_[index] = true;
       //has_unlocked_shared_[obj_index] = true;
-      //if (SendUnlockRequestResult(context, user_id, LockManager::SHARED, obj_index,
-            //lock_result)) {
-        //cerr << "UnlockLocally(): SendUnlockRequestResult() failed." << endl;
-        //return -1;
-      //}
+      if (SendUnlockRequestResult(context, user_id, LockManager::SHARED, obj_index,
+            lock_result)) {
+        cerr << "UnlockLocally(): SendUnlockRequestResult() failed." << endl;
+        return -1;
+      }
       //shared_lock_counter_[index] = 0;
     } else if (shared == 0) {
-      pthread_mutex_lock(&LockManager::print_mutex);
-      cerr << "path 2: " << index << ", " << shared_lock_counter_[index] << ", " << shared << endl;
-      pthread_mutex_unlock(&LockManager::print_mutex);
+      if (LockManager::PRINT_DEBUG) {
+        pthread_mutex_lock(&LockManager::print_mutex);
+        cerr << "path 2: " << index << ", " << shared_lock_counter_[index] << ", " << shared << endl;
+        pthread_mutex_unlock(&LockManager::print_mutex);
+      }
       if (SendUnlockRequestResult(context, user_id, LockManager::SHARED, obj_index,
             lock_result)) {
         cerr << "UnlockLocally(): SendUnlockRequestResult() failed." << endl;
         return -1;
       }
     } else {
-      pthread_mutex_lock(&LockManager::print_mutex);
-      cerr << "path 3: " << index << ", " << shared_lock_counter_[index] << ", " << shared << endl;
-      pthread_mutex_unlock(&LockManager::print_mutex);
+      if (LockManager::PRINT_DEBUG) {
+        pthread_mutex_lock(&LockManager::print_mutex);
+        cerr << "path 3: " << index << ", " << shared_lock_counter_[index] << ", " << shared << endl;
+        pthread_mutex_unlock(&LockManager::print_mutex);
+      }
       if (SendUnlockRequestResult(context, user_id, LockManager::SHARED, obj_index,
             lock_result)) {
         cerr << "UnlockLocally(): SendUnlockRequestResult() failed." << endl;
@@ -1481,9 +1530,11 @@ int LockManager::HandleSharedLockRelease(Context* context) {
   } else if (shared_to_exclusive_home_id_[index] > -1) {
     // if someone is waiting for its exclusive lock, send the grant message
     if (shared_lock_counter_[index] == shared_to_exclusive_unlock_to_receive_[index]) {
-      pthread_mutex_lock(&LockManager::print_mutex);
-      cerr << "path 4" << endl;
-      pthread_mutex_unlock(&LockManager::print_mutex);
+      if (LockManager::PRINT_DEBUG) {
+        pthread_mutex_lock(&LockManager::print_mutex);
+        cerr << "path 4" << endl;
+        pthread_mutex_unlock(&LockManager::print_mutex);
+      }
       int home_id = shared_to_exclusive_home_id_[index];
       int next_user_id = shared_to_exclusive_user_id_[index];
       LockClient* client = lock_clients_[home_id];
@@ -1499,10 +1550,12 @@ int LockManager::HandleSharedLockRelease(Context* context) {
       shared_to_exclusive_home_id_[index] = -1;
       shared_to_exclusive_user_id_[index] = 0;
     } else {
-      pthread_mutex_lock(&LockManager::print_mutex);
-      cerr << "path 5: " << index << ", " << shared_lock_counter_[index] << ", " <<
-        shared_to_exclusive_unlock_to_receive_[index] << endl;
-      pthread_mutex_unlock(&LockManager::print_mutex);
+      if (LockManager::PRINT_DEBUG) {
+        pthread_mutex_lock(&LockManager::print_mutex);
+        cerr << "path 5: " << index << ", " << shared_lock_counter_[index] << ", " <<
+          shared_to_exclusive_unlock_to_receive_[index] << endl;
+        pthread_mutex_unlock(&LockManager::print_mutex);
+      }
       if (SendUnlockRequestResult(context, user_id, LockManager::SHARED, obj_index,
             lock_result)) {
         cerr << "UnlockLocally(): SendUnlockRequestResult() failed." << endl;
@@ -1516,10 +1569,12 @@ int LockManager::HandleSharedLockRelease(Context* context) {
   } else if (node_to_unlock_exclusive_shared_[index] > 0) {
     // unlock exclusive + shared when it receives all shared release messages.
     if (shared_lock_counter_[index] >= exclusive_to_shared_unlock_to_receive_[index]) {
-      pthread_mutex_lock(&LockManager::print_mutex);
-      cerr << "path 6: " << index << ", " << shared_lock_counter_[index] << ", " <<
-        exclusive_to_shared_unlock_to_receive_[index] << endl;
-      pthread_mutex_unlock(&LockManager::print_mutex);
+      if (LockManager::PRINT_DEBUG) {
+        pthread_mutex_lock(&LockManager::print_mutex);
+        cerr << "path 6: " << index << ", " << shared_lock_counter_[index] << ", " <<
+          exclusive_to_shared_unlock_to_receive_[index] << endl;
+        pthread_mutex_unlock(&LockManager::print_mutex);
+      }
 
       int home_id = node_to_unlock_exclusive_shared_[index];
       LockClient* lock_client = lock_clients_[home_id];
@@ -1534,10 +1589,12 @@ int LockManager::HandleSharedLockRelease(Context* context) {
       //exclusive_to_shared_unlock_to_receive_[index] = 0;
       //shared_lock_to_receive_[index] = 0;
     } else {
-      pthread_mutex_lock(&LockManager::print_mutex);
-      cerr << "path 7: " << shared_lock_counter_[index] << ", " <<
-        exclusive_to_shared_unlock_to_receive_[index] << endl;
-      pthread_mutex_unlock(&LockManager::print_mutex);
+      if (LockManager::PRINT_DEBUG) {
+        pthread_mutex_lock(&LockManager::print_mutex);
+        cerr << "path 7: " << shared_lock_counter_[index] << ", " <<
+          exclusive_to_shared_unlock_to_receive_[index] << endl;
+        pthread_mutex_unlock(&LockManager::print_mutex);
+      }
 
       // send unlock result.
       if (SendUnlockRequestResult(context, user_id, LockManager::SHARED, obj_index,
@@ -1547,16 +1604,18 @@ int LockManager::HandleSharedLockRelease(Context* context) {
       }
     }
   } else {
-    cerr << "ERROR: " << shared_lock_counter_[index] << ", " <<
-      shared_to_exclusive_unlock_to_receive_[index] << ", " <<
-      exclusive_to_shared_unlock_to_receive_[index] << endl;
-    cerr << "ERROR: ";
-    cerr << shared_to_exclusive_home_id_[index] << ", ";
-    cerr << shared_to_exclusive_user_id_[index] << ", ";
-    cerr << exclusive_to_exclusive_home_id_[index] << ", ";
-    cerr << exclusive_to_exclusive_user_id_[index] << ", ";
-    cerr << node_to_unlock_exclusive_shared_[index] << endl;
-    cerr << "ERROR: This should not happen." << endl;
+    if (LockManager::PRINT_DEBUG) {
+      cerr << "ERROR: " << shared_lock_counter_[index] << ", " <<
+        shared_to_exclusive_unlock_to_receive_[index] << ", " <<
+        exclusive_to_shared_unlock_to_receive_[index] << endl;
+      cerr << "ERROR: ";
+      cerr << shared_to_exclusive_home_id_[index] << ", ";
+      cerr << shared_to_exclusive_user_id_[index] << ", ";
+      cerr << exclusive_to_exclusive_home_id_[index] << ", ";
+      cerr << exclusive_to_exclusive_user_id_[index] << ", ";
+      cerr << node_to_unlock_exclusive_shared_[index] << endl;
+      cerr << "ERROR: This should not happen." << endl;
+    }
     return -1;
   }
 
@@ -1571,9 +1630,12 @@ int LockManager::HandleSharedUnlockResult(Context* context) {
   int result    = context->receive_message->lock_result;
   int index     = num_lock_object_ * home_id + obj_index;
 
-  pthread_mutex_lock(&LockManager::print_mutex);
-  cerr << "Shared Unlock Result received: " << rank_ << ", " << result << endl;
-  pthread_mutex_unlock(&LockManager::print_mutex);
+  if (LockManager::PRINT_DEBUG) {
+    pthread_mutex_lock(&LockManager::print_mutex);
+    cerr << "Shared Unlock Result received: " << pthread_self() << " @ " << rank_ << ", " <<
+      home_id << ", " << obj_index << ", " << result << endl;
+    pthread_mutex_unlock(&LockManager::print_mutex);
+  }
 
   if (result == LockManager::RESULT_RETRY) {
     pthread_mutex_lock(&mutex_);
@@ -1595,9 +1657,11 @@ int LockManager::HandleSharedUnlockResult(Context* context) {
 }
 
 int LockManager::HandleExclusiveToSharedLockGrant(Context* context) {
-  pthread_mutex_lock(&LockManager::print_mutex);
-  cerr << "Exclusive-to-Shared Lock Grant received: " << rank_ << endl;
-  pthread_mutex_unlock(&LockManager::print_mutex);
+  if (LockManager::PRINT_DEBUG) {
+    pthread_mutex_lock(&LockManager::print_mutex);
+    cerr << "Exclusive-to-Shared Lock Grant received: " << rank_ << endl;
+    pthread_mutex_unlock(&LockManager::print_mutex);
+  }
   int current_owner = context->receive_message->current_owner;
   int home_id = context->receive_message->home_id;
   int user_id = context->receive_message->user_id;
@@ -1620,11 +1684,13 @@ int LockManager::HandleSharedToExclusiveLockRequest(Context* context) {
   int obj_index         = context->receive_message->obj_index;
   int shared_to_receive = context->receive_message->shared_lock_counter;
 
-  pthread_mutex_lock(&LockManager::print_mutex);
-  cerr << "Shared-To-Exclusive Lock Request received: " << shared_to_receive
-    << ", " << new_owner << ", " << home_id << ", " << user_id
-    << endl;
-  pthread_mutex_unlock(&LockManager::print_mutex);
+  if (LockManager::PRINT_DEBUG) {
+    pthread_mutex_lock(&LockManager::print_mutex);
+    cerr << "Shared-To-Exclusive Lock Request received: " << rank_ << ", " << shared_to_receive
+      << ", " << new_owner << ", " << home_id << ", " << obj_index << ", "<< user_id
+      << endl;
+    pthread_mutex_unlock(&LockManager::print_mutex);
+  }
 
   int index = num_lock_object_ * home_id + obj_index;
 
@@ -1658,10 +1724,12 @@ int LockManager::HandleSharedToExclusiveLockGrant(Context* context) {
   int obj_index = context->receive_message->obj_index;
   int lock_type = context->receive_message->lock_type;
 
-  pthread_mutex_lock(&LockManager::print_mutex);
-  cerr << "Shared-To-Exclusive Lock Grant received: " << home_id
-    << ", " << user_id << endl;
-  pthread_mutex_unlock(&LockManager::print_mutex);
+  if (LockManager::PRINT_DEBUG) {
+    pthread_mutex_lock(&LockManager::print_mutex);
+    cerr << "Shared-To-Exclusive Lock Grant received: " << rank_ << ", " << home_id
+      << ", " << user_id << endl;
+    pthread_mutex_unlock(&LockManager::print_mutex);
+  }
 
   this->SendSharedToExclusiveLockGrantAck(context, home_id, user_id, obj_index);
   return this->NotifyLockRequestResult(user_id, LockManager::EXCLUSIVE,
@@ -1684,9 +1752,13 @@ int LockManager::HandleExclusiveToExclusiveLockRequest(Context* context) {
     cerr << "something wrong"<< endl;
   }
 
-  pthread_mutex_lock(&LockManager::print_mutex);
-  cerr << "Exclusive-To-Exclusive Lock Request received: " << has_unlocked_exclusive_[index] << endl;
-  pthread_mutex_unlock(&LockManager::print_mutex);
+  if (LockManager::PRINT_DEBUG) {
+    pthread_mutex_lock(&LockManager::print_mutex);
+    cerr << "Exclusive-To-Exclusive Lock Request received: " <<
+      rank_ << ", " << home_id << ", " << obj_index << ", " <<
+      has_unlocked_exclusive_[index] << endl;
+    pthread_mutex_unlock(&LockManager::print_mutex);
+  }
 
   // should check if already eligible for exclusive lock
   if (has_unlocked_exclusive_[index] > 0) {
@@ -1708,11 +1780,13 @@ int LockManager::HandleExclusiveToExclusiveLockGrant(Context* context) {
   int obj_index = context->receive_message->obj_index;
   int lock_type = context->receive_message->lock_type;
 
-  pthread_mutex_lock(&LockManager::print_mutex);
-  cerr << "Exclusive-To-Exclusive Lock Grant received: "
-    << home_id << ", " << prev_user_id << ", " << user_id
-    << endl;
-  pthread_mutex_unlock(&LockManager::print_mutex);
+  if (LockManager::PRINT_DEBUG) {
+    pthread_mutex_lock(&LockManager::print_mutex);
+    cerr << "Exclusive-To-Exclusive Lock Grant received: "
+      << rank_ << ", " << home_id << ", " << prev_user_id << ", " << user_id
+      << endl;
+    pthread_mutex_unlock(&LockManager::print_mutex);
+  }
 
   this->SendExclusiveToExclusiveLockGrantAck(context, home_id, prev_user_id, obj_index);
   return this->NotifyLockRequestResult(user_id, LockManager::EXCLUSIVE,
@@ -1721,14 +1795,18 @@ int LockManager::HandleExclusiveToExclusiveLockGrant(Context* context) {
 
 void LockManager::ResetByUnlock(int home_id, int obj_index, int shared_count) {
   int index = num_lock_object_ * home_id + obj_index;
-  pthread_mutex_lock(&LockManager::print_mutex);
-  cerr << "Reset By Unlock: " << rank_ << ", " << home_id << ", " << index <<
-    ", " << shared_count << endl;
-  if (home_id == 0) {
-    cerr << "HERE" << endl;
+  if (LockManager::PRINT_DEBUG) {
+    pthread_mutex_lock(&LockManager::print_mutex);
+    cerr << "Reset By Unlock: " << rank_ << ", " << home_id << ", " << index <<
+      ", " << shared_count << endl;
+    if (home_id == 0) {
+      cerr << "HERE" << endl;
+    }
+    pthread_mutex_unlock(&LockManager::print_mutex);
   }
-  pthread_mutex_unlock(&LockManager::print_mutex);
   pthread_mutex_lock(&mutex_);
+  is_unlocking_shared_[index] = false;
+  pthread_cond_signal(&cond_);
   node_to_unlock_exclusive_shared_[index] = 0;
   exclusive_to_shared_unlock_to_receive_[index] = 0;
   if (shared_count > 0 && shared_count <= shared_lock_counter_[index]) {
@@ -1773,9 +1851,11 @@ void LockManager::ResetExclusiveToExclusive(int home_id, int obj_index) {
 }
 
 void LockManager::ResetSharedToExclusive(int home_id, int obj_index) {
-  pthread_mutex_lock(&LockManager::print_mutex);
-  cerr << "Reset Shared-to-Exclusive" << endl;
-  pthread_mutex_unlock(&LockManager::print_mutex);
+  if (LockManager::PRINT_DEBUG) {
+    pthread_mutex_lock(&LockManager::print_mutex);
+    cerr << "Reset Shared-to-Exclusive" << endl;
+    pthread_mutex_unlock(&LockManager::print_mutex);
+  }
   int index = num_lock_object_ * home_id + obj_index;
   pthread_mutex_lock(&mutex_);
   shared_to_exclusive_home_id_[index] = -1;

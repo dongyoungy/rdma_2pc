@@ -63,7 +63,7 @@ int main(int argc, char** argv) {
   if (lock_mode == LockManager::LOCK_LOCAL) {
     lock_mode_str = "LOCK_MODE_PROXY";
   } else if (lock_mode == LockManager::LOCK_REMOTE) {
-    lock_mode_str = "LOCK_MODE_DIRECT";
+    lock_mode_str = "N-CoSED_DIRECT";
   }
 
   string workload_type_str;
@@ -99,7 +99,7 @@ int main(int argc, char** argv) {
     cout << "Duration = " << duration << " seconds"  << endl;
   }
 
-  LockManager* lock_manager = new LockManager(argv[1], rank, num_managers,
+  LockManager* lock_manager = new LockManager(argv[1], rank+1, num_managers,
       num_lock_object, lock_mode);
 
   if (lock_manager->Initialize()) {
@@ -115,9 +115,9 @@ int main(int argc, char** argv) {
   }
 
   vector<LockSimulator*> users;
-  for (int i=0;i<num_users;++i) {
+  for (int i=0;i<1;++i) {
     LockSimulator* simulator = new LockSimulator(lock_manager,
-        rank*num_managers+(i+1), // id
+        (rank+1), // id
         num_managers,
         num_lock_object,
         num_requests,
@@ -132,7 +132,7 @@ int main(int argc, char** argv) {
         transaction_delay_min,
         transaction_delay_max
         );
-    lock_manager->RegisterUser(rank*num_managers+(i+1), simulator);
+    lock_manager->RegisterUser(rank+1, simulator);
     users.push_back(simulator);
   }
 
@@ -145,7 +145,7 @@ int main(int argc, char** argv) {
 
   sleep(1);
 
-  for (int i=0;i<num_users;++i) {
+  for (int i=0;i<1;++i) {
     //users[i]->Run();
     pthread_t lock_simulator_thread;
     if (pthread_create(&lock_simulator_thread, NULL, &RunLockSimulator,
@@ -164,12 +164,14 @@ int main(int argc, char** argv) {
      exit(-1);
   }
 
-  for (int i=0;i<users.size();++i) {
-    LockSimulator* simulator = users[i];
-    while (simulator->GetState() != LockSimulator::STATE_DONE) {
-       sleep(1);
-    }
-  }
+  //for (int i=0;i<users.size();++i) {
+    //LockSimulator* simulator = users[i];
+    //while (simulator->GetState() != LockSimulator::STATE_DONE) {
+       //sleep(1);
+    //}
+  //}
+
+  sleep(duration);
 
   long local_sum                            = 0;
   long global_sum                           = 0;

@@ -41,6 +41,9 @@ class LockClient {
     double GetAverageSendMessageTime() const;
     double GetAverageReceiveMessageTime() const;
 
+    uint64_t GetRDMAReadCount() const;
+    uint64_t GetRDMAAtomicCount() const;
+
     static void* PollCompletionQueue(void* context);
 
   private:
@@ -76,6 +79,9 @@ class LockClient {
     static const int TEST_MODE_DATA = 1;
 
     map<int, uint32_t> waitlist_;
+
+    uint64_t num_rdma_atomic_;
+    uint64_t num_rdma_read_;
 
     LockManager* local_manager_;
     LockSimulator* local_user_;

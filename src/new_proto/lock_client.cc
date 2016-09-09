@@ -364,6 +364,17 @@ int LockClient::RegisterMemoryRegion(Context* context) {
     return -1;
   }
 
+  context->read_buffer = new uint32_t;
+  context->read_buffer_mr = ibv_reg_mr(context->protection_domain,
+      context->read_buffer,
+      sizeof(*context->original_value),
+      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ
+      | IBV_ACCESS_REMOTE_ATOMIC);
+  if (context->read_buffer_mr == NULL) {
+    cerr << "ibv_reg_mr() failed for read_buffer_mr." << endl;
+    return -1;
+  }
+
   return 0;
 }
 
@@ -488,6 +499,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     total_send_message_time_ += time_taken;
     ++num_send_message_;
   } else if (work_completion->opcode == IBV_WC_COMP_SWAP) {
+    // We don't see this for Algorithm 1
     // completion of compare-and-swap, i.e. remote exclusive locking
 
     // get time
@@ -539,7 +551,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       }
     }
   } else if (work_completion->opcode == IBV_WC_FETCH_ADD) {
-    // completion of fetch-and-add, i.e. remote shared locking
+    // completion of fetch-and-add, i.e. remote shared/exclusive locking
 
     // get time
     clock_gettime(CLOCK_MONOTONIC, &end_remote_shared_lock_);
@@ -558,28 +570,331 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     exclusive = (uint32_t)((value)>>32);
     shared = (uint32_t)value;
 
+    context->exclusive = exclusive;
+    context->shared = shared;
+
     if (context->last_lock_task == LockManager::TASK_LOCK) {
-      // it should have been successful since exclusive and shared was 0
-      if (exclusive == 0) {
+      if (context->last_lock_type == LockManager::EXCLUSIVE) {
+        if (exclusive == 0 && shared == 0) {
+          // exclusive lock acquisition successful
+          local_manager_->NotifyLockRequestResult(context->last_user_id,
+              context->last_lock_type,
+              context->last_obj_index,
+              LockManager::RESULT_SUCCESS);
+        } else if (exclusive == 0 && shared != 0) {
+          // shared lock exists, polling on shared portion of the lock object
+          this->HandleSharedToExclusive(context);
+        } else if (exclusive != 0 && shared == 0) {
+          // exclusive lock exists, wait for others
+          this->HandleExclusiveToExclusive(context);
+        } else {
+          // lock acquisition failed, undoing FA
+          this->UndoLocking(context);
+        }
+      } else {
+        // shared lock
+        if (exclusive == 0) {
+          // it should have been successful since exclusive and shared was 0
+          local_manager_->NotifyLockRequestResult(context->last_user_id,
+              context->last_lock_type,
+              context->last_obj_index,
+              LockManager::RESULT_SUCCESS);
+        } else if (exclusive != 0 && shared == 0){
+          // exclusive lock exists
+          this->HandleExclusiveToShared(context);
+        } else {
+          this->UndoLocking(context);
+        }
+      }
+    } else if (context->last_lock_task == TASK_UNLOCK) {
+      if (exclusive == 0 && context->last_lock_type == EXCLUSIVE) {
+        cerr << "wrong" << endl;
+      }
+      if (context->fail) {
+        context->fail = false;
+        if (context->polling) {
+          context->polling = false;
+        } else {
+          ++context->retry;
+          if (context->retry > POLL_RETRY) {
+            local_manager_->NotifyLockRequestResult(context->last_user_id,
+                context->last_lock_type,
+                context->last_obj_index,
+                RESULT_FAILURE);
+          } else {
+            local_manager_->NotifyLockRequestResult(context->last_user_id,
+                context->last_lock_type,
+                context->last_obj_index,
+                RESULT_RETRY);
+          }
+        }
+      } else {
+        if (context->last_lock_type == EXCLUSIVE) {
+          waitlist_[context->last_obj_index] = (exclusive - context->last_user_id);
+        } else {
+          waitlist_[context->last_obj_index] = exclusive;
+        }
+        // unlock always succeeds. (really?)
+        local_manager_->NotifyUnlockRequestResult(context->last_user_id,
+            context->last_lock_type,
+            context->last_obj_index,
+            LockManager::RESULT_SUCCESS);
+      }
+    }
+  } else if (work_completion->opcode == IBV_WC_RDMA_READ) {
+    // polling result
+    uint32_t value = *context->read_buffer;
+//#if __BYTE_ORDER == __LITTLE_ENDIAN
+    //uint32_t value = __bswap_constant_32(prev_value);  // Compiler builtin
+//#endif
+    if (context->last_read_target == SHARED) {
+      // Polling on Sh_X -> proceed if value is zero
+      if (value == 0) {
         local_manager_->NotifyLockRequestResult(context->last_user_id,
             context->last_lock_type,
             context->last_obj_index,
             LockManager::RESULT_SUCCESS);
       } else {
-        local_manager_->NotifyLockRequestResult(context->last_user_id,
-            context->last_lock_type,
-            context->last_obj_index,
-            LockManager::RESULT_FAILURE);
+        // otherwise, read/poll again (shared -> exclusive)
+        this->PollSharedToExclusive(context);
       }
-    } else if (context->last_lock_task == LockManager::TASK_UNLOCK) {
-      // unlock always succeeds. (really?)
-      local_manager_->NotifyUnlockRequestResult(context->last_user_id,
-          context->last_lock_type,
-          context->last_obj_index,
-          LockManager::RESULT_SUCCESS);
+    } else {
+      if (context->last_lock_type == EXCLUSIVE) {
+        // exclusive -> exclusive
+        if (context->retry > POLL_RETRY) {
+          local_manager_->NotifyLockRequestResult(context->last_user_id,
+              context->last_lock_type,
+              context->last_obj_index,
+              RESULT_FAILURE);
+        } else {
+          this->PollExclusiveToExclusive(context);
+        }
+      } else {
+        // exclusive -> shared
+        this->PollExclusiveToShared(context);
+      }
     }
   }
 
+  return 0;
+}
+
+// Handle Shared -> Exclusive
+int LockClient::HandleSharedToExclusive(Context* context) {
+  int rule = LockManager::GetSharedExclusiveRule();
+  switch (rule) {
+    case RULE_FAIL:
+      this->UndoLocking(context);
+      break;
+    case RULE_POLL:
+      context->last_read_target = SHARED;
+      this->ReadRemotely(context,
+          context->last_user_id,
+          context->last_read_target,
+          context->last_obj_index);
+      break;
+    default:
+      cerr << "Unsupported Shared -> Exclusive rule: " <<  rule << endl;
+      return -1;
+  }
+
+  return 0;
+}
+
+// Handle Exclusive -> Shared
+int LockClient::HandleExclusiveToShared(Context* context) {
+  int rule = LockManager::GetExclusiveSharedRule();
+  switch (rule) {
+    case RULE_FAIL:
+      this->UndoLocking(context);
+      break;
+    case RULE_POLL:
+      context->last_read_target = EXCLUSIVE;
+      this->ReadRemotely(context,
+          context->last_user_id,
+          context->last_read_target,
+          context->last_obj_index);
+      break;
+    case RULE_QUEUE:
+      context->last_read_target = EXCLUSIVE;
+      if ((context->exclusive & waitlist_[context->last_obj_index]) == 0) {
+        waitlist_[context->last_obj_index] = 0;
+      }
+      if (waitlist_[context->last_obj_index] == 0) {
+        context->waiters = context->exclusive;
+        context->last_read_target = EXCLUSIVE;
+        this->ReadRemotely(context,
+            context->last_user_id,
+            context->last_read_target,
+            context->last_obj_index);
+      } else {
+        // lock acquisition failed, undoing FA
+        this->UndoLocking(context);
+      }
+      break;
+    default:
+      cerr << "Unsupported Exclusive -> Shared rule: " <<  rule << endl;
+      return -1;
+  }
+}
+
+// Handle Exclusive -> Exclusive
+int LockClient::HandleExclusiveToExclusive(Context* context) {
+  int rule = LockManager::GetExclusiveExclusiveRule();
+  switch (rule) {
+    case RULE_FAIL:
+      this->UndoLocking(context);
+      break;
+    case RULE_POLL:
+      this->UndoLocking(context, true);
+      context->last_read_target = EXCLUSIVE;
+      this->ReadRemotely(context,
+          context->last_user_id,
+          context->last_read_target,
+          context->last_obj_index);
+      break;
+    case RULE_QUEUE:
+      context->last_read_target = EXCLUSIVE;
+      if ((context->exclusive & waitlist_[context->last_obj_index]) == 0) {
+        waitlist_[context->last_obj_index] = 0;
+      }
+      if (waitlist_[context->last_obj_index] == 0) {
+        context->waiters = context->exclusive;
+        context->last_read_target = EXCLUSIVE;
+        this->ReadRemotely(context,
+            context->last_user_id,
+            context->last_read_target,
+            context->last_obj_index);
+      } else {
+        // lock acquisition failed, undoing FA
+        this->UndoLocking(context);
+      }
+      break;
+    default:
+      cerr << "Unsupported Exclusive -> Exclusive rule: " <<  rule << endl;
+      return -1;
+  }
+  return 0;
+}
+
+int LockClient::UndoLocking(Context* context, bool polling) {
+  context->fail = true;
+  context->polling = polling;
+  this->UnlockRemotely(context,
+      context->last_user_id,
+      context->last_lock_type,
+      context->last_obj_index
+      );
+  return 0;
+}
+
+int LockClient::PollSharedToExclusive(Context* context) {
+  ++context->retry;
+  if (context->retry > POLL_RETRY) {
+    this->UndoLocking(context);
+    return 0;
+  }
+
+  int rule = LockManager::GetSharedExclusiveRule();
+  switch (rule) {
+    case RULE_POLL:
+      this->ReadRemotely(context,
+          context->last_user_id,
+          context->last_read_target,
+          context->last_obj_index);
+      break;
+    default:
+      cerr << "Unsupported Shared -> Exclusive rule for polling: " <<  rule << endl;
+      return -1;
+  }
+  return 0;
+}
+
+int LockClient::PollExclusiveToShared(Context* context) {
+  ++context->retry;
+  if (context->retry > POLL_RETRY) {
+    this->UndoLocking(context);
+    return 0;
+  }
+  int rule = LockManager::GetExclusiveSharedRule();
+  uint32_t value = *context->read_buffer;
+  switch (rule) {
+    case RULE_POLL:
+      if (value == 0) {
+        local_manager_->NotifyLockRequestResult(context->last_user_id,
+            context->last_lock_type,
+            context->last_obj_index,
+            LockManager::RESULT_SUCCESS);
+      } else {
+        this->ReadRemotely(context,
+            context->last_user_id,
+            context->last_read_target,
+            context->last_obj_index);
+      }
+      break;
+    case RULE_QUEUE:
+      if ((value & context->waiters) == 0) {
+        local_manager_->NotifyLockRequestResult(context->last_user_id,
+            context->last_lock_type,
+            context->last_obj_index,
+            RESULT_SUCCESS);
+      } else {
+        this->ReadRemotely(context,
+            context->last_user_id,
+            context->last_read_target,
+            context->last_obj_index);
+      }
+      break;
+    default:
+      cerr << "Unsupported Exclusive -> Shared rule for polling: " <<  rule << endl;
+      return -1;
+  }
+  return 0;
+}
+
+int LockClient::PollExclusiveToExclusive(Context* context) {
+  int rule = LockManager::GetExclusiveExclusiveRule();
+  ++context->retry;
+  if (context->retry > POLL_RETRY && rule == RULE_QUEUE) {
+    this->UndoLocking(context);
+    return 0;
+  }
+  uint32_t value = *context->read_buffer;
+  switch (rule) {
+    case RULE_POLL:
+      if (value == 0) {
+        //local_manager_->NotifyLockRequestResult(context->last_user_id,
+            //context->last_lock_type,
+            //context->last_obj_index,
+            //LockManager::RESULT_SUCCESS);
+        this->LockRemotely(context,
+           context->last_user_id,
+           context->last_lock_type,
+           context->last_obj_index);
+      } else {
+        this->ReadRemotely(context,
+            context->last_user_id,
+            context->last_read_target,
+            context->last_obj_index);
+      }
+      break;
+    case RULE_QUEUE:
+      if ((value & context->waiters) == 0) {
+        local_manager_->NotifyLockRequestResult(context->last_user_id,
+            context->last_lock_type,
+            context->last_obj_index,
+            RESULT_SUCCESS);
+      } else {
+        this->ReadRemotely(context,
+            context->last_user_id,
+            context->last_read_target,
+            context->last_obj_index);
+      }
+      break;
+    default:
+      cerr << "Unsupported Exclusive -> Exclusive rule for polling: " <<  rule << endl;
+      return -1;
+  }
   return 0;
 }
 
@@ -656,6 +971,9 @@ int LockClient::SendLockTableRequest(Context* context) {
 
 int LockClient::RequestLock(int user_id, int lock_type, int obj_index,
     int lock_mode) {
+  context_->fail = false;
+  context_->polling = false;
+  context_->retry = 0;
   if (lock_mode == LockManager::LOCK_LOCAL) {
     // ask lock manager to place the lock
     return this->SendLockRequest(context_, user_id, lock_type, obj_index);
@@ -707,17 +1025,15 @@ int LockClient::LockRemotely(Context* context, int user_id, int lock_type,
   send_work_request.num_sge        = 1;
   send_work_request.sg_list        = &sge;
   send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
+  send_work_request.exp_opcode     = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
 
   if (lock_type == LockManager::SHARED) {
-    send_work_request.exp_opcode            = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
     send_work_request.wr.atomic.compare_add = 1;
   } else if (lock_type == LockManager::EXCLUSIVE) {
     exclusive = user_id;
     shared = 0;
     uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
-    send_work_request.exp_opcode            = IBV_EXP_WR_ATOMIC_CMP_AND_SWP;
-    send_work_request.wr.atomic.compare_add = (uint64_t)0ULL;
-    send_work_request.wr.atomic.swap        = new_value;
+    send_work_request.wr.atomic.compare_add = new_value;
   }
 
   send_work_request.wr.atomic.remote_addr =
@@ -731,8 +1047,50 @@ int LockClient::LockRemotely(Context* context, int user_id, int lock_type,
     cerr << "LockRemotely(): ibv_exp_post_send() failed: " << strerror(ret) << endl;
     return -1;
   }
+
   ++num_rdma_atomic_;
 
+  return 0;
+}
+
+int LockClient::ReadRemotely(Context* context, int user_id, int read_target, int obj_index) {
+  struct ibv_exp_send_wr send_work_request;
+  struct ibv_exp_send_wr* bad_work_request;
+  struct ibv_sge sge;
+
+  memset(&send_work_request, 0x00, sizeof(send_work_request));
+
+  context->last_user_id     = user_id;
+  context->last_obj_index   = obj_index;
+  context->last_read_target = read_target;
+
+  sge.addr   = (uint64_t)context->read_buffer;
+  sge.length = sizeof(uint32_t);
+  sge.lkey   = context->read_buffer_mr->lkey;
+
+  send_work_request.wr_id          = (uint64_t)context;
+  send_work_request.num_sge        = 1;
+  send_work_request.sg_list        = &sge;
+  send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
+  send_work_request.exp_opcode     = IBV_EXP_WR_RDMA_READ;
+
+  send_work_request.wr.rdma.rkey = context->lock_table_mr->rkey;
+  send_work_request.wr.rdma.remote_addr =
+      (uint64_t)context->lock_table_mr->addr + (obj_index*sizeof(uint64_t));
+  if (read_target == LockManager::EXCLUSIVE) {
+    // reading exclusive portion of the lock object
+    // add 4 bytes here because of BIG-ENDIAN?
+    send_work_request.wr.rdma.remote_addr += 4;
+  } // otherwise, read exclusive portion.
+
+  int ret = 0;
+  if ((ret = ibv_exp_post_send(context->queue_pair, &send_work_request,
+          &bad_work_request))) {
+    cerr << "ReadRemotely(): ibv_exp_post_send() failed: " << strerror(ret) << endl;
+    return -1;
+  }
+
+  ++num_rdma_read_;
   return 0;
 }
 
@@ -766,17 +1124,16 @@ int LockClient::UnlockRemotely(Context* context, int user_id, int lock_type,
   send_work_request.num_sge        = 1;
   send_work_request.sg_list        = &sge;
   send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
+  send_work_request.exp_opcode     = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
 
   if (lock_type == LockManager::SHARED) {
-    send_work_request.exp_opcode            = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
     send_work_request.wr.atomic.compare_add = -1;
   } else if (lock_type == LockManager::EXCLUSIVE) {
     exclusive = 0;
     shared = 0;
-    uint64_t prev_value = ((uint64_t)user_id) << 32 | shared;
-    send_work_request.exp_opcode            = IBV_EXP_WR_ATOMIC_CMP_AND_SWP;
-    send_work_request.wr.atomic.compare_add = prev_value;
-    send_work_request.wr.atomic.swap        = (uint64_t)0ULL;
+    uint64_t new_value = ((uint64_t)user_id) << 32 | shared;
+    new_value = (-1) * new_value; // need to subtract for unlock
+    send_work_request.wr.atomic.compare_add = new_value;
   }
   send_work_request.wr.atomic.remote_addr =
     (uint64_t)context->lock_table_mr->addr + (obj_index*sizeof(uint64_t));
@@ -791,7 +1148,6 @@ int LockClient::UnlockRemotely(Context* context, int user_id, int lock_type,
     return -1;
   }
   ++num_rdma_atomic_;
-
   return 0;
 }
 

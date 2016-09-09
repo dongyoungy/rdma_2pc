@@ -62,6 +62,25 @@ class LockManager {
     static void* PollCompletionQueue(void* context);
     static void* RunLockClient(void* args);
 
+    inline static int GetSharedExclusiveRule() {
+      return shared_exclusive_rule_;
+    }
+    inline static int GetExclusiveSharedRule() {
+      return exclusive_shared_rule_;
+    }
+    inline static int GetExclusiveExclusiveRule() {
+      return exclusive_exclusive_rule_;
+    }
+    inline static void SetSharedExclusiveRule(int rule) {
+      shared_exclusive_rule_ = rule;
+    }
+    inline static void SetExclusiveSharedRule(int rule) {
+      exclusive_shared_rule_ = rule;
+    }
+    inline static void SetExclusiveExclusiveRule(int rule) {
+      exclusive_exclusive_rule_ = rule;
+    }
+
     static const int EXCLUSIVE = 0;
     static const int SHARED = 1;
 
@@ -75,6 +94,10 @@ class LockManager {
     static const int RESULT_SUCCESS = 0;
     static const int RESULT_FAILURE = 1;
     static const int RESULT_RETRY = 2;
+
+    static const int RULE_FAIL = 0;
+    static const int RULE_POLL = 1;
+    static const int RULE_QUEUE = 2;
 
     static const int MAX_USER = 65536;
     static const int NUM_LOCK_HISTORY = 10000;
@@ -149,6 +172,9 @@ class LockManager {
     size_t data_size_;
     pthread_mutex_t** lock_mutex_;
 
+    static int shared_exclusive_rule_;
+    static int exclusive_shared_rule_;
+    static int exclusive_exclusive_rule_;
 };
 
 }}

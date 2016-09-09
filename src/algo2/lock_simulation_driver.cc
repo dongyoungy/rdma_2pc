@@ -208,6 +208,11 @@ int main(int argc, char** argv) {
   double local_99_lock_time                = 0;
   double global_99_lock_time               = 0;
 
+  double local_rdma_read_count = 0;
+  double global_rdma_read_count = 0;
+  double local_rdma_atomic_count = 0;
+  double global_rdma_atomic_count = 0;
+
   MPI_Barrier(MPI_COMM_WORLD);
 
   for (int i=0;i<num_managers;++i) {
@@ -238,6 +243,8 @@ int main(int argc, char** argv) {
     lock_manager->GetAverageLocalExclusiveLockTime();
   local_send_message_time = lock_manager->GetAverageSendMessageTime();
   local_receive_message_time = lock_manager->GetAverageReceiveMessageTime();
+  local_rdma_read_count = lock_manager->GetAverageRDMAReadCount();
+  local_rdma_atomic_count = lock_manager->GetAverageRDMAAtomicCount();
 
   usage.terminate = true;
   pthread_join(cpu_measure_thread, NULL);
@@ -274,6 +281,12 @@ int main(int argc, char** argv) {
       1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Reduce(&local_receive_message_time,
       &global_receive_message_time,
+      1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_rdma_read_count,
+      &global_rdma_read_count,
+      1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_rdma_atomic_count,
+      &global_rdma_atomic_count,
       1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 
     cout << "Local Avg CPU Usage = " << local_cpu_usage << "% "
@@ -320,6 +333,14 @@ int main(int argc, char** argv) {
       duration << ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average Receive Message Time = " <<
       global_receive_message_time / num_managers <<
+      " ns " << "(# nodes: " << num_managers << ", duration: " <<
+      duration << ", mode: " << lock_mode_str << ")" << endl;
+    cout << "Global Average RDMA Read Count = " <<
+      global_rdma_read_count / num_managers <<
+      " ns " << "(# nodes: " << num_managers << ", duration: " <<
+      duration << ", mode: " << lock_mode_str << ")" << endl;
+    cout << "Global Average RDMA Atomic Count = " <<
+      global_rdma_atomic_count / num_managers <<
       " ns " << "(# nodes: " << num_managers << ", duration: " <<
       duration << ", mode: " << lock_mode_str << ")" << endl;
     cout << "Overall Avg CPU Usage = " <<

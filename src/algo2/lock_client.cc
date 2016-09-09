@@ -22,6 +22,8 @@ LockClient::LockClient(const string& work_dir, LockManager* local_manager,
   num_shared_lock_                  = 0;
   num_send_message_                 = 0;
   num_receive_message_              = 0;
+  num_rdma_read_                    = 0;
+  num_rdma_atomic_                  = 0;
 
   // initialize local lock mutex
   pthread_mutex_init(&lock_mutex_, NULL);
@@ -827,6 +829,8 @@ int LockClient::LockRemotely(Context* context, int user_id, int lock_type,
     return -1;
   }
 
+  ++num_rdma_atomic_;
+
   return 0;
 }
 
@@ -867,6 +871,7 @@ int LockClient::ReadRemotely(Context* context, int user_id, int read_target, int
     return -1;
   }
 
+  ++num_rdma_read_;
   return 0;
 }
 
@@ -923,7 +928,7 @@ int LockClient::UnlockRemotely(Context* context, int user_id, int lock_type,
       endl;
     return -1;
   }
-
+  ++num_rdma_atomic_;
   return 0;
 }
 
@@ -1011,6 +1016,14 @@ double LockClient::GetAverageSendMessageTime() const {
 double LockClient::GetAverageReceiveMessageTime() const {
   return num_receive_message_ > 0 ?
     total_receive_message_time_ / num_receive_message_ : 0;
+}
+
+uint64_t LockClient::GetRDMAReadCount() const {
+  return num_rdma_read_;
+}
+
+uint64_t LockClient::GetRDMAAtomicCount() const {
+  return num_rdma_atomic_;
 }
 
 // Polls work completion from completion queue

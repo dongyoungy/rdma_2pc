@@ -13,6 +13,7 @@
 #include <arpa/inet.h>
 #include <rdma/rdma_cma.h>
 
+#include "constants.h"
 #include "lock_manager.h"
 #include "context.h"
 
@@ -57,6 +58,8 @@ class LockClient {
     int ReadServerAddress();
     int LockRemotely(Context* context, int user_id, int lock_type,
         int obj_index);
+    int ReadRemotely(Context* context, int user_id, int read_target,
+        int obj_index);
     int UnlockRemotely(Context* context, int user_id, int lock_type,
         int obj_index);
     int SendLockTableRequest(Context* context);
@@ -72,9 +75,21 @@ class LockClient {
     int HandleConnection(Context* context);
     int HandleDisconnect(Context* context);
 
+    int HandleSharedToExclusive(Context* context);
+    int HandleExclusiveToShared(Context* context);
+    int HandleExclusiveToExclusive(Context* context);
+
+    int PollSharedToExclusive(Context* context);
+    int PollExclusiveToShared(Context* context);
+    int PollExclusiveToExclusive(Context* context);
+
+    int UndoLocking(Context* context, bool polling = false);
+
     static const int TOTAL_TRIAL = 1000000;
     static const int TEST_MODE_SEM = 0;
     static const int TEST_MODE_DATA = 1;
+
+    map<int, uint32_t> waitlist_;
 
     uint64_t num_rdma_atomic_;
     uint64_t num_rdma_read_;
