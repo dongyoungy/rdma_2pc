@@ -607,16 +607,13 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
         }
       }
     } else if (context->last_lock_task == TASK_UNLOCK) {
-      if (exclusive == 0 && context->last_lock_type == EXCLUSIVE) {
-        cerr << "wrong" << endl;
-      }
       if (context->fail) {
         context->fail = false;
         if (context->polling) {
           context->polling = false;
         } else {
           ++context->retry;
-          if (context->retry > POLL_RETRY) {
+          if (context->retry > LockManager::GetPollRetry()) {
             local_manager_->NotifyLockRequestResult(context->last_user_id,
                 context->last_lock_type,
                 context->last_obj_index,
@@ -661,7 +658,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     } else {
       if (context->last_lock_type == EXCLUSIVE) {
         // exclusive -> exclusive
-        if (context->retry > POLL_RETRY) {
+        if (context->retry > LockManager::GetPollRetry()) {
           local_manager_->NotifyLockRequestResult(context->last_user_id,
               context->last_lock_type,
               context->last_obj_index,
@@ -790,7 +787,7 @@ int LockClient::UndoLocking(Context* context, bool polling) {
 
 int LockClient::PollSharedToExclusive(Context* context) {
   ++context->retry;
-  if (context->retry > POLL_RETRY) {
+  if (context->retry > LockManager::GetPollRetry()) {
     this->UndoLocking(context);
     return 0;
   }
@@ -812,7 +809,7 @@ int LockClient::PollSharedToExclusive(Context* context) {
 
 int LockClient::PollExclusiveToShared(Context* context) {
   ++context->retry;
-  if (context->retry > POLL_RETRY) {
+  if (context->retry > LockManager::GetPollRetry()) {
     this->UndoLocking(context);
     return 0;
   }
@@ -855,7 +852,7 @@ int LockClient::PollExclusiveToShared(Context* context) {
 int LockClient::PollExclusiveToExclusive(Context* context) {
   int rule = LockManager::GetExclusiveExclusiveRule();
   ++context->retry;
-  if (context->retry > POLL_RETRY && rule == RULE_QUEUE) {
+  if (context->retry > LockManager::GetPollRetry() && rule == RULE_QUEUE) {
     this->UndoLocking(context);
     return 0;
   }

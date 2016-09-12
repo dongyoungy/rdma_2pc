@@ -26,7 +26,7 @@ for num_node in 20
 do 
   for simulate_tx_delay in 0
   do
-    for lock_method in 0 1 # 0 = proxy, 1 = direct
+    for lock_method in 1 # 0 = proxy, 1 = direct
     do
       if [ $lock_method -eq 0 ]
       then
@@ -45,60 +45,66 @@ do
             do
               for shared_lock_ratio in 0.5
               do
-                for s_e_rule in 0 #1
+                for fail_retry in 1 3 5
                 do
-                  for e_s_rule in 0 #1 2
+                  for poll_retry in 1 3 5
                   do
-                    for e_e_rule in 0 #1 2
+                    for s_e_rule in 0 1
                     do
-
-                      if [ $s_e_rule -eq 0 ]
-                      then
-                        s_e_str="fail"
-                      elif [ $s_e_rule -eq 1 ]
-                      then
-                        s_e_str="poll"
-                      fi
-
-                      if [ $e_s_rule -eq 0 ]
-                      then
-                        e_s_str="fail"
-                      elif [ $e_s_rule -eq 1 ]
-                      then
-                        e_s_str="poll"
-                      elif [ $e_s_rule -eq 2 ]
-                      then
-                        e_s_str="queue"
-                      fi
-
-                      if [ $e_e_rule -eq 0 ]
-                      then
-                        e_e_str="fail"
-                      elif [ $e_e_rule -eq 1 ]
-                      then
-                        e_e_str="poll"
-                      elif [ $e_e_rule -eq 2 ]
-                      then
-                        e_e_str="queue"
-                      fi
-
-                      bsub -n $num_node -a openmpi -W 10 -m "cn003 cn004 cn005 cn006 cn008 cn009 cn010 cn011 cn012 cn013 cn014 cn015 cn016 cn017 cn018 cn019 cn020 cn021 cn022 cn023 cn024 cn025 cn026 cn027 cn028 cn029 cn030 cn031 cn032 cn033 cn034 cn035 cn036 cn037 cn038 cn039 cn040" -R "span[ptile=1]" -R rusage[mem=1024] -J local \
-                        -eo /gpfs/gpfs0/groups/mozafari/dyoon/work/lsf_log/rdma_dist_lock/$lock_method_str-$workload_str-$s_e_str-$e_s_str-$e_e_str-nn$num_node-u$num_user-lo$num_lock_objects-tx$num_tx-rq$num_request_per_tx-sr$shared_lock_ratio-local$local_workload_ratio-simultx$simulate_tx_delay-$simulate_tx_delay_min-$simulate_tx_delay_max.e \
-                        -oo /gpfs/gpfs0/groups/mozafari/dyoon/work/lsf_log/rdma_dist_lock/$lock_method_str-$workload_str-$s_e_str-$e_s_str-$e_e_str-nn$num_node-u$num_user-lo$num_lock_objects-tx$num_tx-rq$num_request_per_tx-sr$shared_lock_ratio-local$local_workload_ratio-simultx$simulate_tx_delay-$simulate_tx_delay_min-$simulate_tx_delay_max.o -q normal \
-                        "sh new_test.lsf $num_lock_objects $num_tx $num_request_per_tx $num_user $lock_method $s_e_rule $e_s_rule $e_e_rule $workload_type $local_workload_ratio $shared_lock_ratio $simulate_tx_delay $simulate_tx_delay_min $simulate_tx_delay_max $rand_seed"
-                      num_jobs=`bjobs 2>&1 | wc -l`
-                      num_jobs=$(($num_jobs-1))
-                      wait_time=0
-                      while [ $num_jobs -gt 0 ]
+                      for e_s_rule in 0 1 2
                       do
-                        sleep 1
-                        num_jobs=`bjobs 2>&1 | wc -l`
-                        num_jobs=$((num_jobs-1))
-                        wait_time=$((wait_time+1))
-                        if (( wait_time > 660 ))
-                        then
-                          bkill 0
-                        fi
+                        for e_e_rule in 0 1 2
+                        do
+
+                          if [ $s_e_rule -eq 0 ]
+                          then
+                            s_e_str="fail"
+                          elif [ $s_e_rule -eq 1 ]
+                          then
+                            s_e_str="poll"
+                          fi
+
+                          if [ $e_s_rule -eq 0 ]
+                          then
+                            e_s_str="fail"
+                          elif [ $e_s_rule -eq 1 ]
+                          then
+                            e_s_str="poll"
+                          elif [ $e_s_rule -eq 2 ]
+                          then
+                            e_s_str="queue"
+                          fi
+
+                          if [ $e_e_rule -eq 0 ]
+                          then
+                            e_e_str="fail"
+                          elif [ $e_e_rule -eq 1 ]
+                          then
+                            e_e_str="poll"
+                          elif [ $e_e_rule -eq 2 ]
+                          then
+                            e_e_str="queue"
+                          fi
+
+                          bsub -n $num_node -a openmpi -W 10 -m "cn003 cn004 cn005 cn006 cn008 cn009 cn010 cn011 cn012 cn013 cn014 cn015 cn016 cn017 cn018 cn019 cn020 cn021 cn022 cn023 cn024 cn025 cn026 cn027 cn028 cn029 cn030 cn031 cn032 cn033 cn034 cn035 cn036 cn037 cn038 cn039 cn040" -R "span[ptile=1]" -R rusage[mem=1024] -J local \
+                            -eo /gpfs/gpfs0/groups/mozafari/dyoon/work/lsf_log/rdma_dist_lock/$lock_method_str-$workload_str-$s_e_str-$e_s_str-$e_e_str-fr$fail_retry-pr$poll_retry-nn$num_node-u$num_user-lo$num_lock_objects-tx$num_tx-rq$num_request_per_tx-sr$shared_lock_ratio-local$local_workload_ratio-simultx$simulate_tx_delay-$simulate_tx_delay_min-$simulate_tx_delay_max.e \
+                            -oo /gpfs/gpfs0/groups/mozafari/dyoon/work/lsf_log/rdma_dist_lock/$lock_method_str-$workload_str-$s_e_str-$e_s_str-$e_e_str-fr$fail_retry-pr$poll_retry-nn$num_node-u$num_user-lo$num_lock_objects-tx$num_tx-rq$num_request_per_tx-sr$shared_lock_ratio-local$local_workload_ratio-simultx$simulate_tx_delay-$simulate_tx_delay_min-$simulate_tx_delay_max.o -q normal \
+                            "sh new_test.lsf $num_lock_objects $num_tx $num_request_per_tx $num_user $lock_method $s_e_rule $e_s_rule $e_e_rule $fail_retry $poll_retry $workload_type $local_workload_ratio $shared_lock_ratio $simulate_tx_delay $simulate_tx_delay_min $simulate_tx_delay_max $rand_seed"
+                          num_jobs=`bjobs 2>&1 | wc -l`
+                          num_jobs=$(($num_jobs-1))
+                          wait_time=0
+                          while [ $num_jobs -gt 0 ]
+                          do
+                            sleep 1
+                            num_jobs=`bjobs 2>&1 | wc -l`
+                            num_jobs=$((num_jobs-1))
+                            wait_time=$((wait_time+1))
+                            if (( wait_time > 660 ))
+                            then
+                              bkill 0
+                            fi
+                          done
+                        done
                       done
                     done
                   done

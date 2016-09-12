@@ -545,7 +545,7 @@ int LockSimulator::NotifyResult(int task, int lock_type, int obj_index,
           " for object " << requests_[last_request_idx_]->obj_index << endl;
       }
       // retry
-      if (retry_ > FAIL_RETRY) {
+      if (retry_ > LockManager::GetFailRetry()) {
         current_request_idx_ = last_request_idx_ - 1;
         ++total_num_lock_failure_;
         retry_ = 0;

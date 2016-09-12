@@ -26,10 +26,11 @@ int main(int argc, char** argv) {
 
   MPI_Init(&argc, &argv);
 
-  if (argc != 17) {
+  if (argc != 19) {
     cout << argv[0] << " <work_dir> <num_lock_object> <num_tx>" <<
       " <num_request_per_tx> <num_users> <lock_mode>" <<
-      " <shaared_exclusive_rule> <exclusive_shared_rule> <exclusive_exclusive_rule>" <<
+      " <shared_exclusive_rule> <exclusive_shared_rule> <exclusive_exclusive_rule>" <<
+      " <fail_retry> <poll_retry>"
       " <workload_type> <local_workload_ratio> " <<
       "<shared_lock_ratio> <transaction_delay> <transaction_delay_min> " <<
       "<transaction_delay_max> <rand_seed>" << endl;
@@ -58,6 +59,8 @@ int main(int argc, char** argv) {
   int shared_exclusive_rule    = atoi(argv[k++]);
   int exclusive_shared_rule    = atoi(argv[k++]);
   int exclusive_exclusive_rule = atoi(argv[k++]);
+  int fail_retry               = atoi(argv[k++]);
+  int poll_retry               = atoi(argv[k++]);
   int workload_type            = atoi(argv[k++]);
   double local_workload_ratio  = atof(argv[k++]);
   double shared_lock_ratio     = atof(argv[k++]);
@@ -167,6 +170,8 @@ int main(int argc, char** argv) {
   LockManager::SetSharedExclusiveRule(shared_exclusive_rule);
   LockManager::SetExclusiveSharedRule(exclusive_shared_rule);
   LockManager::SetExclusiveExclusiveRule(exclusive_exclusive_rule);
+  LockManager::SetFailRetry(fail_retry);
+  LockManager::SetPollRetry(poll_retry);
 
   LockManager* lock_manager = new LockManager(argv[1], rank, num_managers,
       num_lock_object, lock_mode);
@@ -420,7 +425,8 @@ int main(int argc, char** argv) {
 
     cerr << lock_mode_str << "," << workload_type_str <<
       "," << shared_exclusive_rule_str << "," << exclusive_shared_rule_str << "," <<
-      exclusive_exclusive_rule_str << "," << num_managers <<
+      exclusive_exclusive_rule_str << "," << fail_retry << "," << poll_retry << "," <<
+      num_managers <<
       "," << num_lock_object << "," << num_tx << "," << num_request_per_tx << "," <<
       local_workload_ratio_str << "," << shared_lock_ratio_str << "," <<
       transaction_delay_str << ",";
@@ -431,7 +437,9 @@ int main(int argc, char** argv) {
     }
     cerr << global_lock_time / num_managers <<
       "," << global_99_lock_time / num_managers << "," <<
-      (long)((double)global_sum / (double)time_taken) << "," << global_cpu_usage / num_managers <<
+      (long)((double)global_sum / (double)time_taken) << "," <<
+      global_sum << "," << global_lock_success << "," << global_lock_failure << "," <<
+      global_cpu_usage / num_managers <<
       "," << time_taken << endl;
   }
 

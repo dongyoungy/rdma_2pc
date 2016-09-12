@@ -5,6 +5,8 @@ namespace rdma { namespace proto {
 int LockManager::shared_exclusive_rule_    = LockManager::RULE_FAIL;
 int LockManager::exclusive_shared_rule_    = LockManager::RULE_FAIL;
 int LockManager::exclusive_exclusive_rule_ = LockManager::RULE_FAIL;
+int LockManager::poll_retry_               = 3;
+int LockManager::fail_retry_               = 3;
 
 // constructor
 LockManager::LockManager(const string& work_dir, uint32_t rank,

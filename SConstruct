@@ -12,7 +12,7 @@ b = SConscript('src/test/SConscript', variant_dir='build/test', duplicate=0, exp
 binaries.append(b)
 b = SConscript('src/test_race_condition/SConscript', variant_dir='build/test_race_condition', duplicate=0, exports='env')
 binaries.append(b)
-b = SConscript('src/new_proto/SConscript', variant_dir='build/proto', duplicate=0, exports='env')
+b = SConscript('src/new_proto/SConscript', variant_dir='build/new_proto', duplicate=0, exports='env')
 binaries.append(b)
 b = SConscript('src/N-CoSED/SConscript', variant_dir='build/N-CoSED', duplicate=0, exports='env')
 binaries.append(b)

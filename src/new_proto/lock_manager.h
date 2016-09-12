@@ -71,6 +71,12 @@ class LockManager {
     inline static int GetExclusiveExclusiveRule() {
       return exclusive_exclusive_rule_;
     }
+    inline static int GetPollRetry() {
+      return poll_retry_;
+    }
+    inline static int GetFailRetry() {
+      return fail_retry_;
+    }
     inline static void SetSharedExclusiveRule(int rule) {
       shared_exclusive_rule_ = rule;
     }
@@ -79,6 +85,12 @@ class LockManager {
     }
     inline static void SetExclusiveExclusiveRule(int rule) {
       exclusive_exclusive_rule_ = rule;
+    }
+    inline static void SetPollRetry(int retry) {
+      poll_retry_ = retry;
+    }
+    inline static void SetFailRetry(int retry) {
+      fail_retry_ = retry;
     }
 
     static const int EXCLUSIVE = 0;
@@ -175,6 +187,9 @@ class LockManager {
     static int shared_exclusive_rule_;
     static int exclusive_shared_rule_;
     static int exclusive_exclusive_rule_;
+
+    static int poll_retry_;
+    static int fail_retry_;
 };
 
 }}
