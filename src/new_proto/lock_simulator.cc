@@ -10,7 +10,7 @@ LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
   num_lock_object_          = num_lock_object;
   seed_                     = 1;
   state_                    = LockSimulator::STATE_IDLE;
-  request_size_             = 1;
+  max_request_size_         = 1;
   verbose_                  = false;
   measure_lock_time_        = false;
   workload_type_            = WORKLOAD_UNIFORM;
@@ -36,7 +36,7 @@ LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
     bool measure_lock_time, int workload_type, int lock_mode,
     double local_percentage, double shared_lock_ratio, bool transaction_delay,
     double transaction_delay_min, double transaction_delay_max,
-    double* custom_cdf) {
+    int max_backoff_time, double* custom_cdf) {
   manager_                  = manager;
   id_                       = id;
   num_manager_              = num_manager;
@@ -62,7 +62,9 @@ LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
   local_manager_id_         = manager_->GetID();
   count_limit_              = num_tx;
   count_                    = 0;
-  request_size_             = num_request_per_tx;
+  max_request_size_         = num_request_per_tx;
+  max_backoff_time_         = max_backoff_time;
+  backoff_seed_             = seed_;
 
   lock_times_ = new double[MAX_LOCK_REQUESTS];
 
@@ -122,6 +124,7 @@ void LockSimulator::InitializeCDF() {
   double val;
   switch (workload_type_) {
     case WORKLOAD_UNIFORM:
+    case WORKLOAD_UNIFORM_RANDOM_LENGTH:
       val = 1.0 / (double)num_manager_;
       cdf_[0] = val;
       for (int i=1;i<num_manager_;++i) {
@@ -204,8 +207,14 @@ void LockSimulator::CreateLockRequests() {
     return;
   }
 
+  request_size_ = max_request_size_;
+
+  if (workload_type_ == WORKLOAD_UNIFORM_RANDOM_LENGTH) {
+    request_size_ = 1 + (rand() % max_request_size_);
+  }
+
   if (requests_.empty()) {
-    for (int i = 0; i < request_size_; ++i) {
+    for (int i = 0; i < max_request_size_; ++i) {
        LockRequest* request = new LockRequest;
        requests_.push_back(request);
     }
@@ -265,6 +274,12 @@ void LockSimulator::CreateLockRequests() {
         is_all_local_ = false;
         break;
       }
+    }
+  } else {
+    // if tx failed & backoff time exists, randomly backoff
+    if (max_backoff_time_ > 0) {
+      int amount = rand_r(&backoff_seed_) % max_backoff_time_;
+      usleep(amount);
     }
   }
 
@@ -549,6 +564,7 @@ int LockSimulator::NotifyResult(int task, int lock_type, int obj_index,
         current_request_idx_ = last_request_idx_ - 1;
         ++total_num_lock_failure_;
         retry_ = 0;
+        is_tx_failed_ = true;
         SubmitUnlockRequest();
       } else {
         SubmitLockRequest();

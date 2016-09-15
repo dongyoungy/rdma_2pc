@@ -30,7 +30,7 @@ class LockSimulator {
         bool measure_lock_time, int workload_type, int lock_mode,
         double local_percentage = 0.5, double shared_lock_ratio = 0.5,
         bool transaction_delay = false, double transaction_delay_min = 10,
-        double transaction_delay_max = 100,
+        double transaction_delay_max = 100, int max_backoff_time = 0,
         double* custom_cdf = NULL);
     ~LockSimulator();
     void Run();
@@ -56,6 +56,7 @@ class LockSimulator {
     static const int WORKLOAD_HOTSPOT   = 1;
     static const int WORKLOAD_ALL_LOCAL = 2;
     static const int WORKLOAD_MIXED     = 3;
+    static const int WORKLOAD_UNIFORM_RANDOM_LENGTH = 4;
     static const int WORKLOAD_CUSTOM    = 99;
 
   private:
@@ -99,9 +100,11 @@ class LockSimulator {
     int local_lock_count_;
     int local_unlock_count_;
     long seed_;
+    unsigned int backoff_seed_;
     int last_request_idx_;
     int current_request_idx_;
     int workload_type_;
+    int max_backoff_time_;
     time_t start_time_;
     time_t current_time_;
     struct timespec start_lock_;
@@ -111,6 +114,7 @@ class LockSimulator {
     uint64_t total_num_lock_success_;
     uint64_t total_num_lock_failure_;
     uint64_t request_size_;
+    uint64_t max_request_size_;
     uint64_t count_;
     uint64_t count_limit_;
     pthread_mutex_t mutex_;
