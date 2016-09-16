@@ -1,4 +1,4 @@
 Import("env")
-driver = env.Program(target = 'test_race_condition', source = ['test_driver.cc','test_server.cc', 'test_client.cc'], LIBS=['rdmacm', 'ibverbs', 'pthread' ,'rt'])
+driver = env.Program(target = 'test_read_write', source = ['test_driver.cc','test_server.cc', 'test_client.cc'], LIBS=['rdmacm', 'ibverbs', 'pthread' ,'rt'])
 binaries = [driver]
 Return("binaries")

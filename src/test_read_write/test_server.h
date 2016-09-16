@@ -13,6 +13,7 @@
 #include <rdma/rdma_cma.h>
 #include <iostream>
 
+#include "constants.h"
 #include "context.h"
 
 using namespace std;
@@ -30,6 +31,10 @@ class TestServer {
     void Stop();
     uint64_t GetSemaphore() const;
     static void* PollCompletionQueue(void* context);
+    static void* PollSemaphore(void* client);
+    int test_mode_;
+    uint64_t semaphore_;
+    uint64_t prev_semaphore_;
 
   private:
     Context* BuildContext(struct rdma_cm_id* id);
@@ -40,6 +45,7 @@ class TestServer {
     int BuildConnectionManagerParams(struct rdma_conn_param* params);
     int RegisterMemoryRegion(Context* context);
     int ReceiveMessage(Context* context);
+    int WriteSemaphore(Context* context);
     int SendMessage(Context* context);
     int SendSemaphoreMemoryRegion(Context* context);
     int SendDataMemoryRegion(Context* context);
@@ -51,7 +57,6 @@ class TestServer {
     void DestroyListener();
 
     string work_dir_;
-    uint64_t semaphore_;
     char* buffer_;
     struct ibv_mr* registered_memory_region_;
     struct rdma_cm_id* listener_;
@@ -59,7 +64,6 @@ class TestServer {
     struct sockaddr_in6 address_;
     uint16_t port_;
     size_t data_size_;
-    int test_mode_;
     int count_;
     int count2_;
 
@@ -68,6 +72,7 @@ class TestServer {
     // testing single protection domain
     struct ibv_pd* pd_;
     struct ibv_srq* srq_;
+    pthread_t poll_thread_;
 };
 
 }}

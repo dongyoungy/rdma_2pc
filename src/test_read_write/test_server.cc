@@ -6,11 +6,12 @@ namespace rdma { namespace test {
 TestServer::TestServer(const string& work_dir, int test_mode, size_t data_size) {
   work_dir_                 = work_dir;
   buffer_                   = new char[data_size];
-  //uint32_t upper = 10;
-  //uint32_t lower = 0;
-  //semaphore_                = ((uint64_t)upper) << 32 | lower;
-  //cout << "sem = " << semaphore_ << endl;
+  //uint32_t upper          = 10;
+  //uint32_t lower          = 0;
+  //semaphore_              = ((uint64_t)upper) << 32 | lower;
+  //cout << "sem            = " << semaphore_ << endl;
   semaphore_                = 0;
+  prev_semaphore_           = semaphore_;
   listener_                 = NULL;
   event_channel_            = NULL;
   registered_memory_region_ = NULL;
@@ -39,9 +40,16 @@ int TestServer::Run() {
       strerror(errno) << endl;
     return -1;
   }
-  if (rdma_create_id(event_channel_, &listener_, NULL, RDMA_PS_TCP)) {
-    cerr << "Run(): rdma_create_id() failed: " << strerror(errno) << endl;
-    return -1;
+  if (test_mode_ == TEST_UC_WRITE) {
+    if (rdma_create_id(event_channel_, &listener_, NULL, RDMA_PS_IB)) {
+      cerr << "Run(): rdma_create_id() failed: " << strerror(errno) << endl;
+      return -1;
+    }
+  } else {
+    if (rdma_create_id(event_channel_, &listener_, NULL, RDMA_PS_TCP)) {
+      cerr << "Run(): rdma_create_id() failed: " << strerror(errno) << endl;
+      return -1;
+    }
   }
   if (rdma_bind_addr(listener_, (struct sockaddr *)&address_)) {
     cerr << "Run(): rdma_bind_addr() failed: " << strerror(errno) << endl;
@@ -59,6 +67,7 @@ int TestServer::Run() {
     cerr << "PrintInfo() error." << endl;
     return -1;
   }
+
 
   struct rdma_cm_event* event = NULL;
   while (rdma_get_cm_event(event_channel_, &event) == 0) {
@@ -225,6 +234,28 @@ int TestServer::RegisterMemoryRegion(Context* context) {
     cerr << "ibv_reg_mr() failed for rdma_server_data." << endl;
     return -1;
   }
+  context->write_value = new uint64_t;
+  memset(context->write_value, 0x00, sizeof(uint64_t));
+  context->write_value_mr = ibv_reg_mr(context->protection_domain,
+      context->write_value,
+      sizeof(uint64_t),
+      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
+      IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
+  if (context->write_value_mr == NULL) {
+    cerr << "ibv_reg_mr() failed for write_value_mr." << endl;
+    return -1;
+  }
+  context->write_value2 = new uint64_t;
+  memset(context->write_value2, 0x00, sizeof(uint64_t));
+  context->write_value2_mr = ibv_reg_mr(context->protection_domain,
+      context->write_value2,
+      sizeof(uint64_t),
+      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
+      IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
+  if (context->write_value2_mr == NULL) {
+    cerr << "ibv_reg_mr() failed for write_value2_mr." << endl;
+    return -1;
+  }
 
   context->rdma_client_semaphore = NULL;
   context->rdma_local_mr = NULL;
@@ -326,6 +357,11 @@ int TestServer::HandleDisconnect(Context* context) {
 
 // Send local RDMA semaphore memory region to client.
 int TestServer::SendSemaphoreMemoryRegion(Context* context) {
+  // create thread that polls local semaphore
+  if (pthread_create(&poll_thread_, NULL, &TestServer::PollSemaphore, this)) {
+    cerr << "pthread_create() failed." << endl;
+    exit(-1);
+  }
   context->send_message->type = Message::MR_SEMAPHORE_INFO;
   memcpy(&context->send_message->memory_region, context->rdma_server_semaphore,
       sizeof(context->send_message->memory_region));
@@ -399,17 +435,17 @@ int TestServer::ReceiveMessage(Context* context) {
   sge.lkey   = context->receive_mr->lkey;
 
   int ret = 0;
-  if ((ret = ibv_post_srq_recv(srq_, &receive_work_request,
-          &bad_work_request))) {
-    cerr << "ibv_post_srq_recv failed: " << strerror(ret) << endl;
-    return -1;
-  }
-
-  //if ((ret = ibv_post_recv(context->queue_pair, &receive_work_request,
+  //if ((ret = ibv_post_srq_recv(srq_, &receive_work_request,
           //&bad_work_request))) {
-    //cerr << "ibv_post_recv failed: " << strerror(ret) << endl;
+    //cerr << "ibv_post_srq_recv failed: " << strerror(ret) << endl;
     //return -1;
   //}
+
+  if ((ret = ibv_post_recv(context->queue_pair, &receive_work_request,
+          &bad_work_request))) {
+    cerr << "ibv_post_recv failed: " << strerror(ret) << endl;
+    return -1;
+  }
 
   return 0;
 }
@@ -422,12 +458,16 @@ void TestServer::BuildQueuePairAttr(Context* context,
   attributes->pd = context->protection_domain;
   attributes->send_cq          = context->completion_queue;
   attributes->recv_cq          = context->completion_queue;
-  attributes->srq = srq_;
-  attributes->qp_type          = IBV_QPT_RC;
-  attributes->cap.max_send_wr  = 16;
-  attributes->cap.max_recv_wr  = 2;
-  attributes->cap.max_send_sge = 1;
-  attributes->cap.max_recv_sge = 1;
+  //attributes->srq = srq_;
+  if (test_mode_ == TEST_UC_WRITE) {
+    attributes->qp_type          = IBV_QPT_UC;
+  } else {
+    attributes->qp_type          = IBV_QPT_RC;
+  }
+  attributes->cap.max_send_wr  = 256;
+  attributes->cap.max_recv_wr  = 256;
+  attributes->cap.max_send_sge = 2;
+  attributes->cap.max_recv_sge = 2;
   attributes->comp_mask = IBV_EXP_QP_INIT_ATTR_PD |
     IBV_EXP_QP_INIT_ATTR_CREATE_FLAGS;
   attributes->max_atomic_arg = sizeof(uint64_t);
@@ -447,11 +487,11 @@ Context* TestServer::BuildContext(struct rdma_cm_id* id) {
       cerr << "ibv_alloc_pd() failed." << endl;
       return NULL;
     }
-    struct ibv_srq_init_attr attr;
-    memset(&attr, 0x00, sizeof(attr));
-    attr.attr.max_wr = 2;
-    attr.attr.max_sge = 1;
-    srq_ = ibv_create_srq(pd_, &attr);
+    //struct ibv_srq_init_attr attr;
+    //memset(&attr, 0x00, sizeof(attr));
+    //attr.attr.max_wr = 2;
+    //attr.attr.max_sge = 1;
+    //srq_ = ibv_create_srq(pd_, &attr);
   }
   new_context->protection_domain = pd_;
   //if ((new_context->protection_domain =
@@ -533,6 +573,58 @@ uint64_t TestServer::GetSemaphore() const {
   return semaphore_;
 }
 
+int TestServer::WriteSemaphore(Context* context) {
+  struct ibv_send_wr send_work_request;
+  struct ibv_send_wr* bad_work_request;
+  struct ibv_sge sge;
+
+  uint64_t* write;
+  struct ibv_mr* write_mr;
+
+  if (this->semaphore_ % 2 == 0) {
+    write = context->write_value;
+    write_mr = context->write_value_mr;
+  } else {
+    write = context->write_value2;
+    write_mr = context->write_value2_mr;
+  }
+
+  *write = semaphore_;
+
+  //*context->write_value = *context->server_semaphore;
+  //cerr << "TestServer::WriteSemaphore(): " << *context->write_value << endl;
+
+  memset(&send_work_request, 0x00, sizeof(send_work_request));
+
+  sge.addr = (uint64_t)write;
+  sge.length = sizeof(uint64_t);
+  sge.lkey = write_mr->lkey;
+
+  send_work_request.wr_id      = (uint64_t)context;
+  send_work_request.opcode     = IBV_WR_RDMA_WRITE;
+  send_work_request.num_sge    = 1;
+  send_work_request.sg_list    = &sge;
+  if (this->semaphore_ % 4 == 0) {
+    send_work_request.send_flags = IBV_SEND_SIGNALED;
+  }
+  //send_work_request.send_flags = IBV_SEND_SIGNALED | IBV_SEND_FENCE;
+
+  send_work_request.wr.rdma.remote_addr =
+    (uint64_t)context->rdma_client_semaphore->addr;
+  send_work_request.wr.rdma.rkey        =
+    context->rdma_client_semaphore->rkey;
+
+  int ret = 0;
+  if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
+          &bad_work_request))) {
+    cerr << "TestServer::WriteSemaphore(): ibv_post_send() failed: " <<
+      strerror(ret) << endl;
+    return -1;
+  }
+
+  return 0;
+}
+
 // Polls work completion from completion queue
 void* TestServer::PollCompletionQueue(void* arg) {
   struct ibv_cq* cq;
@@ -557,6 +649,26 @@ void* TestServer::PollCompletionQueue(void* arg) {
 
   return NULL;
 }
+
+void* TestServer::PollSemaphore(void* arg) {
+  TestServer* server = (TestServer*) arg;
+  //cout << "TestServer Polling" << endl;
+
+  while (true) {
+    if (server->test_mode_ == TEST_RC_READ) {
+      ++server->semaphore_;
+    } else {
+      if (server->prev_semaphore_ < server->semaphore_) {
+        server->prev_semaphore_ = server->semaphore_;
+        server->WriteSemaphore(server->context_);
+      } else if (server->prev_semaphore_ > server->semaphore_) {
+        cout << "WRONG" << endl;
+      }
+    }
+    //cout << "TestServer:" << server->prev_semaphore_ << "," << server->semaphore_ << endl;
+  }
+}
+
 
 
 }} // end namespace

@@ -18,12 +18,13 @@ namespace rdma { namespace test {
 //}
 
 // constructor
-TestClient::TestClient(const string& work_dir, int test_mode) {
+TestClient::TestClient(const string& work_dir, int test_mode, uint64_t max_count) {
   work_dir_          = work_dir;
   event_channel_     = NULL;
   connection_        = NULL;
   address_           = NULL;
-  current_semaphore_ = 0;
+  current_semaphore_ = -1;
+  read_value_        = 0;
   num_trial_         = 0;
   total_cas_time_    = 0;
   total_read_time_   = 0;
@@ -32,6 +33,9 @@ TestClient::TestClient(const string& work_dir, int test_mode) {
   num_added_sem_     = 0;
   is_sem_reset_      = false;
   data_size_         = 1024;
+  count_             = 0;
+  max_count_         = max_count;
+  semaphore_         = 0;
 }
 
 // destructor
@@ -60,9 +64,16 @@ int TestClient::Run() {
       strerror(errno) << endl;
     return -1;
   }
-  if (rdma_create_id(event_channel_, &connection_, NULL, RDMA_PS_TCP)) {
-    cerr << "Run(): rdma_create_id() failed: " << strerror(errno) << endl;
-    return -1;
+  if (test_mode_ == TEST_UC_WRITE) {
+    if (rdma_create_id(event_channel_, &connection_, NULL, RDMA_PS_IB)) {
+      cerr << "Run(): rdma_create_id() failed: " << strerror(errno) << endl;
+      return -1;
+    }
+  } else {
+    if (rdma_create_id(event_channel_, &connection_, NULL, RDMA_PS_TCP)) {
+      cerr << "Run(): rdma_create_id() failed: " << strerror(errno) << endl;
+      return -1;
+    }
   }
   if (rdma_resolve_addr(connection_, NULL, address_->ai_addr, 1000)) {
     cerr << "Run(): rdma_resolve_addr() failed: " << strerror(errno) << endl;
@@ -154,6 +165,7 @@ int TestClient::HandleAddressResolved(struct rdma_cm_id* id) {
     return -1;
   }
 
+  context_ = context;
   struct ibv_exp_qp_init_attr queue_pair_attributes;
   BuildQueuePairAttr(context, &queue_pair_attributes);
 
@@ -309,15 +321,26 @@ int TestClient::RegisterMemoryRegion(Context* context) {
     return -1;
   }
 
-  context->zero_value = new uint64_t;
-  memset(context->zero_value, 0x00, sizeof(uint64_t));
-  context->zero_value_mr = ibv_reg_mr(context->protection_domain,
-      context->zero_value,
+  context->new_value = new uint64_t;
+  memset(context->new_value, 0x00, sizeof(uint64_t));
+  context->new_value_mr = ibv_reg_mr(context->protection_domain,
+      context->new_value,
       sizeof(uint64_t),
       IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
       IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
-  if (context->zero_value_mr == NULL) {
-    cerr << "ibv_reg_mr() failed for zero_value_mr." << endl;
+  if (context->new_value_mr == NULL) {
+    cerr << "ibv_reg_mr() failed for new_value_mr." << endl;
+    return -1;
+  }
+  context->read_value = &read_value_;
+  memset(context->read_value, 0x00, sizeof(uint64_t));
+  context->read_value_mr = ibv_reg_mr(context->protection_domain,
+      context->read_value,
+      sizeof(uint64_t),
+      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
+      IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
+  if (context->read_value_mr == NULL) {
+    cerr << "ibv_reg_mr() failed for read_value_mr." << endl;
     return -1;
   }
   context->rdma_client_semaphore = ibv_reg_mr(context->protection_domain,
@@ -352,11 +375,15 @@ void TestClient::BuildQueuePairAttr(Context* context,
   attributes->pd               = context->protection_domain;
   attributes->send_cq          = context->completion_queue;
   attributes->recv_cq          = context->completion_queue;
-  attributes->qp_type          = IBV_QPT_RC;
-  attributes->cap.max_send_wr  = 16;
-  attributes->cap.max_recv_wr  = 16;
-  attributes->cap.max_send_sge = 1;
-  attributes->cap.max_recv_sge = 1;
+  if (test_mode_ == TEST_UC_WRITE) {
+    attributes->qp_type          = IBV_QPT_UC;
+  } else {
+    attributes->qp_type          = IBV_QPT_RC;
+  }
+  attributes->cap.max_send_wr  = 256;
+  attributes->cap.max_recv_wr  = 256;
+  attributes->cap.max_send_sge = 2;
+  attributes->cap.max_recv_sge = 2;
   attributes->comp_mask        = IBV_EXP_QP_INIT_ATTR_PD |
     IBV_EXP_QP_INIT_ATTR_CREATE_FLAGS;
   attributes->exp_create_flags = IBV_EXP_QP_CREATE_ATOMIC_BE_REPLY;
@@ -423,14 +450,23 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           &context->receive_message->memory_region,
           sizeof(*context->rdma_server_semaphore));
 
-      //cerr << "test mode = " << test_mode_ << endl;
-
-      if (test_mode_ == TEST_MODE_ADD_SEM) {
-        AddSemaphore(context);
-      } else if (test_mode_ == TEST_MODE_RESET_SEM) {
-        ResetSemaphore(context);
+      // create thread that polls local semaphore
+      if (pthread_create(&poll_thread_, NULL, &TestClient::PollSemaphore, this)) {
+        cerr << "pthread_create() failed." << endl;
+        exit(-1);
       }
 
+      // start test
+      time(&test_start_);
+      clock_gettime(CLOCK_MONOTONIC, &start_);
+
+      count_ = 1;
+
+      if (test_mode_ == TEST_RC_READ) {
+        this->ReadSemaphore(context);
+      } else {
+        this->WriteSemaphore(context);
+      }
     } else if (context->receive_message->type == Message::MR_DATA_INFO) {
       //cout << "received server memory region for data." << endl;
       // copy server rdma data region
@@ -438,67 +474,35 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       memcpy(context->rdma_server_data,
           &context->receive_message->memory_region,
           sizeof(*context->rdma_server_data));
-
-      // perform test
-      time(&test_start_);
-      clock_gettime(CLOCK_MONOTONIC, &start_);
-      ReadData(context);
     }
-  } else if (work_completion->opcode == IBV_WC_RDMA_WRITE) {
-    is_sem_reset_ = true;
-  } else if (work_completion->opcode == IBV_WC_FETCH_ADD) {
-    if (is_adding_sem_) {
-      AddSemaphore(context);
-    }
-  } else if (work_completion->opcode == IBV_WC_COMP_SWAP) {
-    // completion of compare-and-swap
-
-    // print stats for now
-    //cout << "COMP_SWAP completed." << endl;
-    //cout << "wr_id = " << work_completion->wr_id << endl;
-    //cout << "opcode = " << work_completion->opcode << endl;
-    //cout << "vendor_err = " << work_completion->vendor_err << endl;
-
-    clock_gettime(CLOCK_MONOTONIC, &end_);
-    double dt = ((double)end_.tv_sec *1.0e+9 + end_.tv_nsec) -
-      ((double)start_.tv_sec * 1.0e+9 + start_.tv_nsec);
-    total_cas_time_ += dt;
-    ++num_trial_;
-
-    if (num_trial_ >= TOTAL_TRIAL) {
-      cout << "Average CAS Time = " << total_cas_time_ /(double)TOTAL_TRIAL <<
-        " ns" << endl;
-      exit(0);
-    }
-
-    // perform test
-      uint64_t new_semaphore;
-      if (current_semaphore_ == 0)
-        new_semaphore = 1;
-      else
-        new_semaphore = 0;
-    clock_gettime(CLOCK_MONOTONIC, &start_);
-    //SetSemaphore(context, current_semaphore_, new_semaphore);
-    current_semaphore_ = new_semaphore;
   } else if (work_completion->opcode == IBV_WC_RDMA_READ) {
-    clock_gettime(CLOCK_MONOTONIC, &end_);
-    double dt = ((double)end_.tv_sec *1.0e+9 + end_.tv_nsec) -
-      ((double)start_.tv_sec * 1.0e+9 + start_.tv_nsec);
-    total_read_time_ += dt;
-    ++num_trial_;
-    time(&test_end_);
+    //if (*context->read_value == count_) {
+      //++count_;
+      //if (count_ > max_count_) {
+        //clock_gettime(CLOCK_MONOTONIC, &end_);
+        //double dt = ((double)end_.tv_sec *1.0e+9 + end_.tv_nsec) -
+          //((double)start_.tv_sec * 1.0e+9 + start_.tv_nsec);
+        //cout << this->count_ << endl;
+        //char buf[32];
+        //sprintf(buf, "%.3f", dt/(1000.0*1000.0*1000.0));
+        //cout << "Time Taken = " << buf << " s" << endl;
+        //exit(0);
+      //}
+      //this->WriteSemaphore(context);
+    //}
 
-    if (difftime(test_end_, test_start_) >= test_duration_) {
-      cout << "Data size = " << data_size_ << " bytes" << endl;
-      cout << "Average read time = " <<
-        total_read_time_ / (double)num_trial_ << " ns" <<
-        endl;
-      cout << "# reads = " << num_trial_ << endl;
-      exit(0);
-    }
-
-    clock_gettime(CLOCK_MONOTONIC, &start_);
-    ReadData(context);
+      //++count_;
+      //if (count_ > max_count_) {
+        //clock_gettime(CLOCK_MONOTONIC, &end_);
+        //double dt = ((double)end_.tv_sec *1.0e+9 + end_.tv_nsec) -
+          //((double)start_.tv_sec * 1.0e+9 + start_.tv_nsec);
+        //cout << this->count_ << endl;
+        //char buf[32];
+        //sprintf(buf, "%.3f", dt/(1000.0*1000.0*1000.0));
+        //cout << "Time Taken = " << buf << " s" << endl;
+        //exit(0);
+      //}
+    //this->ReadSemaphore(context);
   }
 
   return 0;
@@ -608,22 +612,30 @@ int TestClient::AddSemaphore(Context* context) {
   return 0;
 }
 
-int TestClient::ResetSemaphore(Context* context) {
+int TestClient::WriteSemaphore(Context* context) {
   struct ibv_send_wr send_work_request;
   struct ibv_send_wr* bad_work_request;
   struct ibv_sge sge;
 
+  *context->new_value = this->count_;
+
+  //cerr << "TestClient::WriteSemaphore()" << endl;
+
   memset(&send_work_request, 0x00, sizeof(send_work_request));
 
-  sge.addr = (uint64_t)context->zero_value;
+  sge.addr = (uint64_t)context->new_value;
   sge.length = sizeof(uint64_t);
-  sge.lkey = context->zero_value_mr->lkey;
+  sge.lkey = context->new_value_mr->lkey;
 
   send_work_request.wr_id      = (uint64_t)context;
   send_work_request.opcode     = IBV_WR_RDMA_WRITE;
   send_work_request.num_sge    = 1;
   send_work_request.sg_list    = &sge;
-  send_work_request.send_flags = IBV_SEND_SIGNALED | IBV_SEND_FENCE;
+  if (this->count_ % 4 == 0) {
+    send_work_request.send_flags = IBV_SEND_SIGNALED;
+  }
+  //send_work_request.send_flags = IBV_SEND_SIGNALED;
+  //send_work_request.send_flags = IBV_SEND_SIGNALED | IBV_SEND_FENCE;
 
   send_work_request.wr.rdma.remote_addr =
     (uint64_t)context->rdma_server_semaphore->addr;
@@ -633,12 +645,10 @@ int TestClient::ResetSemaphore(Context* context) {
   int ret = 0;
   if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
           &bad_work_request))) {
-    cerr << "ResetSemaphore(): ibv_post_send() failed: " <<
+    cerr << "WriteSemaphore(): ibv_post_send() failed: " <<
       strerror(ret) << endl;
     return -1;
   }
-
-  cerr << "RESET SEMAPHORE" << endl;
 
   return 0;
 }
@@ -665,6 +675,42 @@ int TestClient::ReadData(Context* context) {
     (uint64_t)context->rdma_server_data->addr;
   send_work_request.wr.rdma.rkey        =
     context->rdma_server_data->rkey;
+
+  int ret = 0;
+  if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
+          &bad_work_request))) {
+    cerr << "ReadData(): ibv_post_send() failed: " << strerror(ret) << endl;
+    return -1;
+  }
+
+  return 0;
+}
+
+// reads data from the server's local MR.
+int TestClient::ReadSemaphore(Context* context) {
+  struct ibv_send_wr send_work_request;
+  struct ibv_send_wr* bad_work_request;
+  struct ibv_sge sge;
+
+  memset(&send_work_request, 0x00, sizeof(send_work_request));
+
+  sge.addr   = (uint64_t)context->read_value;
+  sge.length = sizeof(*context->read_value);
+  sge.lkey   = context->read_value_mr->lkey;
+
+  send_work_request.wr_id      = (uint64_t)context;
+  send_work_request.opcode     = IBV_WR_RDMA_READ;
+  send_work_request.num_sge    = 1;
+  send_work_request.sg_list    = &sge;
+  //send_work_request.send_flags = IBV_SEND_SIGNALED;
+  if (this->count_ % 16 == 0) {
+    send_work_request.send_flags = IBV_SEND_SIGNALED;
+  }
+
+  send_work_request.wr.rdma.remote_addr =
+    (uint64_t)context->rdma_server_semaphore->addr;
+  send_work_request.wr.rdma.rkey        =
+    context->rdma_server_semaphore->rkey;
 
   int ret = 0;
   if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
@@ -717,6 +763,37 @@ void* TestClient::PollCompletionQueue(void* arg) {
   }
 
   return NULL;
+}
+
+void* TestClient::PollSemaphore(void* arg) {
+  TestClient* client = (TestClient*) arg;
+
+  while (true) {
+    if (client->count_ > client->max_count_) {
+      clock_gettime(CLOCK_MONOTONIC, &client->end_);
+      double dt = ((double)client->end_.tv_sec *1.0e+9 + client->end_.tv_nsec) -
+        ((double)client->start_.tv_sec * 1.0e+9 + client->start_.tv_nsec);
+      char buf[32];
+      sprintf(buf, "%.3f", dt);
+      cout << "Time Taken = " << buf << " ns" << endl;
+      exit(0);
+    }
+
+    if (client->GetTestMode() == TEST_RC_READ) {
+      if (client->read_value_ != client->current_semaphore_) {
+         client->current_semaphore_ = client->read_value_;
+         ++client->count_;
+         client->ReadSemaphore(client->context_);
+      }
+
+    } else {
+      // for writes.. just write new value + 1
+      if (client->count_ == client->semaphore_) {
+        ++client->count_;
+        client->WriteSemaphore(client->context_);
+      }
+    }
+  }
 }
 
 

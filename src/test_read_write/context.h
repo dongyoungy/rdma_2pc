@@ -25,8 +25,16 @@ struct Context {
   Message* receive_message;
   struct ibv_mr* receive_mr;
 
-  uint64_t* zero_value;
-  struct ibv_mr* zero_value_mr;
+  uint64_t* new_value;
+  struct ibv_mr* new_value_mr;
+
+  uint64_t* read_value;
+  struct ibv_mr* read_value_mr;
+
+  uint64_t* write_value;
+  struct ibv_mr* write_value_mr;
+  uint64_t* write_value2;
+  struct ibv_mr* write_value2_mr;
 
   uint64_t* server_semaphore;
   struct ibv_mr* rdma_server_semaphore;

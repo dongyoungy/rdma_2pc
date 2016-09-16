@@ -1,4 +1,5 @@
 #include <pthread.h>
+#include "constants.h"
 #include "test_server.h"
 #include "test_client.h"
 
@@ -9,19 +10,31 @@ void* RunServer(void*);
 void* RunClient(void*);
 
 int main(int argc, char** argv) {
-  if (argc != 2) {
-    cout << "USAGE: " << argv[0] << " <work_dir>" << endl;
+  if (argc != 4) {
+    cout << "USAGE: " << argv[0] << " <work_dir> <test_mode> <max_count>" << endl;
     exit(1);
   }
-  TestServer* server = new TestServer(argv[1], 1024);
-  TestClient* add_client = new TestClient(argv[1],
-      TestClient::TEST_MODE_ADD_SEM);
-  TestClient* reset_client = new TestClient(argv[1],
-      TestClient::TEST_MODE_RESET_SEM);
+  int mode = atoi(argv[2]);
+  TestServer* server = new TestServer(argv[1], mode, 1024);
+  TestClient* client = new TestClient(argv[1], mode, atol(argv[3]));
+
+  switch(mode) {
+    case TEST_RC_READ:
+      cout << "Testing RC READ" << endl;
+      break;
+    case TEST_UC_WRITE:
+      cout << "Testing UC WRITE" << endl;
+      break;
+    case TEST_RC_WRITE:
+      cout << "Testing RC WRITE" << endl;
+      break;
+    default:
+      cout << "Unsupported test mode" << endl;
+      exit(-1);
+  }
 
   pthread_t server_thread;
-  pthread_t add_client_thread;
-  pthread_t reset_client_thread;
+  pthread_t client_thread;
 
   if (pthread_create(&server_thread, NULL, RunServer, (void*)server)) {
     cerr << "pthread_create() error." << endl;
@@ -30,33 +43,16 @@ int main(int argc, char** argv) {
 
   sleep(1);
 
-  if (pthread_create(&add_client_thread, NULL, RunClient,
-        (void*)add_client)) {
+  if (pthread_create(&client_thread, NULL, RunClient,
+        (void*)client)) {
     cerr << "pthread_create() error." << endl;
     exit(-1);
   }
 
   sleep(1);
-  while (server->GetSemaphore() == 0) {
+  while (true) {
     sleep(1);
   }
-
-  if (pthread_create(&reset_client_thread, NULL, RunClient,
-        (void*)reset_client)) {
-    cerr << "pthread_create() error." << endl;
-    exit(-1);
-  }
-
-  while (true) {
-    if (reset_client->IsSemReset()) {
-      add_client->StopAddingSem();
-      break;
-    }
-    usleep(100000);
-  }
-
-  cout << "Current Semaphore = " << server->GetSemaphore() << endl;
-  cout << "Client Added Semaphore = " << add_client->GetNumAddedSemaphore() << endl;
 
   return 0;
 }

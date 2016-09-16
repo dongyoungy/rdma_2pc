@@ -12,6 +12,7 @@
 #include <rdma/rdma_cma.h>
 #include <iostream>
 
+#include "constants.h"
 #include "context.h"
 
 using namespace std;
@@ -21,7 +22,7 @@ namespace rdma { namespace test {
 class TestClient {
 
   public:
-    TestClient(const string& work_dir, int test_mode);
+    TestClient(const string& work_dir, int test_mode, uint64_t max_count);
     //TestClient(const string& server_name, const string& server_port,
         //int test_mode, size_t data_size);
     ~TestClient();
@@ -31,6 +32,19 @@ class TestClient {
     uint64_t GetNumAddedSemaphore() const;
     bool IsSemReset() const;
     static void* PollCompletionQueue(void* context);
+    static void* PollSemaphore(void* client);
+
+    Context* context_;
+    uint64_t semaphore_;
+    uint64_t count_;
+    uint64_t max_count_;
+    uint64_t read_value_;
+    struct timespec start_;
+    struct timespec end_;
+
+    inline int GetTestMode() const {
+      return test_mode_;
+    }
 
   private:
     Context* BuildContext(struct rdma_cm_id* id);
@@ -40,9 +54,10 @@ class TestClient {
     int RegisterMemoryRegion(Context* context);
     int ReceiveMessage(Context* context);
     int AddSemaphore(Context* context);
-    int ResetSemaphore(Context* context);
+    int WriteSemaphore(Context* context);
     int ReadServerAddress();
     int ReadData(Context* context);
+    int ReadSemaphore(Context* context);
     int RequestSemaphore(Context* context);
     int RequestData(Context* context);
     int HandleEvent(struct rdma_cm_event* event);
@@ -69,13 +84,11 @@ class TestClient {
     struct rdma_event_channel* event_channel_;
     struct rdma_cm_id* connection_;
     struct addrinfo* address_;
-    struct timespec start_;
-    struct timespec end_;
     uint64_t current_semaphore_;
-    uint64_t semaphore_;
     size_t data_size_;
     time_t test_start_;
     time_t test_end_;
+    pthread_t poll_thread_;
 };
 
 }}
