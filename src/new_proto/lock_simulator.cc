@@ -88,12 +88,13 @@ LockSimulator::~LockSimulator() {
 }
 
 void LockSimulator::Run() {
-  time(&start_time_);
   srand(seed_+id_);
   srand48(seed_+id_);
   is_tx_failed_ = false;
 
   InitializeCDF();
+
+  clock_gettime(CLOCK_MONOTONIC, &start_time_);
 
   StartLockRequests();
   //if (workload_type_ == WORKLOAD_ALL_LOCAL &&
@@ -191,8 +192,6 @@ int LockSimulator::GetState() const {
 void LockSimulator::CreateLockRequests() {
   state_ = LockSimulator::STATE_IDLE;
 
-  time(&current_time_);
-
   //if (difftime(current_time_, start_time_) >= duration_) {
     //if (verbose_)
       //cout << "Time limit of " << duration_ << " has reached. Terminating.";
@@ -202,7 +201,10 @@ void LockSimulator::CreateLockRequests() {
   if (count_ >= count_limit_) {
     if (verbose_)
       cout << "Lock request count of " << count_limit_ << " has reached. Terminating.";
-    time_taken_ = difftime(current_time_, start_time_);
+    clock_gettime(CLOCK_MONOTONIC, &current_time_);
+    double dt = ((double)current_time_.tv_sec *1.0e+9 + current_time_.tv_nsec) -
+    ((double)start_time_.tv_sec * 1.0e+9 + start_time_.tv_nsec);
+    time_taken_ = dt;
     state_ = LockSimulator::STATE_DONE;
     return;
   }

@@ -105,8 +105,8 @@ class LockSimulator {
     int current_request_idx_;
     int workload_type_;
     int max_backoff_time_;
-    time_t start_time_;
-    time_t current_time_;
+    struct timespec start_time_;
+    struct timespec current_time_;
     struct timespec start_lock_;
     struct timespec end_lock_;
     uint64_t total_num_locks_;

@@ -270,6 +270,7 @@ int main(int argc, char** argv) {
   double global_lock_time                  = 0;
   double local_cpu_usage                   = 0;
   double global_cpu_usage                  = 0;
+  double global_cpu_usage_avg              = 0;
   double local_remote_exclusive_lock_time  = 0;
   double global_remote_exclusive_lock_time = 0;
   double local_remote_shared_lock_time     = 0;
@@ -290,6 +291,17 @@ int main(int argc, char** argv) {
   double local_rdma_atomic_count = 0;
   double global_rdma_atomic_count = 0;
 
+  double local_cpu_diff = 0;
+  double local_time_taken_diff = 0;
+  double local_time_taken = 0;
+  double local_time_taken_sum = 0;
+  double global_cpu_diff = 0;
+  double global_time_taken_sum = 0;
+  double global_time_taken_avg = 0;
+  double global_cpu_usage_std = 0;
+  double global_time_taken_std = 0;
+  double global_time_taken_diff = 0;
+
   MPI_Barrier(MPI_COMM_WORLD);
 
   for (int i=0;i<num_managers;++i) {
@@ -308,6 +320,10 @@ int main(int argc, char** argv) {
       }
       //MPI_Barrier(MPI_COMM_WORLD);
     }
+  }
+  for (int j=0;j<users.size();++j) {
+    LockSimulator* simulator = users[j];
+    local_time_taken_sum += simulator->GetTimeTaken();
   }
 
   local_remote_shared_lock_time =
@@ -337,7 +353,7 @@ int main(int argc, char** argv) {
       MPI_COMM_WORLD);
   MPI_Reduce(&local_lock_time, &global_lock_time, 1, MPI_DOUBLE, MPI_SUM, 0,
       MPI_COMM_WORLD);
-  MPI_Reduce(&local_cpu_usage, &global_cpu_usage, 1, MPI_DOUBLE, MPI_SUM, 0,
+  MPI_Allreduce(&local_cpu_usage, &global_cpu_usage, 1, MPI_DOUBLE, MPI_SUM,
       MPI_COMM_WORLD);
   MPI_Reduce(&local_99_lock_time, &global_99_lock_time, 1, MPI_DOUBLE, MPI_SUM, 0,
       MPI_COMM_WORLD);
@@ -370,6 +386,25 @@ int main(int argc, char** argv) {
       "(" << "ID = " << rank <<  " ,# nodes: " << num_managers <<
       ", mode: " << lock_mode_str << ")" << endl;
   MPI_Barrier(MPI_COMM_WORLD);
+
+  // Get standard deviation for cpu usage
+  global_cpu_usage_avg = global_cpu_usage / (double)num_managers;
+  local_cpu_diff = (global_cpu_usage_avg - local_cpu_usage) *
+    (global_cpu_usage_avg - local_cpu_usage);
+  MPI_Reduce(&local_cpu_diff, &global_cpu_diff, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  global_cpu_usage_std = sqrt(global_cpu_diff / num_managers);
+
+  // Get standard deviation for time taken
+  MPI_Allreduce(&local_time_taken_sum, &global_time_taken_sum, 1, MPI_DOUBLE, MPI_SUM,
+      MPI_COMM_WORLD);
+  global_time_taken_avg = global_time_taken_sum / (double)(num_managers * users.size());
+  for (int j=0;j<users.size();++j) {
+    double time = users[j]->GetTimeTaken();
+    local_time_taken_diff += (time - global_time_taken_avg) * (time - global_time_taken_avg);
+  }
+  MPI_Reduce(&local_time_taken_diff, &global_time_taken_diff, 1, MPI_DOUBLE, MPI_SUM, 0,
+      MPI_COMM_WORLD);
+  global_time_taken_std = sqrt(global_time_taken_diff / (num_managers * users.size()));
 
   if (rank==0) {
     cout << endl;
@@ -424,6 +459,7 @@ int main(int argc, char** argv) {
       global_cpu_usage / num_managers << "% "
       "(# nodes: " << num_managers <<
       ", mode: " << lock_mode_str << ")" << endl;
+    cout << "Local Time Taken Sum = " << local_time_taken_sum << endl;
 
     cerr << lock_mode_str << "," << workload_type_str <<
       "," << shared_exclusive_rule_str << "," << exclusive_shared_rule_str << "," <<
@@ -442,8 +478,9 @@ int main(int argc, char** argv) {
       "," << global_99_lock_time / num_managers << "," <<
       (long)((double)global_sum / (double)time_taken) << "," <<
       global_sum << "," << global_lock_success << "," << global_lock_failure << "," <<
-      global_cpu_usage / num_managers <<
-      "," << time_taken << endl;
+      global_cpu_usage_avg << "," << global_cpu_usage_std <<
+      "," << global_time_taken_avg / (double)(1000*1000*1000) << "," <<
+      global_time_taken_std / (double)(1000*1000*1000) << endl;
   }
 
   MPI_Finalize();
