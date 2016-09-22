@@ -1,0 +1,4 @@
+Import("env")
+driver = env.Program(target = 'test_sort_unsort', source = ['test_driver.cc','test_server.cc', 'test_client.cc'], LIBS=['rdmacm', 'ibverbs', 'pthread' ,'rt'])
+binaries = [driver]
+Return("binaries")

@@ -254,27 +254,36 @@ void LockManager::Stop() {
 // Currently the server registers same memory region for each client.
 int LockManager::RegisterMemoryRegion(Context* context) {
 
-  context->send_message = new Message;
-  context->receive_message = new Message;
+  context->send_message_buffer = new MessageBuffer;
+  context->receive_message_buffer = new MessageBuffer;
 
   context->lock_table = lock_table_;
 
-  context->send_mr = ibv_reg_mr(context->protection_domain,
-      context->send_message,
-      sizeof(*(context->send_message)),
-      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ);
-  if (context->send_mr == NULL) {
-    cerr << "ibv_reg_mr() failed for send_mr." << endl;
+  if (context->send_message_buffer->Register(context)) {
+    cerr << "MessageBuffer::Register failed()" << endl;
     return -1;
   }
-  context->receive_mr = ibv_reg_mr(context->protection_domain,
-      context->receive_message,
-      sizeof(*(context->receive_message)),
-      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
-  if (context->receive_mr == NULL) {
-    cerr << "ibv_reg_mr() failed for receive_mr." << endl;
+  if (context->receive_message_buffer->Register(context)) {
+    cerr << "MessageBuffer::Register failed()" << endl;
     return -1;
   }
+
+  //context->send_mr = ibv_reg_mr(context->protection_domain,
+      //context->send_message,
+      //sizeof(*(context->send_message)),
+      //IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ);
+  //if (context->send_mr == NULL) {
+    //cerr << "ibv_reg_mr() failed for send_mr." << endl;
+    //return -1;
+  //}
+  //context->receive_mr = ibv_reg_mr(context->protection_domain,
+      //context->receive_message,
+      //sizeof(*(context->receive_message)),
+      //IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
+  //if (context->receive_mr == NULL) {
+    //cerr << "ibv_reg_mr() failed for receive_mr." << endl;
+    //return -1;
+  //}
   context->lock_table_mr = ibv_reg_mr(context->protection_domain,
       context->lock_table,
       num_lock_object_*sizeof(uint64_t),
@@ -405,15 +414,11 @@ int LockManager::HandleDisconnect(Context* context) {
 
   context_set_.erase(context);
 
-  if (context->send_mr)
-    ibv_dereg_mr(context->send_mr);
-  if (context->receive_mr)
-    ibv_dereg_mr(context->receive_mr);
   if (context->lock_table_mr)
     ibv_dereg_mr(context->lock_table_mr);
 
-  delete context->send_message;
-  delete context->receive_message;
+  delete context->send_message_buffer;
+  delete context->receive_message_buffer;
 
   // rdma_destroy_id() also causes seg fault when client disconnects. why?
   //rdma_destroy_id(context->id);
@@ -426,12 +431,14 @@ int LockManager::HandleDisconnect(Context* context) {
 
 // Send local lock table memory region + current lock mode to client.
 int LockManager::SendLockTableMemoryRegion(Context* context) {
-  context->send_message->type       = Message::LOCK_TABLE_MR;
-  context->send_message->lock_mode  = current_lock_mode_;
-  context->send_message->manager_id = rank_;
 
-  memcpy(&context->send_message->lock_table_mr, context->lock_table_mr,
-      sizeof(context->send_message->lock_table_mr));
+  Message* msg = context->send_message_buffer->GetMessage();
+  msg->type       = Message::LOCK_TABLE_MR;
+  msg->lock_mode  = current_lock_mode_;
+  msg->manager_id = rank_;
+
+  memcpy(&msg->lock_table_mr, context->lock_table_mr,
+      sizeof(msg->lock_table_mr));
   if (SendMessage(context)) {
     cerr << "SendLockTableMemoryRegion(): SendMessage() failed." << endl;
     return -1;
@@ -444,11 +451,15 @@ int LockManager::SendLockTableMemoryRegion(Context* context) {
 // Send lock request result to client.
 int LockManager::SendLockRequestResult(Context* context, int user_id,
     int lock_type, int obj_index, int result) {
-  context->send_message->type        = Message::LOCK_REQUEST_RESULT;
-  context->send_message->user_id     = user_id;
-  context->send_message->lock_type   = lock_type;
-  context->send_message->obj_index   = obj_index;
-  context->send_message->lock_result = result;
+
+  Message* msg = context->send_message_buffer->GetMessage();
+
+  msg->type        = Message::LOCK_REQUEST_RESULT;
+  msg->user_id     = user_id;
+  msg->lock_type   = lock_type;
+  msg->obj_index   = obj_index;
+  msg->lock_result = result;
+
   if (SendMessage(context)) {
     cerr << "SendLockRequestResult(): SendMessage() failed." << endl;
     return -1;
@@ -461,11 +472,14 @@ int LockManager::SendLockRequestResult(Context* context, int user_id,
 // Send unlock request result to client.
 int LockManager::SendUnlockRequestResult(Context* context, int user_id,
     int lock_type, int obj_index, int result) {
-  context->send_message->type        = Message::UNLOCK_REQUEST_RESULT;
-  context->send_message->user_id     = user_id;
-  context->send_message->lock_type   = lock_type;
-  context->send_message->obj_index   = obj_index;
-  context->send_message->lock_result = result;
+
+  Message* msg = context->send_message_buffer->GetMessage();
+
+  msg->type        = Message::UNLOCK_REQUEST_RESULT;
+  msg->user_id     = user_id;
+  msg->lock_type   = lock_type;
+  msg->obj_index   = obj_index;
+  msg->lock_result = result;
   if (SendMessage(context)) {
     cerr << "SendUnlockRequestResult(): SendMessage() failed." << endl;
     return -1;
@@ -484,9 +498,13 @@ int LockManager::NotifyLockModeAll() {
 }
 
 int LockManager::NotifyLockMode(Context* context) {
-  context->send_message->type       = Message::LOCK_MODE;
-  context->send_message->manager_id = rank_;
-  context->send_message->lock_mode  = current_lock_mode_;
+
+  Message* msg = context->send_message_buffer->GetMessage();
+
+  msg->type       = Message::LOCK_MODE;
+  msg->manager_id = rank_;
+  msg->lock_mode  = current_lock_mode_;
+
   if (SendMessage(context)) {
     cerr << "SendUnlockRequestResult(): SendMessage() failed." << endl;
     return -1;
@@ -554,7 +572,7 @@ int LockManager::Unlock(int user_id, int manager_id, int lock_type,
       lock_mode_table_[manager_id]);
 }
 
-int LockManager::LockLocally(Context* context) {
+int LockManager::LockLocally(Context* context, Message* message) {
 
   // if current lock mode is remote (i.e. direct), then notify back.
   if (current_lock_mode_ == LOCK_REMOTE) {
@@ -565,9 +583,9 @@ int LockManager::LockLocally(Context* context) {
   clock_gettime(CLOCK_MONOTONIC, &start_local_lock_);
 
   int lock_result = LockManager::RESULT_FAILURE;
-  int user_id   = context->receive_message->user_id;
-  int obj_index = context->receive_message->obj_index;
-  int lock_type = context->receive_message->lock_type;
+  int user_id   = message->user_id;
+  int obj_index = message->obj_index;
+  int lock_type = message->lock_type;
   uint64_t* lock_object = (lock_table_+obj_index);
   uint32_t exclusive, shared;
   exclusive = (uint32_t)((*lock_object)>>32);
@@ -588,7 +606,7 @@ int LockManager::LockLocally(Context* context) {
   } else if (lock_type == LockManager::EXCLUSIVE) {
     // if exclusive lock is requested
     if (exclusive == 0 && shared == 0) {
-      exclusive = context->receive_message->user_id;
+      exclusive = message->user_id;
       *lock_object = ((uint64_t)exclusive) << 32 | shared;
       lock_result = LockManager::RESULT_SUCCESS;
     } else {
@@ -729,7 +747,7 @@ int LockManager::LockLocalDirect(int user_id, int lock_type, int obj_index) {
   return lock_result;
 }
 
-int LockManager::UnlockLocally(Context* context) {
+int LockManager::UnlockLocally(Context* context, Message* message) {
 
   // if current lock mode is remote (i.e. direct), then notify back.
   if (current_lock_mode_ == LOCK_REMOTE) {
@@ -738,9 +756,9 @@ int LockManager::UnlockLocally(Context* context) {
   }
 
   int lock_result;
-  int user_id   = context->receive_message->user_id;
-  int obj_index = context->receive_message->obj_index;
-  int lock_type = context->receive_message->lock_type;
+  int user_id   = message->user_id;
+  int obj_index = message->obj_index;
+  int lock_type = message->lock_type;
   uint64_t* lock_object = (lock_table_+obj_index);
   uint32_t exclusive, shared;
   exclusive = (uint32_t)((*lock_object)>>32);
@@ -913,9 +931,11 @@ int LockManager::SendMessage(Context* context) {
   send_work_request.num_sge    = 1;
   send_work_request.send_flags = IBV_SEND_SIGNALED;
 
-  sge.addr   = (uint64_t)context->send_message;
-  sge.length = sizeof(*context->send_message);
-  sge.lkey   = context->send_mr->lkey;
+  Message* msg = context->send_message_buffer->GetMessage();
+
+  sge.addr   = (uint64_t)msg;
+  sge.length = sizeof(*msg);
+  sge.lkey   = msg->mr->lkey;
 
   int ret = 0;
   if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
@@ -924,6 +944,7 @@ int LockManager::SendMessage(Context* context) {
     return -1;
   }
 
+  context->send_message_buffer->Rotate();
   //cout << "SendMessage(): message sent." << endl;
 
   return 0;
@@ -942,9 +963,11 @@ int LockManager::ReceiveMessage(Context* context) {
   receive_work_request.sg_list = &sge;
   receive_work_request.num_sge = 1;
 
-  sge.addr   = (uint64_t)context->receive_message;
-  sge.length = sizeof(*context->receive_message);
-  sge.lkey   = context->receive_mr->lkey;
+  Message* msg = context->receive_message_buffer->GetMessage();
+
+  sge.addr   = (uint64_t)msg;
+  sge.length = sizeof(*msg);
+  sge.lkey   = msg->mr->lkey;
 
   int ret = 0;
   if ((ret = ibv_post_recv(context->queue_pair, &receive_work_request,
@@ -1039,18 +1062,21 @@ int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
   }
 
   if (work_completion->opcode & IBV_WC_RECV) {
+
+    Message* message = context->receive_message_buffer->GetMessage();
+    context->receive_message_buffer->Rotate();
     // Post receive first.
     ReceiveMessage(context);
 
     // if client is requesting semaphore MR
-    if (context->receive_message->type == Message::LOCK_TABLE_MR_REQUEST) {
+    if (message->type == Message::LOCK_TABLE_MR_REQUEST) {
       SendLockTableMemoryRegion(context);
-    } else if (context->receive_message->type == Message::LOCK_REQUEST) {
-      LockLocally(context);
-    } else if (context->receive_message->type == Message::UNLOCK_REQUEST) {
-      UnlockLocally(context);
+    } else if (message->type == Message::LOCK_REQUEST) {
+      LockLocally(context, message);
+    } else if (message->type == Message::UNLOCK_REQUEST) {
+      UnlockLocally(context, message);
     } else {
-      cerr << "Unknown message type: " << context->receive_message->type
+      cerr << "Unknown message type: " << message->type
         << endl;
       return -1;
     }

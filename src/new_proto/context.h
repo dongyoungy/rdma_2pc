@@ -2,18 +2,20 @@
 #define RDMA_PROTO_CONTEXT_H
 
 #include <pthread.h>
-#include "message.h"
+#include "message_buffer.h"
 
 namespace rdma { namespace proto {
 
 // forward declaration of LockManager
 class LockManager;
 // forward declaration of LockClient
-class LockClient;
+class Client;
+// forward declaration of MessageBuffer
+class MessageBuffer;
 
 struct Context {
   LockManager* server;
-  LockClient* client;
+  Client* client;
 
   bool connected;
   bool fail;
@@ -21,10 +23,13 @@ struct Context {
   struct rdma_cm_id* id;
   struct ibv_qp* queue_pair;
 
-  Message* send_message;
-  struct ibv_mr* send_mr;
-  Message* receive_message;
-  struct ibv_mr* receive_mr;
+  /*Message* send_message;*/
+  /*struct ibv_mr* send_mr;*/
+  /*Message* receive_message;*/
+  /*struct ibv_mr* receive_mr;*/
+
+  MessageBuffer* send_message_buffer;
+  MessageBuffer* receive_message_buffer;
 
   int last_user_id;
   int last_lock_type;

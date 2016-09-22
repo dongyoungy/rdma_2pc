@@ -23,7 +23,7 @@ namespace rdma { namespace test {
 class TestClient {
 
   public:
-    TestClient(const string& work_dir, int test_mode, uint64_t max_count);
+    TestClient(const string& work_dir, int* data, size_t data_size);
     //TestClient(const string& server_name, const string& server_port,
         //int test_mode, size_t data_size);
     ~TestClient();
@@ -46,6 +46,9 @@ class TestClient {
     struct timespec now_;
     double* time_taken_;
 
+    int* GetDataFromRangeLocal(int min, int max);
+    int* GetDataFromRangeRemote(int min, int max);
+
     inline int GetTestMode() const {
       return test_mode_;
     }
@@ -63,7 +66,8 @@ class TestClient {
     int ReadData(Context* context);
     int ReadSemaphore(Context* context);
     int RequestSemaphore(Context* context);
-    int RequestData(Context* context);
+    int RequestDataMemoryRegion(Context* context);
+    int RequestSortedData(Context* context, int min, int max);
     int HandleEvent(struct rdma_cm_event* event);
     int HandleAddressResolved(struct rdma_cm_id* id);
     int HandleRouteResolved(struct rdma_cm_id* id);
@@ -72,7 +76,10 @@ class TestClient {
     int HandleDisconnect(Context* context);
     int RepeatAddingSemaphore(Context* context);
 
-    static const int TOTAL_TRIAL = 1000000;
+    int* result_;
+    int* data_;
+    size_t data_size_;
+    int* sorted_data_;
 
     bool is_sem_reset_;
     bool is_adding_sem_;
@@ -89,7 +96,6 @@ class TestClient {
     struct rdma_cm_id* connection_;
     struct addrinfo* address_;
     uint64_t current_semaphore_;
-    size_t data_size_;
     time_t test_start_;
     time_t test_end_;
     pthread_t poll_thread_;

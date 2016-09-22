@@ -18,7 +18,7 @@ namespace rdma { namespace test {
 //}
 
 // constructor
-TestClient::TestClient(const string& work_dir, int test_mode, uint64_t max_count) {
+TestClient::TestClient(const string& work_dir, int* data, size_t data_size) {
   work_dir_          = work_dir;
   event_channel_     = NULL;
   connection_        = NULL;
@@ -28,19 +28,23 @@ TestClient::TestClient(const string& work_dir, int test_mode, uint64_t max_count
   num_trial_         = 0;
   total_cas_time_    = 0;
   total_read_time_   = 0;
-  test_mode_         = test_mode;
   is_adding_sem_     = true;
   num_added_sem_     = 0;
   is_sem_reset_      = false;
-  data_size_         = 1024;
-  count_             = 0;
-  max_count_         = max_count;
-  semaphore_         = 0;
-  time_taken_        = new double[max_count];
+  data_              = data;
+  data_size_         = data_size;
+  result_            = new int[data_size];
+  sorted_data_       = new int[data_size];
 }
 
 // destructor
 TestClient::~TestClient() {
+  if (data_)
+    delete[] data_;
+  if (sorted_data_)
+    delete[] sorted_data_;
+  if (result_)
+    delete[] result_;
 }
 
 int TestClient::Run() {
@@ -234,7 +238,7 @@ int TestClient::HandleConnection(Context* context) {
   //cout << "connected to server." << endl;
   context->connected = true;
 
-  RequestSemaphore(context);
+  RequestDataMemoryRegion(context);
 
   return 0;
 }
@@ -324,42 +328,13 @@ int TestClient::RegisterMemoryRegion(Context* context) {
     return -1;
   }
 
-  context->new_value = new uint64_t;
-  memset(context->new_value, 0x00, sizeof(uint64_t));
-  context->new_value_mr = ibv_reg_mr(context->protection_domain,
-      context->new_value,
-      sizeof(uint64_t),
-      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE );
-      //IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
-  if (context->new_value_mr == NULL) {
-    cerr << "ibv_reg_mr() failed for new_value_mr." << endl;
-    return -1;
-  }
-  context->read_value = &read_value_;
-  memset(context->read_value, 0x00, sizeof(uint64_t));
-  context->read_value_mr = ibv_reg_mr(context->protection_domain,
-      context->read_value,
-      sizeof(uint64_t),
-      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
-      IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
-  if (context->read_value_mr == NULL) {
-    cerr << "ibv_reg_mr() failed for read_value_mr." << endl;
-    return -1;
-  }
-  if (test_mode_ == TEST_UC_WRITE) {
-  context->rdma_client_semaphore = ibv_reg_mr(context->protection_domain,
-      context->client_semaphore,
-      sizeof(*context->client_semaphore),
-      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
-  } else {
-  context->rdma_client_semaphore = ibv_reg_mr(context->protection_domain,
-      context->client_semaphore,
-      sizeof(*context->client_semaphore),
+  context->sorted_data_mr = ibv_reg_mr(context->protection_domain,
+      sorted_data_,
+      data_size_*sizeof(int),
       IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ |
-      IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_ATOMIC);
-  }
-  if (context->rdma_client_semaphore == NULL) {
-    cerr << "ibv_reg_mr() failed for rdma_server_semaphore." << endl;
+      IBV_ACCESS_REMOTE_WRITE);
+  if (context->sorted_data_mr == NULL) {
+    cerr << "ibv_reg_mr() failed for sorted_data_mr." << endl;
     return -1;
   }
 
@@ -385,11 +360,7 @@ void TestClient::BuildQueuePairAttr(Context* context,
   attributes->pd               = context->protection_domain;
   attributes->send_cq          = context->completion_queue;
   attributes->recv_cq          = context->completion_queue;
-  if (test_mode_ == TEST_UC_WRITE) {
-    attributes->qp_type          = IBV_QPT_UC;
-  } else {
-    attributes->qp_type          = IBV_QPT_RC;
-  }
+  attributes->qp_type          = IBV_QPT_RC;
   attributes->cap.max_send_wr  = 256;
   attributes->cap.max_recv_wr  = 256;
   attributes->cap.max_send_sge = 2;
@@ -554,9 +525,11 @@ int TestClient::RequestSemaphore(Context* context) {
   return 0;
 }
 
-int TestClient::RequestData(Context* context) {
+int TestClient::RequestDataMemoryRegion(Context* context) {
 
   context->send_message->type = Message::MR_DATA_REQUEST;
+  memcpy(&context->send_message->memory_region, context->sorted_data_mr,
+      sizeof(*context->sorted_data_mr));
 
   struct ibv_send_wr send_work_request;
   struct ibv_send_wr* bad_work_request;
@@ -580,8 +553,6 @@ int TestClient::RequestData(Context* context) {
     cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
     return -1;
   }
-
-  cout << "requested data region" << endl;
 
   return 0;
 }
@@ -737,6 +708,61 @@ int TestClient::RepeatAddingSemaphore(Context* context) {
   while (is_adding_sem_) {
     AddSemaphore(context);
   }
+}
+
+int TestClient::RequestSortedData(Context* context, int min, int max) {
+
+  context->send_message->type = Message::RANGE_DATA_REQUEST;
+  context->send_message->min  = min;
+  context->send_message->max  = max;
+
+  struct ibv_send_wr send_work_request;
+  struct ibv_send_wr* bad_work_request;
+  struct ibv_sge sge;
+
+  memset(&send_work_request, 0x00, sizeof(send_work_request));
+
+  send_work_request.wr_id      = (uint64_t)context;
+  send_work_request.opcode     = IBV_WR_SEND;
+  send_work_request.sg_list    = &sge;
+  send_work_request.num_sge    = 1;
+  send_work_request.send_flags = IBV_SEND_SIGNALED;
+
+  sge.addr   = (uint64_t)context->send_message;
+  sge.length = sizeof(*context->send_message);
+  sge.lkey   = context->send_mr->lkey;
+
+  int ret = 0;
+  if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
+          &bad_work_request))) {
+    cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
+    return -1;
+  }
+
+
+  return 0;
+}
+
+int* TestClient::GetDataFromRangeLocal(int min, int max) {
+  memset(result_, 0x00, data_size_*sizeof(int));
+  size_t count = 0;
+  for (size_t i = 0; i < data_size_; ++i) {
+    if (data_[i] >= min && data_[i] <= max) {
+      result_[count++] = data_[i];
+    }
+  }
+  return result_;
+}
+
+int* TestClient::GetDataFromRangeRemote(int min, int max) {
+  memset(sorted_data_, 0x00, data_size_*sizeof(int));
+  this->RequestSortedData(context_, min, max);
+  while (sorted_data_[0] == 0) {
+    // busy-wait
+    //cout << sorted_data_[0] << endl;
+    usleep(1);
+  }
+  return sorted_data_;
 }
 
 void TestClient::StopAddingSem() {

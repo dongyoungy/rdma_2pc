@@ -85,7 +85,9 @@ do
                           e_e_str="queue"
                         fi
 
-                        bsub -n $num_node -a openmpi -W 10 -m "cn004 cn005 cn006 cn008 cn010 cn012 cn013 cn014 cn015 cn016 cn017 cn018 cn019 cn020 cn021 cn022 cn023 cn024 cn025 cn026 cn027 cn028 cn029 cn030 cn032 cn033 cn034 cn035 cn036 cn037 cn038 cn039 cn040" -R "span[ptile=1] affinity[core(1)]" -R rusage[mem=1024] -J local \
+                        #-m "cn004 cn005 cn006 cn008 cn010 cn012 cn013 cn014 cn015 cn016 cn017 cn018 cn019 cn020 cn021 cn022 cn023 cn024 cn025 cn026 cn027 cn028 cn029 cn030 cn032 cn033 cn034 cn035 cn036 cn037 cn038 cn039 cn040" \
+                        bsub -n $num_node -a openmpi -W 10 \
+                          -R "span[ptile=1] affinity[core(1)]" -R rusage[mem=1024] -J local \
                           -eo /gpfs/gpfs0/groups/mozafari/dyoon/work/lsf_log/rdma_dist_lock/$lock_method_str-$workload_str-$s_e_str-$e_s_str-$e_e_str-fr$num_retry-pr$num_retry-bo$max_backoff-nn$num_node-u$num_user-lo$num_lock_objects-tx$num_tx-rq$num_request_per_tx-sr$shared_lock_ratio-local$local_workload_ratio-simultx$simulate_tx_delay-$simulate_tx_delay_min-$simulate_tx_delay_max.e \
                           -oo /gpfs/gpfs0/groups/mozafari/dyoon/work/lsf_log/rdma_dist_lock/$lock_method_str-$workload_str-$s_e_str-$e_s_str-$e_e_str-fr$num_retry-pr$num_retry-bo$max_backoff-nn$num_node-u$num_user-lo$num_lock_objects-tx$num_tx-rq$num_request_per_tx-sr$shared_lock_ratio-local$local_workload_ratio-simultx$simulate_tx_delay-$simulate_tx_delay_min-$simulate_tx_delay_max.o -q normal \
                           "sh new_test.lsf $num_lock_objects $num_tx $num_request_per_tx $num_user $lock_method $s_e_rule $e_s_rule $e_e_rule $num_retry $num_retry $workload_type $local_workload_ratio $shared_lock_ratio $simulate_tx_delay $simulate_tx_delay_min $simulate_tx_delay_max $max_backoff $rand_seed"

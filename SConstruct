@@ -14,6 +14,8 @@ b = SConscript('src/test_race_condition/SConscript', variant_dir='build/test_rac
 binaries.append(b)
 b = SConscript('src/test_read_write/SConscript', variant_dir='build/test_read_write', duplicate=0, exports='env')
 binaries.append(b)
+b = SConscript('src/test_sort_unsort/SConscript', variant_dir='build/test_sort_unsort', duplicate=0, exports='env')
+binaries.append(b)
 b = SConscript('src/new_proto/SConscript', variant_dir='build/new_proto', duplicate=0, exports='env')
 binaries.append(b)
 b = SConscript('src/N-CoSED/SConscript', variant_dir='build/N-CoSED', duplicate=0, exports='env')

@@ -17,11 +17,14 @@ class Message {
       UNLOCK_REQUEST_RESULT,
       LOCAL_MANAGER_ID,
       LOCK_MODE_REQUEST,
-      LOCK_MODE
+      LOCK_MODE,
+      GRANT_LOCK,
+      REJECT_LOCK
     } type;
     int lock_type;
     int lock_mode;
     struct ibv_mr lock_table_mr;
+    struct ibv_mr* mr;
     int user_id;
     int manager_id; // id of lock manager requesting lock
     int obj_index; // obj index in lock table

@@ -26,6 +26,7 @@ using namespace std;
 namespace rdma { namespace proto {
 
 class LockSimulator;
+class LockClient;
 
 class LockManager {
 
@@ -133,10 +134,10 @@ class LockManager {
         int lock_type, int obj_index, int result);
     int SendUnlockRequestResult(Context* context, int user_id,
         int lock_type, int obj_index, int result);
-    int LockLocally(Context* context);
+    int LockLocally(Context* context, Message* message);
     int LockLocally(Context* context, int user_id, int lock_type,
         int obj_index);
-    int UnlockLocally(Context* context);
+    int UnlockLocally(Context* context, Message* message);
     int UnlockLocally(Context* context, int user_id, int lock_type,
         int obj_index);
     int DisableRemoteAtomicAccess();

@@ -3,31 +3,26 @@
 namespace rdma { namespace test {
 
 // constructor
-TestServer::TestServer(const string& work_dir, int test_mode, size_t data_size) {
+TestServer::TestServer(const string& work_dir, int* data, size_t data_size) {
   work_dir_                 = work_dir;
-  buffer_                   = new char[data_size];
-  //uint32_t upper          = 10;
-  //uint32_t lower          = 0;
-  //semaphore_              = ((uint64_t)upper) << 32 | lower;
-  //cout << "sem            = " << semaphore_ << endl;
-  semaphore_                = 0;
-  prev_semaphore_           = semaphore_;
   listener_                 = NULL;
   event_channel_            = NULL;
   registered_memory_region_ = NULL;
   port_                     = 0;
   data_size_                = data_size;
+  data_                     = data; // sorted
   pd_                       = NULL;
   count_                    = 0;
   count2_                   = 0;
   context_                  = NULL;
-  test_mode_                = test_mode;
 }
 
 // destructor
 TestServer::~TestServer() {
   if (buffer_)
     delete[] buffer_;
+  if (data_)
+    delete[] data_;
 }
 
 int TestServer::Run() {
@@ -40,16 +35,9 @@ int TestServer::Run() {
       strerror(errno) << endl;
     return -1;
   }
-  if (test_mode_ == TEST_UC_WRITE) {
-    if (rdma_create_id(event_channel_, &listener_, NULL, RDMA_PS_IB)) {
-      cerr << "Run(): rdma_create_id() failed: " << strerror(errno) << endl;
-      return -1;
-    }
-  } else {
-    if (rdma_create_id(event_channel_, &listener_, NULL, RDMA_PS_TCP)) {
-      cerr << "Run(): rdma_create_id() failed: " << strerror(errno) << endl;
-      return -1;
-    }
+  if (rdma_create_id(event_channel_, &listener_, NULL, RDMA_PS_TCP)) {
+    cerr << "Run(): rdma_create_id() failed: " << strerror(errno) << endl;
+    return -1;
   }
   if (rdma_bind_addr(listener_, (struct sockaddr *)&address_)) {
     cerr << "Run(): rdma_bind_addr() failed: " << strerror(errno) << endl;
@@ -120,15 +108,6 @@ int TestServer::PrintInfo() {
     cerr << "Run(): fprintf() error while writing port." << endl;
     return -1;
   }
-  //char* job_id = getenv("LSB_JOBID");
-  //if (job_id == NULL) {
-    //cerr << "Run(): LSB_JOBID not available." << endl;
-    //return -1;
-  //}
-  //if (fprintf(job_id_file, "%s\n", job_id) < 0) {
-    //cerr << "Run(): fprintf() error while writing LSF job id." << endl;
-    //return -1;
-  //}
 
   fclose(ip_file);
   fclose(port_file);
@@ -197,8 +176,8 @@ int TestServer::RegisterMemoryRegion(Context* context) {
   context->receive_message = new Message;
 
   //semaphore_ = 0; // init to 0
-  context->server_semaphore = &semaphore_;
-  context->server_data = buffer_;
+  //context->server_semaphore = &semaphore_;
+  context->server_data = data_;
 
   context->send_mr = ibv_reg_mr(context->protection_domain,
       context->send_message,
@@ -216,61 +195,14 @@ int TestServer::RegisterMemoryRegion(Context* context) {
     cerr << "ibv_reg_mr() failed for receive_mr." << endl;
     return -1;
   }
-  if (test_mode_ == TEST_UC_WRITE) {
-    context->rdma_server_semaphore = ibv_reg_mr(context->protection_domain,
-        context->server_semaphore,
-        sizeof(*context->server_semaphore),
-        IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
-  } else {
-    context->rdma_server_semaphore = ibv_reg_mr(context->protection_domain,
-        context->server_semaphore,
-        sizeof(*context->server_semaphore),
-        IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ |
-        IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_ATOMIC);
-  }
-  if (context->rdma_server_semaphore == NULL) {
-    cerr << "ibv_reg_mr() failed for rdma_server_semaphore." << endl;
-    return -1;
-  }
+
   context->rdma_server_data = ibv_reg_mr(context->protection_domain,
       context->server_data,
-      data_size_,
+      data_size_*sizeof(int),
       IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ |
       IBV_ACCESS_REMOTE_WRITE);
   if (context->rdma_server_data == NULL) {
     cerr << "ibv_reg_mr() failed for rdma_server_data." << endl;
-    return -1;
-  }
-
-  if (test_mode_ == TEST_UC_WRITE) {
-    context->write_value = new uint64_t;
-    memset(context->write_value, 0x00, sizeof(uint64_t));
-    context->write_value_mr = ibv_reg_mr(context->protection_domain,
-        context->write_value,
-        sizeof(uint64_t),
-        IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
-  } else {
-    context->write_value = new uint64_t;
-    memset(context->write_value, 0x00, sizeof(uint64_t));
-    context->write_value_mr = ibv_reg_mr(context->protection_domain,
-        context->write_value,
-        sizeof(uint64_t),
-        IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
-        IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
-  }
-  if (context->write_value_mr == NULL) {
-    cerr << "ibv_reg_mr() failed for write_value_mr." << endl;
-    return -1;
-  }
-  context->write_value2 = new uint64_t;
-  memset(context->write_value2, 0x00, sizeof(uint64_t));
-  context->write_value2_mr = ibv_reg_mr(context->protection_domain,
-      context->write_value2,
-      sizeof(uint64_t),
-      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
-      IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
-  if (context->write_value2_mr == NULL) {
-    cerr << "ibv_reg_mr() failed for write_value2_mr." << endl;
     return -1;
   }
 
@@ -290,11 +222,6 @@ int TestServer::HandleConnectRequest(struct rdma_cm_id* id) {
   context_ = context;
   struct ibv_exp_qp_init_attr queue_pair_attributes;
   BuildQueuePairAttr(context, &queue_pair_attributes);
-
-  //if (rdma_create_qp(id, context->protection_domain, &queue_pair_attributes)) {
-    //cerr << "rdma_create_qp() failed: " << strerror(errno) << endl;
-    //return -1;
-  //}
 
   struct ibv_qp* queue_pair = ibv_exp_create_qp(id->verbs,
       &queue_pair_attributes);
@@ -323,11 +250,9 @@ int TestServer::HandleConnectRequest(struct rdma_cm_id* id) {
   // set rdma connection parameters
   struct rdma_conn_param connection_parameters;
   memset(&connection_parameters, 0x00, sizeof(connection_parameters));
-  if (test_mode_ != TEST_UC_WRITE) {
-    connection_parameters.initiator_depth =
-      connection_parameters.responder_resources = 5;
-    connection_parameters.rnr_retry_count = 5;
-  }
+  connection_parameters.initiator_depth =
+    connection_parameters.responder_resources = 5;
+  connection_parameters.rnr_retry_count = 5;
 
   // accept connection
   if (rdma_accept(id, &connection_parameters)) {
@@ -365,9 +290,6 @@ int TestServer::HandleDisconnect(Context* context) {
   delete context->send_message;
   delete context->receive_message;
 
-  // rdma_destroy_id() also causes seg fault when client disconnects. why?
-  //rdma_destroy_id(context->id);
-
   delete context;
 
   //cout << "client disconnected." << endl;
@@ -377,10 +299,6 @@ int TestServer::HandleDisconnect(Context* context) {
 // Send local RDMA semaphore memory region to client.
 int TestServer::SendSemaphoreMemoryRegion(Context* context) {
   // create thread that polls local semaphore
-  if (pthread_create(&poll_thread_, NULL, &TestServer::PollSemaphore, this)) {
-    cerr << "pthread_create() failed." << endl;
-    exit(-1);
-  }
   context->send_message->type = Message::MR_SEMAPHORE_INFO;
   memcpy(&context->send_message->memory_region, context->rdma_server_semaphore,
       sizeof(context->send_message->memory_region));
@@ -474,15 +392,10 @@ void TestServer::BuildQueuePairAttr(Context* context,
     struct ibv_exp_qp_init_attr* attributes) {
   memset(attributes, 0x00, sizeof(*attributes));
 
-  attributes->pd = context->protection_domain;
+  attributes->pd               = context->protection_domain;
   attributes->send_cq          = context->completion_queue;
   attributes->recv_cq          = context->completion_queue;
-  //attributes->srq = srq_;
-  if (test_mode_ == TEST_UC_WRITE) {
-    attributes->qp_type          = IBV_QPT_UC;
-  } else {
-    attributes->qp_type          = IBV_QPT_RC;
-  }
+  attributes->qp_type          = IBV_QPT_RC;
   attributes->cap.max_send_wr  = 256;
   attributes->cap.max_recv_wr  = 256;
   attributes->cap.max_send_sge = 2;
@@ -580,7 +493,12 @@ int TestServer::HandleWorkCompletion(struct ibv_wc* work_completion) {
           sizeof(*context->rdma_client_semaphore));
       SendSemaphoreMemoryRegion(context);
     } else if (context->receive_message->type == Message::MR_DATA_REQUEST) {
+      context->range_data_mr = new ibv_mr;
+      memcpy(context->range_data_mr, &context->receive_message->memory_region,
+          sizeof(*context->range_data_mr));
       SendDataMemoryRegion(context);
+    } else if (context->receive_message->type == Message::RANGE_DATA_REQUEST) {
+      WriteRangeData(context, context->receive_message->min, context->receive_message->max);
     } else {
       cerr << "Unknown message type: " << context->receive_message->type
         << endl;
@@ -588,60 +506,90 @@ int TestServer::HandleWorkCompletion(struct ibv_wc* work_completion) {
     }
   }
 }
-uint64_t TestServer::GetSemaphore() const {
-  return semaphore_;
-}
 
-int TestServer::WriteSemaphore(Context* context) {
+int TestServer::WriteRangeData(Context* context, int min, int max) {
+  size_t min_index = FindMinIndex(min, 0, data_size_);
+  size_t max_index = FindMaxIndex(max, 0, data_size_);
+
+  //cout << "min index = " << min_index << ", val = " << data_[min_index] << endl;
+  //cout << "max index = " << max_index << ", val = " << data_[max_index] << endl;
+
   struct ibv_send_wr send_work_request;
   struct ibv_send_wr* bad_work_request;
   struct ibv_sge sge;
 
-  uint64_t* write;
-  struct ibv_mr* write_mr;
-
-  if (this->semaphore_ % 2 == 0) {
-    write = context->write_value;
-    write_mr = context->write_value_mr;
-  } else {
-    write = context->write_value2;
-    write_mr = context->write_value2_mr;
-  }
-
-  *write = semaphore_;
-
-  //*context->write_value = *context->server_semaphore;
-  //cerr << "TestServer::WriteSemaphore(): " << *context->write_value << endl;
-
   memset(&send_work_request, 0x00, sizeof(send_work_request));
 
-  sge.addr = (uint64_t)write;
-  sge.length = sizeof(uint64_t);
-  sge.lkey = write_mr->lkey;
+  sge.addr = (uint64_t)context->server_data+(sizeof(int)*min_index);
+  sge.length = sizeof(int)*(max_index-min_index+1);
+  sge.lkey = context->rdma_server_data->lkey;
 
   send_work_request.wr_id      = (uint64_t)context;
   send_work_request.opcode     = IBV_WR_RDMA_WRITE;
   send_work_request.num_sge    = 1;
   send_work_request.sg_list    = &sge;
-  if (this->semaphore_ % 4 == 0) {
-    send_work_request.send_flags = IBV_SEND_SIGNALED;
-  }
-  //send_work_request.send_flags = IBV_SEND_SIGNALED | IBV_SEND_FENCE;
+  send_work_request.send_flags = IBV_SEND_SIGNALED;
 
   send_work_request.wr.rdma.remote_addr =
-    (uint64_t)context->rdma_client_semaphore->addr;
+    (uint64_t)context->range_data_mr->addr;
   send_work_request.wr.rdma.rkey        =
-    context->rdma_client_semaphore->rkey;
+    context->range_data_mr->rkey;
 
   int ret = 0;
   if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
           &bad_work_request))) {
-    cerr << "TestServer::WriteSemaphore(): ibv_post_send() failed: " <<
+    cerr << "WriteRangeData(): ibv_post_send() failed: " <<
       strerror(ret) << endl;
     return -1;
   }
 
   return 0;
+}
+
+size_t TestServer::FindMinIndex(int val, ssize_t low, ssize_t high) {
+  ssize_t mid = low + ((high-low)/2);
+  if (low >= high) {
+    if (data_[mid] < val)
+      return mid+1;
+    else {
+      if (mid < 0) return 0;
+      else return mid;
+    }
+  }
+  if (data_size_ <= mid) {
+    return data_size_ - 1;
+  } else if (data_[mid] == val) {
+    while (mid >= 0 && data_[mid] == val) {
+      --mid;
+    }
+    return mid+1;
+  }
+
+  if (data_[mid] > val) return FindMinIndex(val, low, mid-1);
+  else return FindMinIndex(val, mid+1, high);
+}
+
+size_t TestServer::FindMaxIndex(int val, ssize_t low, ssize_t high) {
+  ssize_t mid = low + ((high-low)/2);
+  if (low >= high) {
+    if (data_[mid] > val)
+      return mid-1;
+    else {
+      if (mid > data_size_ - 1) return data_size_ - 1;
+      else return mid;
+    }
+  }
+  if (data_size_ <= mid) {
+    return data_size_ - 1;
+  } else if (data_[mid] == val) {
+    while (mid < data_size_ && data_[mid] == val) {
+      ++mid;
+    }
+    return mid-1;
+  }
+
+  if (data_[mid] > val) return FindMaxIndex(val, low, mid-1);
+  else return FindMaxIndex(val, mid+1, high);
 }
 
 // Polls work completion from completion queue
@@ -668,26 +616,6 @@ void* TestServer::PollCompletionQueue(void* arg) {
 
   return NULL;
 }
-
-void* TestServer::PollSemaphore(void* arg) {
-  TestServer* server = (TestServer*) arg;
-  //cout << "TestServer Polling" << endl;
-
-  while (true) {
-    if (server->test_mode_ == TEST_RC_READ) {
-      ++server->semaphore_;
-    } else {
-      if (server->prev_semaphore_ < server->semaphore_) {
-        server->prev_semaphore_ = server->semaphore_;
-        server->WriteSemaphore(server->context_);
-      } else if (server->prev_semaphore_ > server->semaphore_) {
-        cout << "WRONG" << endl;
-      }
-    }
-    //cout << "TestServer:" << server->prev_semaphore_ << "," << server->semaphore_ << endl;
-  }
-}
-
 
 
 }} // end namespace
