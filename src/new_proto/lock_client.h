@@ -14,8 +14,8 @@ class LockClient : public Client {
         LockSimulator* local_user,
         int remote_lm_id);
     ~LockClient();
-    int RequestLock(int user_id, int lock_type, int obj_index, int lock_mode);
-    int RequestUnlock(int user_id, int lock_type, int obj_index, int lock_mode);
+    virtual int RequestLock(int seq_no, int user_id, int lock_type, int obj_index, int lock_mode);
+    virtual int RequestUnlock(int seq_no, int user_id, int lock_type, int obj_index, int lock_mode);
     double GetAverageRemoteExclusiveLockTime() const;
     double GetAverageRemoteSharedLockTime() const;
 
@@ -23,32 +23,35 @@ class LockClient : public Client {
     uint64_t GetRDMAAtomicCount() const;
 
   protected:
-    int LockRemotely(Context* context, int user_id, int lock_type,
+    int LockRemotely(Context* context, int seq_no, int user_id, int lock_type,
+        int obj_index);
+    int UnlockRemotely(Context* context, int seq_no, int user_id, int lock_type,
         int obj_index);
     int ReadRemotely(Context* context, int user_id, int read_target,
         int obj_index);
-    int UnlockRemotely(Context* context, int user_id, int lock_type,
-        int obj_index);
+    int ReadRemotely(Context* context, int user_id, int obj_index);
     int SendLockTableRequest(Context* context);
     int SendLockModeRequest(Context* context);
-    int SendLockRequest(Context* context, int user_id,
+    int SendLockRequest(Context* context, int seq_no, int user_id,
         int lock_type, int obj_index);
-    int SendUnlockRequest(Context* context, int user_id,
+    int SendUnlockRequest(Context* context, int seq_no, int user_id,
         int lock_type, int obj_index);
 
     int HandleConnection(Context* context);
     int HandleDisconnect(Context* context);
     int HandleWorkCompletion(struct ibv_wc* work_completion);
 
-    int HandleSharedToExclusive(Context* context);
-    int HandleExclusiveToShared(Context* context);
-    int HandleExclusiveToExclusive(Context* context);
+    int HandleSharedToExclusive(LockRequest* request);
+    int HandleExclusiveToShared(LockRequest* request);
+    int HandleExclusiveToExclusive(LockRequest* request);
 
-    int PollSharedToExclusive(Context* context);
-    int PollExclusiveToShared(Context* context);
-    int PollExclusiveToExclusive(Context* context);
+    int PollSharedToExclusive(LockRequest* request);
+    int PollExclusiveToShared(LockRequest* request);
+    int PollExclusiveToExclusive(LockRequest* request);
 
-    int UndoLocking(Context* context, bool polling = false);
+    int UndoLocking(Context* context, LockRequest* request, bool polling = false);
+  private:
+    map<int, uint32_t> waitlist_;
 };
 
 }}

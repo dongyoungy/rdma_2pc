@@ -23,12 +23,15 @@ LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
   is_all_local_             = false;
   local_manager_id_         = manager_->GetID();
   count_limit_              = num_lock_request;
+  seq_count_                = 0;
   count_                    = 0;
   request_size_             = 1;
 
   lock_times_ = new double[MAX_LOCK_REQUESTS];
 
   pthread_mutex_init(&mutex_, NULL);
+  pthread_mutex_init(&time_mutex_, NULL);
+  pthread_mutex_init(&lock_mutex_, NULL);
 }
 
 LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
@@ -36,7 +39,7 @@ LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
     bool measure_lock_time, int workload_type, int lock_mode,
     double local_percentage, double shared_lock_ratio, bool transaction_delay,
     double transaction_delay_min, double transaction_delay_max,
-    int max_backoff_time, double* custom_cdf) {
+    int max_backoff_time, double time_out_threshold, double* custom_cdf) {
   manager_                  = manager;
   id_                       = id;
   num_manager_              = num_manager;
@@ -55,6 +58,7 @@ LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
   total_num_lock_success_   = 0;
   total_num_lock_failure_   = 0;
   total_time_taken_to_lock_ = 0;
+  measure_time_out_         = false;
   is_all_local_             = false;
   transaction_delay_        = transaction_delay;
   transaction_delay_min_    = transaction_delay_min;
@@ -65,6 +69,8 @@ LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
   max_request_size_         = num_request_per_tx;
   max_backoff_time_         = max_backoff_time;
   backoff_seed_             = seed_;
+  time_out_                 = time_out_threshold;
+  time_out_seed_            = seed_ + id;
 
   lock_times_ = new double[MAX_LOCK_REQUESTS];
 
@@ -78,6 +84,8 @@ LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
   }
 
   pthread_mutex_init(&mutex_, NULL);
+  pthread_mutex_init(&time_mutex_, NULL);
+  pthread_mutex_init(&lock_mutex_, NULL);
 }
 
 LockSimulator::~LockSimulator() {
@@ -93,6 +101,14 @@ void LockSimulator::Run() {
   is_tx_failed_ = false;
 
   InitializeCDF();
+
+  if (lock_mode_ == LOCK_REMOTE_NOTIFY) {
+    int ret = pthread_create(&timeout_thread_, NULL, &LockSimulator::CheckTimeOut, (void*)this);
+    if (ret) {
+      cerr << "LockSimulator::pthread_create(): " << strerror(ret) << endl;
+      exit(-1);
+    }
+  }
 
   clock_gettime(CLOCK_MONOTONIC, &start_time_);
 
@@ -268,6 +284,8 @@ void LockSimulator::CreateLockRequests() {
       }
       if (conflict)
         --i;
+      else
+        requests_[i]->seq_no = seq_count_++;
     }
 
     is_all_local_ = true;
@@ -332,8 +350,12 @@ void LockSimulator::CreateLockRequests() {
 void LockSimulator::SubmitLockRequest() {
 
   int lock_result = LockManager::RESULT_SUCCESS;
-  state_ = LockSimulator::STATE_LOCKING;
   local_lock_count_ = 0;
+
+  pthread_mutex_lock(&time_mutex_);
+  clock_gettime(CLOCK_MONOTONIC, &last_lock_time_);
+  state_ = LockSimulator::STATE_LOCKING;
+  pthread_mutex_unlock(&time_mutex_);
 
   // process local locks first
   //while (current_request_idx_ < request_size_ &&
@@ -384,17 +406,28 @@ void LockSimulator::SubmitLockRequest() {
     //return;
   //}
 
+  pthread_mutex_lock(&lock_mutex_);
   if (current_request_idx_ < request_size_) {
-    if (verbose_)
-      cout << "(REMOTE) Simulator " << id_ << ": " << "Sending lock request at LM " <<
+    if (verbose_) {
+      pthread_mutex_lock(&PRINT_MUTEX);
+      cout << "(REMOTE) Simulator " << id_ << ": " << "Sending lock request #" <<
+        current_request_idx_ <<
+        " at LM " <<
         requests_[current_request_idx_]->lm_id <<
         " of type " << requests_[current_request_idx_]->lock_type <<
         " for object " << requests_[current_request_idx_]->obj_index << endl;
+      pthread_mutex_unlock(&PRINT_MUTEX);
+    }
     if (measure_lock_time_)
       clock_gettime(CLOCK_MONOTONIC, &start_lock_);
-    manager_->Lock(id_, requests_[current_request_idx_]->lm_id,
+    requests_[current_request_idx_]->task = TASK_LOCK;
+    manager_->Lock(
+        requests_[current_request_idx_]->seq_no,
+        id_,
+        requests_[current_request_idx_]->lm_id,
         requests_[current_request_idx_]->lock_type,
         requests_[current_request_idx_]->obj_index);
+    measure_time_out_ = true;
     last_request_idx_ = current_request_idx_;
     ++current_request_idx_;
     ++total_num_locks_;
@@ -403,6 +436,7 @@ void LockSimulator::SubmitLockRequest() {
     //--current_request_idx_;
     //SubmitUnlockRequest();
   }
+  pthread_mutex_unlock(&lock_mutex_);
 }
 
 void LockSimulator::SubmitUnlockRequest() {
@@ -410,6 +444,7 @@ void LockSimulator::SubmitUnlockRequest() {
   int lock_result = LockManager::RESULT_SUCCESS;
   state_ = LockSimulator::STATE_UNLOCKING;
   local_unlock_count_ = 0;
+  measure_time_out_ = false;
 
   restart_ = false;
 
@@ -439,21 +474,37 @@ void LockSimulator::SubmitUnlockRequest() {
     //}
   //}
 
+  pthread_mutex_lock(&lock_mutex_);
   if (current_request_idx_ >= 0) {
-    if (verbose_)
-      cout << "(REMOTE) Simulator " << id_ << ": " << "Sending unlock request at LM " <<
+    if (verbose_) {
+      pthread_mutex_lock(&PRINT_MUTEX);
+      cout << "(REMOTE) Simulator " << id_ << ": " << "Sending unlock request #" <<
+        current_request_idx_ <<
+        " at LM " <<
         requests_[current_request_idx_]->lm_id <<
         " of type " << requests_[current_request_idx_]->lock_type <<
         " for object " << requests_[current_request_idx_]->obj_index << endl;
-    manager_->Unlock(id_, requests_[current_request_idx_]->lm_id,
+      pthread_mutex_unlock(&PRINT_MUTEX);
+    }
+    pthread_mutex_lock(&time_mutex_);
+    clock_gettime(CLOCK_MONOTONIC, &last_lock_time_);
+    pthread_mutex_unlock(&time_mutex_);
+    requests_[current_request_idx_]->task = TASK_UNLOCK;
+    manager_->Unlock(
+        requests_[current_request_idx_]->seq_no,
+        id_,
+        requests_[current_request_idx_]->lm_id,
         requests_[current_request_idx_]->lock_type,
         requests_[current_request_idx_]->obj_index);
     last_request_idx_ = current_request_idx_;
     --current_request_idx_;
   } else {
     if (!restart_)
+      pthread_mutex_unlock(&lock_mutex_);
       StartLockRequests();
+      return;
   }
+  pthread_mutex_unlock(&lock_mutex_);
 }
 
 void LockSimulator::SubmitLockRequestLocal() {
@@ -509,10 +560,17 @@ void LockSimulator::SubmitUnlockRequestLocal() {
 }
 
 
-int LockSimulator::NotifyResult(int task, int lock_type, int obj_index,
+int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_index,
     int result) {
 
   pthread_mutex_lock(&mutex_);
+
+  if (requests_[last_request_idx_]->seq_no != seq_no ||
+      requests_[last_request_idx_]->task != task) {
+    // sequence number or task is different --> ignore
+    pthread_mutex_unlock(&mutex_);
+    return -1;
+  }
 
   if (task == LockManager::TASK_LOCK) {
 
@@ -529,11 +587,13 @@ int LockSimulator::NotifyResult(int task, int lock_type, int obj_index,
         requests_[last_request_idx_]->lock_type == lock_type &&
         requests_[last_request_idx_]->obj_index == obj_index) {
       if (verbose_) {
+        pthread_mutex_lock(&PRINT_MUTEX);
         cout << "Simulator " << id_ << ": " <<
           "Successful lock request at LM " <<
           requests_[last_request_idx_]->lm_id <<
           " of type " << requests_[last_request_idx_]->lock_type <<
           " for object " << requests_[last_request_idx_]->obj_index << endl;
+        pthread_mutex_unlock(&PRINT_MUTEX);
       }
       ++total_num_lock_success_;
       retry_ = 0;
@@ -555,11 +615,13 @@ int LockSimulator::NotifyResult(int task, int lock_type, int obj_index,
         current_request_idx_ = last_request_idx_ - 1;
       }
       if (verbose_) {
+        pthread_mutex_lock(&PRINT_MUTEX);
         cout << "Simulator " << id_ << ": " <<
           "(Retry) Unsuccessful lock request at LM " <<
           requests_[last_request_idx_]->lm_id <<
           " of type " << requests_[last_request_idx_]->lock_type <<
           " for object " << requests_[last_request_idx_]->obj_index << endl;
+        pthread_mutex_unlock(&PRINT_MUTEX);
       }
       // retry
       if (retry_ > LockManager::GetFailRetry()) {
@@ -574,11 +636,14 @@ int LockSimulator::NotifyResult(int task, int lock_type, int obj_index,
     } else {
       current_request_idx_ = last_request_idx_ - 1;
       if (verbose_) {
+        pthread_mutex_lock(&PRINT_MUTEX);
         cout << "Simulator " << id_ << ": " <<
           "(Fail) Unsuccessful lock request at LM " <<
           requests_[last_request_idx_]->lm_id <<
           " of type " << requests_[last_request_idx_]->lock_type <<
-          " for object " << requests_[last_request_idx_]->obj_index << endl;
+          " for object " << requests_[last_request_idx_]->obj_index <<
+          " (" << lock_type << "," << obj_index << ")" << endl;
+        pthread_mutex_unlock(&PRINT_MUTEX);
       }
       ++total_num_lock_failure_;
       is_tx_failed_ = true;
@@ -590,36 +655,71 @@ int LockSimulator::NotifyResult(int task, int lock_type, int obj_index,
         requests_[last_request_idx_]->lock_type == lock_type &&
         requests_[last_request_idx_]->obj_index == obj_index) {
       if (verbose_) {
+        pthread_mutex_lock(&PRINT_MUTEX);
         cout << "Simulator " << id_ << ": " <<
           "Successful unlock request at LM " <<
           requests_[last_request_idx_]->lm_id <<
           " of type " << requests_[last_request_idx_]->lock_type <<
           " for object " << requests_[last_request_idx_]->obj_index << endl;
+        pthread_mutex_unlock(&PRINT_MUTEX);
       }
       ++total_num_unlocks_;
       SubmitUnlockRequest();
     } else if (result == LockManager::RESULT_RETRY) {
       current_request_idx_ = last_request_idx_;
       if (verbose_) {
+        pthread_mutex_lock(&PRINT_MUTEX);
         cout << "Simulator " << id_ << ": " <<
           "retrying exclusive unlock request at LM " <<
           requests_[last_request_idx_]->lm_id <<
           " of type " << requests_[last_request_idx_]->lock_type <<
           " for object " << requests_[last_request_idx_]->obj_index << endl;
+        pthread_mutex_unlock(&PRINT_MUTEX);
       }
       SubmitUnlockRequest();
     } else {
       if (verbose_) {
+        pthread_mutex_lock(&PRINT_MUTEX);
         cout << "Simulator " << id_ << ": " <<
           "Unsuccessful unlock request at LM " <<
           requests_[last_request_idx_]->lm_id <<
           " of type " << requests_[last_request_idx_]->lock_type <<
           " for object " << requests_[last_request_idx_]->obj_index << endl;
+        pthread_mutex_unlock(&PRINT_MUTEX);
       }
       SubmitUnlockRequest();
     }
   }
   pthread_mutex_unlock(&mutex_);
+}
+
+int LockSimulator::TimeOut() {
+
+  pthread_mutex_lock(&mutex_);
+  //pthread_mutex_lock(&PRINT_MUTEX);
+  //cout << "TimeOut: " << id_ << ", " << last_request_idx_ << endl;
+  //pthread_mutex_unlock(&PRINT_MUTEX);
+  if (state_ == STATE_LOCKING) {
+    is_tx_failed_ = true;
+    measure_time_out_ = false;
+    current_request_idx_ = last_request_idx_;
+    SubmitUnlockRequest();
+  }
+  pthread_mutex_unlock(&mutex_);
+}
+
+double LockSimulator::GetTimeSinceLastLock() {
+  struct timespec now;
+  double time_taken;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  pthread_mutex_lock(&time_mutex_);
+  time_taken = ((double)now.tv_sec * 1e+9 +
+      (double)now.tv_nsec) - ((double)last_lock_time_.tv_sec * 1e+9 +
+        (double)last_lock_time_.tv_nsec);
+  cout << "time = " << time_taken << endl;
+  pthread_mutex_unlock(&time_mutex_);
+
+  return time_taken;
 }
 
 int LockSimulator::GetID() const {
@@ -646,6 +746,10 @@ uint64_t LockSimulator::GetTotalNumLockFailure() const {
   return total_num_lock_failure_;
 }
 
+uint64_t LockSimulator::GetCount() const {
+  return count_;
+}
+
 double LockSimulator::GetAverageTimeTakenToLock() const {
   return total_time_taken_to_lock_ / (double)total_num_locks_;
 }
@@ -654,10 +758,50 @@ double LockSimulator::GetTimeTaken() const {
   return time_taken_;
 }
 
+double LockSimulator::GetTimeOutThreshold() {
+  return ((int)rand_r(&time_out_seed_) % (int)time_out_) + 100000000.0;
+}
+
+bool LockSimulator::GetMeasureTimeOut() const {
+  return measure_time_out_;
+}
+
 double LockSimulator::Get99PercentileLockTime() {
   sort(lock_times_, lock_times_ + total_num_locks_);
   size_t pos = (size_t)((double)total_num_locks_ * 0.99);
   return lock_times_[pos];
+}
+
+void* LockSimulator::CheckTimeOut(void* arg) {
+  LockSimulator* simulator = (LockSimulator*)arg;
+  int retry = 0;
+  uint64_t last_count = simulator->GetCount();
+  uint64_t count;
+
+  while (simulator->GetState() != STATE_DONE) {
+    usleep(1000);
+    count = simulator->GetCount();
+    if (last_count == count) {
+       ++retry;
+    } else {
+      retry = 0;
+      last_count = count;
+    }
+    if (retry > 3) {
+      if (simulator->GetMeasureTimeOut()) {
+        simulator->TimeOut();
+        retry = 0;
+      } else {
+        retry = 0;
+      }
+    }
+    //if (simulator->GetTimeSinceLastLock() > simulator->GetTimeOutThreshold() &&
+        //simulator->GetState() == STATE_LOCKING) {
+      //if (simulator->GetMeasureTimeOut()) {
+        //simulator->TimeOut();
+      //}
+    //}
+  }
 }
 
 }}

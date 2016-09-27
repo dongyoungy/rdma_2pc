@@ -86,6 +86,8 @@ int main(int argc, char** argv) {
     lock_mode_str = "SERVER-BASED/PROXY";
   } else if (lock_mode == LockManager::LOCK_REMOTE) {
     lock_mode_str = "CLIENT-BASED/DIRECT";
+  } else if (lock_mode == LOCK_REMOTE_NOTIFY) {
+    lock_mode_str = "CLIENT-BASED/DIRECT/NOTIFY";
   }
 
   string workload_type_str, shared_lock_ratio_str;
@@ -155,6 +157,12 @@ int main(int argc, char** argv) {
     default:
       cerr << "Unsupported Rule: " << exclusive_exclusive_rule << endl;
       exit(-1);
+  }
+
+  if (lock_mode == LOCK_REMOTE_NOTIFY) {
+    shared_exclusive_rule_str = "N/A";
+    exclusive_shared_rule_str = "N/A";
+    exclusive_exclusive_rule_str = "N/A";
   }
 
   if (rank == 0) {

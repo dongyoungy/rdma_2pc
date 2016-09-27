@@ -31,11 +31,13 @@ struct Context {
   MessageBuffer* send_message_buffer;
   MessageBuffer* receive_message_buffer;
 
+  int read_purpose;
   int last_user_id;
   int last_lock_type;
   int last_obj_index;
   int last_lock_task;
   int last_read_target;
+  int last_seq_no;
   int retry;
 
   uint32_t shared;
@@ -50,6 +52,10 @@ struct Context {
 
   uint32_t* read_buffer;
   struct ibv_mr* read_buffer_mr;
+
+  // read buffer for reading entire lock object
+  uint64_t* read_buffer2;
+  struct ibv_mr* read_buffer2_mr;
 
   char* local_buffer;
   struct ibv_mr* rdma_local_mr;

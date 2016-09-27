@@ -15,11 +15,12 @@ class CommunicationClient : public Client {
         int remote_lm_id);
     ~CommunicationClient();
 
-    int GrantLock(int home_id, int obj_index, int lock_type);
-    int RejectLock(int home_id, int obj_index, int lock_type);
+    int GrantLock(int seq_no, int user_id, int home_id, int obj_index, int lock_type);
+    int RejectLock(int seq_no, int user_id, int home_id, int obj_index, int lock_type);
 
   protected:
     pthread_mutex_t communication_mutex_;
+    virtual int HandleWorkCompletion(struct ibv_wc* work_completion);
 };
 
 }}

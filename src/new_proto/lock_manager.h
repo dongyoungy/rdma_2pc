@@ -18,8 +18,8 @@
 #include <set>
 
 #include "lock_simulator.h"
-#include "lock_client.h"
 #include "context.h"
+#include "client.h"
 
 using namespace std;
 
@@ -27,6 +27,7 @@ namespace rdma { namespace proto {
 
 class LockSimulator;
 class LockClient;
+class CommunicationClient;
 
 class LockManager {
 
@@ -38,14 +39,16 @@ class LockManager {
     int InitializeLockClients();
     int RegisterUser(int user_id, LockSimulator* user);
     int Run();
-    int Lock(int user_id, int manager_id, int lock_type, int obj_index);
-    int Unlock(int user_id, int manager_id, int lock_type, int obj_index);
+    int Lock(int seq_no, int user_id, int manager_id, int lock_type, int obj_index);
+    int Unlock(int seq_no, int user_id, int manager_id, int lock_type, int obj_index);
     int LockLocalDirect(int user_id, int lock_type, int obj_index);
     int UnlockLocalDirect(int user_id, int lock_type, int obj_index);
+    int GrantLock(int seq_no, int user_id, int manager_id, int lock_type, int obj_index);
+    int RejectLock(int seq_no, int user_id, int manager_id, int lock_type, int obj_index);
     int UpdateLockModeTable(int manager_id, int mode);
-    int NotifyLockRequestResult(int user_id, int lock_type, int obj_index,
+    int NotifyLockRequestResult(int seq_no, int user_id, int lock_type, int obj_index,
         int result);
-    int NotifyUnlockRequestResult(int user_id, int lock_type, int obj_index,
+    int NotifyUnlockRequestResult(int seq_no, int user_id, int lock_type, int obj_index,
         int result);
     int GetID() const;
     int GetLockMode() const;
@@ -140,6 +143,7 @@ class LockManager {
     int UnlockLocally(Context* context, Message* message);
     int UnlockLocally(Context* context, int user_id, int lock_type,
         int obj_index);
+    int TryLock(Context* context, Message* message);
     int DisableRemoteAtomicAccess();
     int EnableRemoteAtomicAccess();
     int UpdateLockTableLocal(Context* context);
@@ -155,6 +159,9 @@ class LockManager {
     map<int, LockClient*> lock_clients_;
     set<Context*> context_set_;
     vector<pthread_t*> lock_client_threads_;
+
+    map<int, CommunicationClient*> communication_clients_;
+    vector<pthread_t*> communication_client_threads_;
 
     // vector for actual user/clients/simulators
     vector<LockSimulator*> users;
@@ -184,6 +191,8 @@ class LockManager {
     uint16_t port_;
     size_t data_size_;
     pthread_mutex_t** lock_mutex_;
+    pthread_mutex_t msg_mutex_;
+    pthread_mutex_t poll_mutex_;
 
     static int shared_exclusive_rule_;
     static int exclusive_shared_rule_;

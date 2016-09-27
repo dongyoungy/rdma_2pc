@@ -1,4 +1,5 @@
 #include "lock_client.h"
+#include "lock_request.h"
 
 namespace rdma { namespace proto {
 
@@ -27,6 +28,13 @@ Client::Client(const string& work_dir, LockManager* local_manager,
 
   // initialize local lock mutex
   pthread_mutex_init(&lock_mutex_, NULL);
+  pthread_mutex_init(&msg_mutex_, NULL);
+
+  lock_requests_ = new LockRequest*[16];
+  for (int i = 0; i < 16; ++i) {
+    lock_requests_[i] = new LockRequest;
+  }
+  lock_request_idx_ = 0;
 }
 
 // destructor
@@ -256,7 +264,10 @@ int Client::SendMessage(Context* context) {
   send_work_request.opcode     = IBV_WR_SEND;
   send_work_request.sg_list    = &sge;
   send_work_request.num_sge    = 1;
-  send_work_request.send_flags = IBV_SEND_SIGNALED;
+  if ((int)num_send_message_ % 8 == 0)
+    send_work_request.send_flags = IBV_SEND_SIGNALED;
+
+  pthread_mutex_lock(&msg_mutex_);
 
   Message* msg = context->send_message_buffer->GetMessage();
 
@@ -267,13 +278,16 @@ int Client::SendMessage(Context* context) {
   int ret = 0;
   if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
           &bad_work_request))) {
-    cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
-    return -1;
+    //cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
+    //pthread_mutex_unlock(&msg_mutex_);
+    //return -1;
   }
 
   context->send_message_buffer->Rotate();
+  ++num_send_message_;
+  pthread_mutex_unlock(&msg_mutex_);
 
-  return 0;
+  return ret;
 }
 
 // Post receive to get message from clients
@@ -292,6 +306,8 @@ int Client::ReceiveMessage(Context* context) {
   receive_work_request.sg_list = &sge;
   receive_work_request.num_sge = 1;
 
+  pthread_mutex_lock(&msg_mutex_);
+
   Message* msg = context->receive_message_buffer->GetMessage();
 
   sge.addr   = (uint64_t)msg;
@@ -302,9 +318,11 @@ int Client::ReceiveMessage(Context* context) {
   if ((ret = ibv_post_recv(context->queue_pair, &receive_work_request,
           &bad_work_request))) {
     cerr << "ibv_post_recv failed: " << strerror(ret) << endl;
+    pthread_mutex_unlock(&msg_mutex_);
     return -1;
   }
 
+  pthread_mutex_unlock(&msg_mutex_);
   clock_gettime(CLOCK_MONOTONIC, &end_receive_message_);
   double time_taken = ((double)end_receive_message_.tv_sec * 1e+9 +
       (double)end_receive_message_.tv_nsec) -
@@ -358,15 +376,61 @@ int Client::RegisterMemoryRegion(Context* context) {
     cerr << "ibv_reg_mr() failed for original_value_mr." << endl;
     return -1;
   }
+  for (int i = 0; i < 16; ++i) {
+    LockRequest* request = lock_requests_[i];
+    request->original_value = new uint64_t;
+    request->original_value_mr = ibv_reg_mr(context->protection_domain,
+        request->original_value,
+        sizeof(*request->original_value),
+        IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ
+        | IBV_ACCESS_REMOTE_ATOMIC);
+    if (request->original_value_mr == NULL) {
+      cerr << "ibv_reg_mr() failed for request->original_value_mr." << endl;
+      return -1;
+    }
+
+    request->read_buffer = new uint32_t;
+    request->read_buffer_mr = ibv_reg_mr(context->protection_domain,
+        request->read_buffer,
+        sizeof(*request->read_buffer),
+        IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ
+        | IBV_ACCESS_REMOTE_ATOMIC);
+    if (request->read_buffer_mr == NULL) {
+      cerr << "ibv_reg_mr() failed for read_buffer_mr." << endl;
+      return -1;
+    }
+
+    request->read_buffer2 = new uint64_t;
+    request->read_buffer2_mr = ibv_reg_mr(context->protection_domain,
+        request->read_buffer2,
+        sizeof(*request->read_buffer2),
+        IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ
+        | IBV_ACCESS_REMOTE_ATOMIC);
+    if (request->read_buffer2_mr == NULL) {
+      cerr << "ibv_reg_mr() failed for read_buffer2_mr." << endl;
+      return -1;
+    }
+  }
 
   context->read_buffer = new uint32_t;
   context->read_buffer_mr = ibv_reg_mr(context->protection_domain,
       context->read_buffer,
-      sizeof(*context->original_value),
+      sizeof(*context->read_buffer),
       IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ
       | IBV_ACCESS_REMOTE_ATOMIC);
   if (context->read_buffer_mr == NULL) {
     cerr << "ibv_reg_mr() failed for read_buffer_mr." << endl;
+    return -1;
+  }
+
+  context->read_buffer2 = new uint64_t;
+  context->read_buffer2_mr = ibv_reg_mr(context->protection_domain,
+      context->read_buffer2,
+      sizeof(*context->read_buffer2),
+      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ
+      | IBV_ACCESS_REMOTE_ATOMIC);
+  if (context->read_buffer2_mr == NULL) {
+    cerr << "ibv_reg_mr() failed for read_buffer2_mr." << endl;
     return -1;
   }
 
@@ -382,8 +446,8 @@ void Client::BuildQueuePairAttr(Context* context,
   attributes->send_cq          = context->completion_queue;
   attributes->recv_cq          = context->completion_queue;
   attributes->qp_type          = IBV_QPT_RC;
-  attributes->cap.max_send_wr  = 16;
-  attributes->cap.max_recv_wr  = 16;
+  attributes->cap.max_send_wr  = 64;
+  attributes->cap.max_recv_wr  = 64;
   attributes->cap.max_send_sge = 1;
   attributes->cap.max_recv_sge = 1;
   attributes->comp_mask        = IBV_EXP_QP_INIT_ATTR_PD |
@@ -443,22 +507,29 @@ double Client::GetAverageReceiveMessageTime() const {
 // Polls work completion from completion queue
 void* Client::PollCompletionQueue(void* arg) {
   struct ibv_cq* cq;
+  struct ibv_cq* ev_cq;
   struct ibv_wc wc;
   Context* queue_context;
   Context* context = static_cast<Context*>(arg);
+  cq = context->completion_queue;
+  int ret = 0;
 
   while (true) {
-    if (ibv_get_cq_event(context->completion_channel, &cq,
+    if (ibv_get_cq_event(context->completion_channel, &ev_cq,
           (void**)&queue_context)) {
       cerr << "ibv_get_cq_event() failed." << endl;
     }
-    ibv_ack_cq_events(cq, 1);
-    if (ibv_req_notify_cq(cq, 0)) {
+    ibv_ack_cq_events(ev_cq, 1);
+    if (ibv_req_notify_cq(ev_cq, 0)) {
       cerr << "ibv_req_notify_cq() failed." << endl;
     }
 
-    while (ibv_poll_cq(cq, 1, &wc)) {
+    while ((ret = ibv_poll_cq(cq, 1, &wc)) > 0) {
       context->client->HandleWorkCompletion(&wc);
+    }
+
+    if (ret < 0) {
+       cerr << "ibv_poll_cq() failed" << endl;
     }
   }
 

@@ -1,4 +1,7 @@
 #include "lock_manager.h"
+#include "notify_lock_client.h"
+#include "lock_client.h"
+#include "communication_client.h"
 
 namespace rdma { namespace proto {
 
@@ -47,6 +50,8 @@ LockManager::LockManager(const string& work_dir, uint32_t rank,
 
   // initialize local lock mutex
   lock_mutex_ = new pthread_mutex_t*[num_lock_object_];
+  pthread_mutex_init(&msg_mutex_, NULL);
+  pthread_mutex_init(&poll_mutex_, NULL);
 }
 
 // destructor
@@ -129,23 +134,41 @@ int LockManager::RegisterUser(int user_id, LockSimulator* user) {
 }
 
 int LockManager::InitializeLockClients() {
+  int ret = 0;
   for (int i = 0; i < num_manager_; ++i) {
     for (int j = 0; j < users.size(); ++j) {
-      LockSimulator* user = users[j];
-      LockClient* client = new LockClient(work_dir_, this, user, i);
+      LockSimulator* user      = users[j];
       pthread_t* client_thread = new pthread_t;
+      LockClient* client;
+      if (lock_mode_ == LOCK_REMOTE_NOTIFY)
+        client = new NotifyLockClient(work_dir_, this, user, i);
+      else
+        client = new LockClient(work_dir_, this, user, i);
 
-      if (pthread_create(client_thread, NULL,
-            &LockManager::RunLockClient, (void*)client)) {
-        cerr << "pthread_create() for LockClient failed." << endl;
+      ret = pthread_create(client_thread, NULL,
+            &LockManager::RunLockClient, (void*)client);
+
+      if (ret) {
+        cout << "LockManager::pthread_create(): " << strerror(ret) << endl;
         return -1;
       }
 
       lock_clients_[MAX_USER*i+user->GetID()] = client;
-      //lock_clients_.push_back(client);
       lock_client_threads_.push_back(client_thread);
 
+      CommunicationClient* comm_client = new CommunicationClient(work_dir_, this, user, i);
+      pthread_t* comm_client_thread    = new pthread_t;
+      ret = pthread_create(comm_client_thread, NULL,
+          &LockManager::RunLockClient, (void*)comm_client);
+
+      if (ret) {
+        cout << "LockManager::pthread_create(): " << strerror(ret) << endl;
+        return -1;
+      }
+      communication_clients_[MAX_USER*i+user->GetID()] = comm_client;
+      communication_client_threads_.push_back(comm_client_thread);
     }
+
   }
   return 0;
 }
@@ -512,7 +535,7 @@ int LockManager::NotifyLockMode(Context* context) {
   return 0;
 }
 
-int LockManager::Lock(int user_id, int manager_id, int lock_type,
+int LockManager::Lock(int seq_no, int user_id, int manager_id, int lock_type,
     int obj_index) {
   LockClient* lock_client = lock_clients_[manager_id*MAX_USER+user_id];
   if (lock_mode_ == LockManager::LOCK_ADAPTIVE) {
@@ -545,7 +568,7 @@ int LockManager::Lock(int user_id, int manager_id, int lock_type,
     }
   }
 
-  return lock_client->RequestLock(user_id, lock_type, obj_index,
+  return lock_client->RequestLock(seq_no, user_id, lock_type, obj_index,
       lock_mode_table_[manager_id]);
 }
 
@@ -565,11 +588,23 @@ int LockManager::SwitchToRemote() {
   return 0;
 }
 
-int LockManager::Unlock(int user_id, int manager_id, int lock_type,
+int LockManager::Unlock(int seq_no, int user_id, int manager_id, int lock_type,
     int obj_index) {
   LockClient* lock_client = lock_clients_[manager_id*MAX_USER+user_id];
-  return lock_client->RequestUnlock(user_id, lock_type, obj_index,
+  return lock_client->RequestUnlock(seq_no, user_id, lock_type, obj_index,
       lock_mode_table_[manager_id]);
+}
+
+int LockManager::GrantLock(int seq_no, int user_id, int home_id, int lock_type,
+    int obj_index) {
+  CommunicationClient* client = communication_clients_[MAX_USER*home_id+user_id];
+  return client->GrantLock(seq_no, user_id, home_id, obj_index, lock_type);
+}
+
+int LockManager::RejectLock(int seq_no, int user_id, int home_id, int lock_type,
+    int obj_index) {
+  CommunicationClient* client = communication_clients_[MAX_USER*home_id+user_id];
+  return client->RejectLock(seq_no, user_id, home_id, obj_index, lock_type);
 }
 
 int LockManager::LockLocally(Context* context, Message* message) {
@@ -855,6 +890,22 @@ int LockManager::UnlockLocally(Context* context, int user_id, int lock_type,
   return 0;
 }
 
+int LockManager::TryLock(Context* context, Message* message) {
+  int seq_no    = message->seq_no;
+  int home_id   = message->home_id;
+  int lock_type = message->lock_type;
+  int obj_index = message->obj_index;
+  int user_id   = message->user_id;
+  LockClient* client = lock_clients_[MAX_USER*home_id+user_id];
+  NotifyLockClient* notify_client = dynamic_cast<NotifyLockClient*>(client);
+  if (notify_client == NULL) {
+    cerr << "NotifyLockClient cast fail." << endl;
+    return -1;
+  }
+
+  return notify_client->TryLock(seq_no, user_id, lock_type, obj_index);
+}
+
 
 int LockManager::UnlockLocalDirect(int user_id, int lock_type, int obj_index) {
   int lock_result;
@@ -902,19 +953,19 @@ int LockManager::UpdateLockTableRemote(Context* context) {
   return 0;
 }
 
-int LockManager::NotifyLockRequestResult(int user_id, int lock_type,
+int LockManager::NotifyLockRequestResult(int seq_no, int user_id, int lock_type,
     int obj_index, int result) {
   LockSimulator* user = user_map[user_id];
   //pthread_mutex_lock(user_mutex_map[user_id]);
-  user->NotifyResult(LockManager::TASK_LOCK, lock_type, obj_index, result);
+  user->NotifyResult(seq_no, LockManager::TASK_LOCK, lock_type, obj_index, result);
   //pthread_mutex_unlock(user_mutex_map[user_id]);
 }
 
-int LockManager::NotifyUnlockRequestResult(int user_id, int lock_type,
+int LockManager::NotifyUnlockRequestResult(int seq_no, int user_id, int lock_type,
     int obj_index, int result) {
   LockSimulator* user = user_map[user_id];
   //pthread_mutex_lock(user_mutex_map[user_id]);
-  user->NotifyResult(LockManager::TASK_UNLOCK, lock_type, obj_index, result);
+  user->NotifyResult(seq_no, LockManager::TASK_UNLOCK, lock_type, obj_index, result);
   //pthread_mutex_unlock(user_mutex_map[user_id]);
 }
 
@@ -931,6 +982,8 @@ int LockManager::SendMessage(Context* context) {
   send_work_request.num_sge    = 1;
   send_work_request.send_flags = IBV_SEND_SIGNALED;
 
+  pthread_mutex_lock(&msg_mutex_);
+
   Message* msg = context->send_message_buffer->GetMessage();
 
   sge.addr   = (uint64_t)msg;
@@ -941,11 +994,13 @@ int LockManager::SendMessage(Context* context) {
   if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
           &bad_work_request))) {
     cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
+    pthread_mutex_unlock(&msg_mutex_);
     return -1;
   }
 
   context->send_message_buffer->Rotate();
   //cout << "SendMessage(): message sent." << endl;
+  pthread_mutex_unlock(&msg_mutex_);
 
   return 0;
 }
@@ -963,6 +1018,8 @@ int LockManager::ReceiveMessage(Context* context) {
   receive_work_request.sg_list = &sge;
   receive_work_request.num_sge = 1;
 
+  pthread_mutex_lock(&msg_mutex_);
+
   Message* msg = context->receive_message_buffer->GetMessage();
 
   sge.addr   = (uint64_t)msg;
@@ -973,8 +1030,10 @@ int LockManager::ReceiveMessage(Context* context) {
   if ((ret = ibv_post_recv(context->queue_pair, &receive_work_request,
           &bad_work_request))) {
     cerr << "ibv_post_recv failed: " << strerror(ret) << endl;
+    pthread_mutex_unlock(&msg_mutex_);
     return -1;
   }
+  pthread_mutex_unlock(&msg_mutex_);
 
   return 0;
 }
@@ -988,8 +1047,8 @@ void LockManager::BuildQueuePairAttr(Context* context,
   attributes->send_cq          = context->completion_queue;
   attributes->recv_cq          = context->completion_queue;
   attributes->qp_type          = IBV_QPT_RC;
-  attributes->cap.max_send_wr  = 16;
-  attributes->cap.max_recv_wr  = 16;
+  attributes->cap.max_send_wr  = 64;
+  attributes->cap.max_recv_wr  = 64;
   attributes->cap.max_send_sge = 1;
   attributes->cap.max_recv_sge = 1;
   attributes->comp_mask        = IBV_EXP_QP_INIT_ATTR_PD |
@@ -1075,6 +1134,8 @@ int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
       LockLocally(context, message);
     } else if (message->type == Message::UNLOCK_REQUEST) {
       UnlockLocally(context, message);
+    } else if (message->type == Message::GRANT_LOCK) {
+      TryLock(context, message);
     } else {
       cerr << "Unknown message type: " << message->type
         << endl;
@@ -1161,17 +1222,19 @@ double LockManager::GetAverageRDMAAtomicCount() const {
 // Polls work completion from completion queue
 void* LockManager::PollCompletionQueue(void* arg) {
   struct ibv_cq* cq;
+  struct ibv_cq* ev_cq;
   struct ibv_wc wc;
   Context* queue_context;
   Context* context = static_cast<Context*>(arg);
+  cq = context->completion_queue;
 
   while (true) {
-    if (ibv_get_cq_event(context->completion_channel, &cq,
+    if (ibv_get_cq_event(context->completion_channel, &ev_cq,
           (void**)&queue_context)) {
       cerr << "ibv_get_cq_event() failed." << endl;
     }
-    ibv_ack_cq_events(cq, 1);
-    if (ibv_req_notify_cq(cq, 0)) {
+    ibv_ack_cq_events(ev_cq, 1);
+    if (ibv_req_notify_cq(ev_cq, 0)) {
       cerr << "ibv_req_notify_cq() failed." << endl;
     }
 
@@ -1188,7 +1251,7 @@ int LockManager::GetLockMode() const {
 }
 
 void* LockManager::RunLockClient(void* args) {
-  LockClient* client = static_cast<LockClient*>(args);
+  Client* client = static_cast<Client*>(args);
   client->Run();
 }
 

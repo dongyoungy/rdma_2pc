@@ -6,6 +6,7 @@
 #include <pthread.h>
 #include <string.h>
 #include <unistd.h>
+#include <map>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <time.h>
@@ -13,15 +14,17 @@
 #include <arpa/inet.h>
 #include <rdma/rdma_cma.h>
 
+#include "context.h"
 #include "constants.h"
 #include "lock_manager.h"
-#include "context.h"
+#include "lock_request.h"
 
 using namespace std;
 
 namespace rdma { namespace proto {
 
 class LockSimulator;
+class LockManager;
 
 class Client {
 
@@ -58,16 +61,17 @@ class Client {
 
     virtual int HandleWorkCompletion(struct ibv_wc* work_completion) = 0;
 
-    map<int, uint32_t> waitlist_;
 
     uint64_t num_rdma_atomic_;
     uint64_t num_rdma_read_;
 
+    LockRequest** lock_requests_;
     LockManager* local_manager_;
     LockSimulator* local_user_;
     Context* context_;
     int remote_lm_id_;
     int test_duration_;
+    int lock_request_idx_;
     string work_dir_;
     double total_send_message_time_;
     double num_send_message_;
@@ -99,6 +103,7 @@ class Client {
     time_t test_start_;
     time_t test_end_;
     pthread_mutex_t lock_mutex_;
+    pthread_mutex_t msg_mutex_;
 };
 
 }}
