@@ -20,12 +20,17 @@ class MessageBuffer {
     ~MessageBuffer();
     int Register(Context* context);
     Message* GetMessage();
+    struct ibv_mr* GetMR();
     void Rotate();
+    inline int GetIndex() const {
+      return index_;
+    }
 
   private:
     int index_;
     int size_;
     vector<Message*> messages_;
+    vector<ibv_mr*> mrs_;
 };
 
 }}

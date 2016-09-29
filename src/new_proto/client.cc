@@ -264,23 +264,23 @@ int Client::SendMessage(Context* context) {
   send_work_request.opcode     = IBV_WR_SEND;
   send_work_request.sg_list    = &sge;
   send_work_request.num_sge    = 1;
-  if ((int)num_send_message_ % 8 == 0)
-    send_work_request.send_flags = IBV_SEND_SIGNALED;
+  send_work_request.send_flags = IBV_SEND_SIGNALED;
 
   pthread_mutex_lock(&msg_mutex_);
 
   Message* msg = context->send_message_buffer->GetMessage();
+  struct ibv_mr* mr = context->send_message_buffer->GetMR();
 
   sge.addr   = (uint64_t)msg;
   sge.length = sizeof(*msg);
-  sge.lkey   = msg->mr->lkey;
+  sge.lkey   = mr->lkey;
 
   int ret = 0;
   if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
           &bad_work_request))) {
-    //cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
-    //pthread_mutex_unlock(&msg_mutex_);
-    //return -1;
+    cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
+    pthread_mutex_unlock(&msg_mutex_);
+    return -1;
   }
 
   context->send_message_buffer->Rotate();
@@ -309,10 +309,11 @@ int Client::ReceiveMessage(Context* context) {
   pthread_mutex_lock(&msg_mutex_);
 
   Message* msg = context->receive_message_buffer->GetMessage();
+  struct ibv_mr* mr = context->receive_message_buffer->GetMR();
 
   sge.addr   = (uint64_t)msg;
   sge.length = sizeof(*msg);
-  sge.lkey   = msg->mr->lkey;
+  sge.lkey   = mr->lkey;
 
   int ret = 0;
   if ((ret = ibv_post_recv(context->queue_pair, &receive_work_request,

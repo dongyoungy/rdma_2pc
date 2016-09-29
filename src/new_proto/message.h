@@ -19,12 +19,12 @@ class Message {
       LOCK_MODE_REQUEST,
       LOCK_MODE,
       GRANT_LOCK,
+      GRANT_LOCK_ACK,
       REJECT_LOCK
     } type;
     int lock_type;
     int lock_mode;
     struct ibv_mr lock_table_mr;
-    struct ibv_mr* mr;
     int seq_no; // seq. no. of lock request
     int home_id; // home id of lock object
     int user_id;

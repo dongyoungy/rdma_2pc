@@ -284,8 +284,6 @@ void LockSimulator::CreateLockRequests() {
       }
       if (conflict)
         --i;
-      else
-        requests_[i]->seq_no = seq_count_++;
     }
 
     is_all_local_ = true;
@@ -421,6 +419,7 @@ void LockSimulator::SubmitLockRequest() {
     if (measure_lock_time_)
       clock_gettime(CLOCK_MONOTONIC, &start_lock_);
     requests_[current_request_idx_]->task = TASK_LOCK;
+    requests_[current_request_idx_]->seq_no = seq_count_++;
     manager_->Lock(
         requests_[current_request_idx_]->seq_no,
         id_,
@@ -490,6 +489,7 @@ void LockSimulator::SubmitUnlockRequest() {
     clock_gettime(CLOCK_MONOTONIC, &last_lock_time_);
     pthread_mutex_unlock(&time_mutex_);
     requests_[current_request_idx_]->task = TASK_UNLOCK;
+    requests_[current_request_idx_]->seq_no = seq_count_++;
     manager_->Unlock(
         requests_[current_request_idx_]->seq_no,
         id_,
@@ -568,6 +568,10 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
   if (requests_[last_request_idx_]->seq_no != seq_no ||
       requests_[last_request_idx_]->task != task) {
     // sequence number or task is different --> ignore
+    //pthread_mutex_lock(&PRINT_MUTEX);
+    //cout << "Simulator " << id_ << ", seq no: " <<
+      //requests_[last_request_idx_]->seq_no << " != " << seq_no;
+    //pthread_mutex_unlock(&PRINT_MUTEX);
     pthread_mutex_unlock(&mutex_);
     return -1;
   }

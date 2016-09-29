@@ -133,6 +133,7 @@ class LockManager {
     int NotifyLockModeAll();
     int SendMessage(Context* context);
     int SendLockTableMemoryRegion(Context* context);
+    int SendGrantLockAck(Context* context, int seq_no, int user_id, int lock_type, int obj_index);
     int SendLockRequestResult(Context* context, int user_id,
         int lock_type, int obj_index, int result);
     int SendUnlockRequestResult(Context* context, int user_id,

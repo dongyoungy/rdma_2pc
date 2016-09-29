@@ -34,11 +34,11 @@ int NotifyLockClient::TryLock(int seq_no, int user_id, int lock_type, int obj_in
   //} else {
     //cerr << "NotifyLockClient::TryLock(), " << local_user_->GetID() << endl;
   //}
-  pthread_mutex_lock(&wait_mutex_);
-  if (wait_before_me_[obj_index] == 0) {
-    pthread_cond_wait(&wait_cond_, &wait_mutex_);
-  }
-  pthread_mutex_unlock(&wait_mutex_);
+  //pthread_mutex_lock(&wait_mutex_);
+  //if (wait_before_me_[obj_index] == 0) {
+    //pthread_cond_wait(&wait_cond_, &wait_mutex_);
+  //}
+  //pthread_mutex_unlock(&wait_mutex_);
   //pthread_mutex_lock(&PRINT_MUTEX);
   //cout << "TryLock(): " << seq_no << "," << user_id << "," << obj_index << "," << lock_type << endl;
   //pthread_mutex_unlock(&PRINT_MUTEX);
@@ -183,25 +183,33 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     request->exclusive = exclusive;
     request->shared = shared;
 
+    //pthread_mutex_lock(&PRINT_MUTEX);
+    //cout << "work completion: " << request->task << "," << request->seq_no << "," <<
+      //request->user_id << "," << request->obj_index  << "," <<
+      //request->lock_type << endl;
+    //pthread_mutex_unlock(&PRINT_MUTEX);
+
     if (request->task == TASK_LOCK) {
       if (request->lock_type == EXCLUSIVE) {
         if (exclusive == 0 && shared == 0) {
           // exclusive lock acquisition successful
           wait_after_me_[request->obj_index] = 0;
+          wait_seq_no_ = -1;
           local_manager_->NotifyLockRequestResult(
               request->seq_no,
               request->user_id,
               request->lock_type,
               request->obj_index,
               RESULT_SUCCESS);
-        //} else if ((wait_after_me_[context->last_obj_index] & value) != 0){
-          //this->UndoLocking(context);
-          //local_manager_->NotifyLockRequestResult(
-              //context->last_seq_no,
-              //context->last_user_id,
-              //context->last_lock_type,
-              //context->last_obj_index,
-              //RESULT_FAILURE);
+        } else if ((wait_after_me_[request->obj_index] & value) != 0){
+          this->UndoLocking(context_, request);
+          wait_seq_no_ = -1;
+          local_manager_->NotifyLockRequestResult(
+              request->seq_no,
+              request->user_id,
+              request->lock_type,
+              request->obj_index,
+              RESULT_FAILURE);
         } else {
           //pthread_mutex_lock(&PRINT_MUTEX);
           //cerr << "wait exclusive: " << local_user_->GetID() << endl;
@@ -213,7 +221,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           wait_user_id_                       = request->user_id;
           wait_lock_type_                     = request->lock_type;
           wait_obj_index_                     = request->obj_index;
-          pthread_cond_signal(&wait_cond_);
+          //pthread_cond_signal(&wait_cond_);
           pthread_mutex_unlock(&wait_mutex_);
 
         }
@@ -221,20 +229,22 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
         if (exclusive == 0) {
           // shared lock acquisition successful
           wait_after_me_[request->obj_index] = 0;
+          wait_seq_no_ = -1;
           local_manager_->NotifyLockRequestResult(
               request->seq_no,
               request->user_id,
               request->lock_type,
               request->obj_index,
               LockManager::RESULT_SUCCESS);
-        //} else if ((wait_after_me_[context->last_obj_index] & value) != 0){
-          //this->UndoLocking(context);
-          //local_manager_->NotifyLockRequestResult(
-              //context->last_seq_no,
-              //context->last_user_id,
-              //context->last_lock_type,
-              //context->last_obj_index,
-              //RESULT_FAILURE);
+        } else if ((wait_after_me_[request->obj_index] & value) != 0){
+          this->UndoLocking(context_, request);
+          wait_seq_no_ = -1;
+          local_manager_->NotifyLockRequestResult(
+              request->seq_no,
+              request->user_id,
+              request->lock_type,
+              request->obj_index,
+              RESULT_FAILURE);
         } else {
           //pthread_mutex_lock(&PRINT_MUTEX);
           //cerr << "wait shared: " << local_user_->GetID() << endl;
@@ -246,7 +256,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           wait_user_id_                       = request->user_id;
           wait_lock_type_                     = request->lock_type;
           wait_obj_index_                     = request->obj_index;
-          pthread_cond_signal(&wait_cond_);
+          //pthread_cond_signal(&wait_cond_);
           pthread_mutex_unlock(&wait_mutex_);
         }
       }
@@ -266,9 +276,9 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
         //}
         prev_value = ((uint64_t)exclusive) << 32 | (shared - request->user_id);
       }
-      //pthread_mutex_lock(&wait_mutex_);
-      //wait_after_me_[context->last_obj_index] = prev_value;
-      //pthread_mutex_unlock(&wait_mutex_);
+      pthread_mutex_lock(&wait_mutex_);
+      wait_after_me_[request->obj_index] = prev_value;
+      pthread_mutex_unlock(&wait_mutex_);
 
       int ret = NotifyWaitingNodes(request, prev_value);
 
@@ -282,6 +292,9 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
   } else if (work_completion->opcode == IBV_WC_RDMA_READ) {
     LockRequest* request = (LockRequest *)work_completion->wr_id;
     uint64_t value = *request->read_buffer2;
+    if (wait_seq_no_ == -1) {
+      return 0;
+    }
     if ((wait_before_me_[wait_obj_index_] & value) == 0) {
       pthread_mutex_lock(&wait_mutex_);
       wait_before_me_[wait_obj_index_] = 0;

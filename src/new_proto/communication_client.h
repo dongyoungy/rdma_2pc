@@ -21,6 +21,10 @@ class CommunicationClient : public Client {
   protected:
     pthread_mutex_t communication_mutex_;
     virtual int HandleWorkCompletion(struct ibv_wc* work_completion);
+
+  private:
+    volatile bool is_waiting_ack_;
+
 };
 
 }}

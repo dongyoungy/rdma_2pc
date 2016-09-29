@@ -455,6 +455,7 @@ int LockManager::HandleDisconnect(Context* context) {
 // Send local lock table memory region + current lock mode to client.
 int LockManager::SendLockTableMemoryRegion(Context* context) {
 
+  pthread_mutex_lock(&msg_mutex_);
   Message* msg = context->send_message_buffer->GetMessage();
   msg->type       = Message::LOCK_TABLE_MR;
   msg->lock_mode  = current_lock_mode_;
@@ -464,9 +465,11 @@ int LockManager::SendLockTableMemoryRegion(Context* context) {
       sizeof(msg->lock_table_mr));
   if (SendMessage(context)) {
     cerr << "SendLockTableMemoryRegion(): SendMessage() failed." << endl;
+    pthread_mutex_unlock(&msg_mutex_);
     return -1;
   }
 
+  pthread_mutex_unlock(&msg_mutex_);
   //cout << "SendLockTableMemoryRegion(): memory region sent." << endl;
   return 0;
 }
@@ -475,6 +478,7 @@ int LockManager::SendLockTableMemoryRegion(Context* context) {
 int LockManager::SendLockRequestResult(Context* context, int user_id,
     int lock_type, int obj_index, int result) {
 
+  pthread_mutex_lock(&msg_mutex_);
   Message* msg = context->send_message_buffer->GetMessage();
 
   msg->type        = Message::LOCK_REQUEST_RESULT;
@@ -485,10 +489,12 @@ int LockManager::SendLockRequestResult(Context* context, int user_id,
 
   if (SendMessage(context)) {
     cerr << "SendLockRequestResult(): SendMessage() failed." << endl;
+    pthread_mutex_unlock(&msg_mutex_);
     return -1;
   }
 
   //cout << "SendLockRequestResult(): memory region sent." << endl;
+  pthread_mutex_unlock(&msg_mutex_);
   return 0;
 }
 
@@ -496,6 +502,7 @@ int LockManager::SendLockRequestResult(Context* context, int user_id,
 int LockManager::SendUnlockRequestResult(Context* context, int user_id,
     int lock_type, int obj_index, int result) {
 
+  pthread_mutex_lock(&msg_mutex_);
   Message* msg = context->send_message_buffer->GetMessage();
 
   msg->type        = Message::UNLOCK_REQUEST_RESULT;
@@ -505,12 +512,37 @@ int LockManager::SendUnlockRequestResult(Context* context, int user_id,
   msg->lock_result = result;
   if (SendMessage(context)) {
     cerr << "SendUnlockRequestResult(): SendMessage() failed." << endl;
+    pthread_mutex_unlock(&msg_mutex_);
     return -1;
   }
 
+  pthread_mutex_unlock(&msg_mutex_);
   //cout << "SendUnlockRequestResult(): memory region sent." << endl;
   return 0;
 }
+
+// Send unlock request result to client.
+int LockManager::SendGrantLockAck(Context* context, int seq_no, int user_id, int lock_type,
+    int obj_index) {
+
+  pthread_mutex_lock(&msg_mutex_);
+  Message* msg = context->send_message_buffer->GetMessage();
+
+  msg->type      = Message::GRANT_LOCK_ACK;
+  msg->seq_no    = seq_no;
+  msg->user_id   = user_id;
+  msg->lock_type = lock_type;
+  msg->obj_index = obj_index;
+  if (SendMessage(context)) {
+    cerr << "SendGrantLockAck(): SendMessage() failed." << endl;
+    pthread_mutex_unlock(&msg_mutex_);
+    return -1;
+  }
+
+  pthread_mutex_unlock(&msg_mutex_);
+  return 0;
+}
+
 
 int LockManager::NotifyLockModeAll() {
   for (set<Context*>::iterator it = context_set_.begin();
@@ -522,6 +554,7 @@ int LockManager::NotifyLockModeAll() {
 
 int LockManager::NotifyLockMode(Context* context) {
 
+  pthread_mutex_lock(&msg_mutex_);
   Message* msg = context->send_message_buffer->GetMessage();
 
   msg->type       = Message::LOCK_MODE;
@@ -530,8 +563,10 @@ int LockManager::NotifyLockMode(Context* context) {
 
   if (SendMessage(context)) {
     cerr << "SendUnlockRequestResult(): SendMessage() failed." << endl;
+    pthread_mutex_unlock(&msg_mutex_);
     return -1;
   }
+  pthread_mutex_unlock(&msg_mutex_);
   return 0;
 }
 
@@ -903,6 +938,9 @@ int LockManager::TryLock(Context* context, Message* message) {
     return -1;
   }
 
+  // sends the ACK message back to CommunicationClient
+  this->SendGrantLockAck(context, seq_no, user_id, lock_type, obj_index);
+
   return notify_client->TryLock(seq_no, user_id, lock_type, obj_index);
 }
 
@@ -982,25 +1020,22 @@ int LockManager::SendMessage(Context* context) {
   send_work_request.num_sge    = 1;
   send_work_request.send_flags = IBV_SEND_SIGNALED;
 
-  pthread_mutex_lock(&msg_mutex_);
-
   Message* msg = context->send_message_buffer->GetMessage();
+  struct ibv_mr* mr = context->send_message_buffer->GetMR();
 
   sge.addr   = (uint64_t)msg;
   sge.length = sizeof(*msg);
-  sge.lkey   = msg->mr->lkey;
+  sge.lkey   = mr->lkey;
 
   int ret = 0;
   if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
           &bad_work_request))) {
     cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
-    pthread_mutex_unlock(&msg_mutex_);
     return -1;
   }
 
   context->send_message_buffer->Rotate();
   //cout << "SendMessage(): message sent." << endl;
-  pthread_mutex_unlock(&msg_mutex_);
 
   return 0;
 }
@@ -1018,13 +1053,20 @@ int LockManager::ReceiveMessage(Context* context) {
   receive_work_request.sg_list = &sge;
   receive_work_request.num_sge = 1;
 
+
   pthread_mutex_lock(&msg_mutex_);
 
+  context->receive_message_buffer->Rotate();
   Message* msg = context->receive_message_buffer->GetMessage();
+  struct ibv_mr* mr = context->receive_message_buffer->GetMR();
+  //pthread_mutex_lock(&PRINT_MUTEX);
+  //cout << pthread_self() << ", ReceiveMessage: " <<
+    //context->receive_message_buffer->GetIndex() << ", " << msg->mr->lkey << endl;
+  //pthread_mutex_unlock(&PRINT_MUTEX);
 
   sge.addr   = (uint64_t)msg;
   sge.length = sizeof(*msg);
-  sge.lkey   = msg->mr->lkey;
+  sge.lkey   = mr->lkey;
 
   int ret = 0;
   if ((ret = ibv_post_recv(context->queue_pair, &receive_work_request,
@@ -1123,7 +1165,7 @@ int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
   if (work_completion->opcode & IBV_WC_RECV) {
 
     Message* message = context->receive_message_buffer->GetMessage();
-    context->receive_message_buffer->Rotate();
+    //context->receive_message_buffer->Rotate();
     // Post receive first.
     ReceiveMessage(context);
 
