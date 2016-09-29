@@ -102,7 +102,7 @@ void LockSimulator::Run() {
 
   InitializeCDF();
 
-  if (lock_mode_ == LOCK_REMOTE_NOTIFY) {
+  if (lock_mode_ == LOCK_REMOTE_NOTIFY || lock_mode_ == LOCK_PROXY_QUEUE) {
     int ret = pthread_create(&timeout_thread_, NULL, &LockSimulator::CheckTimeOut, (void*)this);
     if (ret) {
       cerr << "LockSimulator::pthread_create(): " << strerror(ret) << endl;
@@ -196,9 +196,9 @@ begin_lock:
       //state_ != LockSimulator::STATE_DONE) {
     //goto begin_lock;
   //}
-  if (lock_mode_ == LockManager::LOCK_LOCAL && count_ < count_limit_) {
-    goto begin_lock;
-  }
+  //if (lock_mode_ == LockManager::LOCK_LOCAL && count_ < count_limit_) {
+    //goto begin_lock;
+  //}
 }
 
 int LockSimulator::GetState() const {
@@ -337,12 +337,12 @@ void LockSimulator::CreateLockRequests() {
   current_request_idx_ = 0;
   retry_ = 0;
 
-  if (is_all_local_ && lock_mode_ == LockManager::LOCK_LOCAL) {
-    SubmitLockRequestLocal();
-  } else {
-    SubmitLockRequest();
-  }
-  //SubmitLockRequest();
+  //if (is_all_local_ && lock_mode_ == LockManager::LOCK_LOCAL) {
+    //SubmitLockRequestLocal();
+  //} else {
+    //SubmitLockRequest();
+  //}
+  SubmitLockRequest();
 }
 
 void LockSimulator::SubmitLockRequest() {
@@ -613,11 +613,13 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
         requests_[last_request_idx_]->lock_type == lock_type &&
         requests_[last_request_idx_]->obj_index == obj_index) {
       ++retry_;
-      if (manager_->GetLockMode() == LockManager::LOCK_REMOTE) {
-        current_request_idx_ = last_request_idx_;
-      } else {
-        current_request_idx_ = last_request_idx_ - 1;
-      }
+      //if (manager_->GetLockMode() == LOCK_REMOTE_POLL ||
+          //manager_->GetLockMode() == LOCK_REMOTE_NOTIFY) {
+        //current_request_idx_ = last_request_idx_;
+      //} else {
+        //current_request_idx_ = last_request_idx_ - 1;
+      //}
+      current_request_idx_ = last_request_idx_;
       if (verbose_) {
         pthread_mutex_lock(&PRINT_MUTEX);
         cout << "Simulator " << id_ << ": " <<

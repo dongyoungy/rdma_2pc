@@ -17,6 +17,7 @@
 #include <map>
 #include <set>
 
+#include "lock_wait_queue.h"
 #include "lock_simulator.h"
 #include "context.h"
 #include "client.h"
@@ -134,16 +135,20 @@ class LockManager {
     int SendMessage(Context* context);
     int SendLockTableMemoryRegion(Context* context);
     int SendGrantLockAck(Context* context, int seq_no, int user_id, int lock_type, int obj_index);
-    int SendLockRequestResult(Context* context, int user_id,
+    int SendLockRequestResult(Context* context, int seq_no, int user_id,
         int lock_type, int obj_index, int result);
-    int SendUnlockRequestResult(Context* context, int user_id,
+    int SendUnlockRequestResult(Context* context, int seq_no, int user_id,
         int lock_type, int obj_index, int result);
-    int LockLocally(Context* context, Message* message);
-    int LockLocally(Context* context, int user_id, int lock_type,
-        int obj_index);
-    int UnlockLocally(Context* context, Message* message);
-    int UnlockLocally(Context* context, int user_id, int lock_type,
-        int obj_index);
+
+    int LockLocallyWithRetry(Context* context, Message* message);
+    int LockLocallyWithQueue(Context* context, Message* message);
+    int UnlockLocallyWithRetry(Context* context, Message* message);
+    int UnlockLocallyWithQueue(Context* context, Message* message);
+    //int LockLocally(Context* context, int user_id, int lock_type,
+        //int obj_index);
+    //int UnlockLocally(Context* context, int user_id, int lock_type,
+        //int obj_index);
+
     int TryLock(Context* context, Message* message);
     int DisableRemoteAtomicAccess();
     int EnableRemoteAtomicAccess();
@@ -169,12 +174,16 @@ class LockManager {
     map<int, LockSimulator*> user_map;
     map<int, pthread_mutex_t*> user_mutex_map;
 
+    // queue for lock waits
+    vector<LockWaitQueue*> wait_queues_;
+
     string work_dir_;
     uint64_t* lock_table_;
     int* lock_mode_table_;
     uint32_t rank_;
     int lock_mode_;
     int current_lock_mode_;
+    int proxy_fail_rule_;
     int num_manager_;
     int num_lock_object_;
     int num_local_lock_;

@@ -9,9 +9,11 @@ namespace rdma { namespace proto {
   static const int SHARED = 1;
 
   static const int LOCK_LOCAL = 0;
-  static const int LOCK_REMOTE = 1;
-  static const int LOCK_ADAPTIVE = 2;
+  static const int LOCK_PROXY_RETRY = 0; // LOCAL == PROXY
+  static const int LOCK_PROXY_QUEUE = 1; // LOCAL == PROXY
+  static const int LOCK_REMOTE_POLL = 2;
   static const int LOCK_REMOTE_NOTIFY = 3;
+  static const int LOCK_ADAPTIVE = 4;
 
   static const int TASK_LOCK = 0;
   static const int TASK_UNLOCK = 1;
@@ -29,7 +31,7 @@ namespace rdma { namespace proto {
   static const int FAIL_RETRY = 3;
   static const int POLL_RETRY = 3;
 
-  static const int MAX_MESSAGE_BUFFER_SIZE = 64;
+  static const int MAX_MESSAGE_BUFFER_SIZE = 16;
   static const int MAX_LOCK_REQUESTS = 64;
 
   static const int ERR_MORE_THAN_ONE_NODE = 1;

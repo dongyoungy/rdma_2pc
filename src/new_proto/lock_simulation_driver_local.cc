@@ -71,12 +71,14 @@ int main(int argc, char** argv) {
   }
 
   string lock_method_str;
-  if (lock_mode == LockManager::LOCK_REMOTE) {
-    lock_method_str = "CLIENT-BASED/DIRECT";
-  } else if (lock_mode == LockManager::LOCK_LOCAL) {
-    lock_method_str = "SERVER-BASED/PROXY";
+  if (lock_mode == LOCK_REMOTE_POLL) {
+    lock_method_str = "CLIENT-BASED/DIRECT/POLL";
+  } else if (lock_mode == LOCK_PROXY_RETRY) {
+    lock_method_str = "SERVER-BASED/PROXY/RETRY";
+  } else if (lock_mode == LOCK_PROXY_QUEUE) {
+    lock_method_str = "SERVER-BASED/PROXY/QUEUE";
   } else if (lock_mode == LOCK_REMOTE_NOTIFY) {
-    lock_method_str = "CLIENT-BASED/DIRECT + NOTIFY";
+    lock_method_str = "CLIENT-BASED/DIRECT/NOTIFY";
   }
 
   string shared_exclusive_rule_str, exclusive_shared_rule_str, exclusive_exclusive_rule_str;
@@ -162,7 +164,7 @@ int main(int argc, char** argv) {
         num_tx, // num lock requests
         num_request_per_tx,
         seed,
-        false, // verbose
+        true, // verbose
         true, // measure lock
         workload_type,
         lock_mode,

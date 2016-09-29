@@ -109,7 +109,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     total_send_message_time_ += time_taken;
     ++num_send_message_;
   } else if (work_completion->opcode == IBV_WC_COMP_SWAP) {
-    // We don't see this for Algorithm 1
+    // We don't see this for new system, which explicitly use FA instead
     // completion of compare-and-swap, i.e. remote exclusive locking
 
     LockRequest* request = (LockRequest *)work_completion->wr_id;
@@ -611,10 +611,12 @@ int LockClient::RequestLock(int seq_no, int user_id, int lock_type, int obj_inde
   context_->fail = false;
   context_->polling = false;
   context_->retry = 0;
-  if (lock_mode == LockManager::LOCK_LOCAL) {
+  if (lock_mode == LOCK_PROXY_RETRY ||
+      lock_mode == LOCK_PROXY_QUEUE) {
     // ask lock manager to place the lock
     return this->SendLockRequest(context_, seq_no, user_id, lock_type, obj_index);
-  } else if (lock_mode == LockManager::LOCK_REMOTE) {
+  } else if (lock_mode == LOCK_REMOTE_POLL ||
+      lock_mode == LOCK_REMOTE_NOTIFY) {
     // try locking remotely
     return this->LockRemotely(context_, seq_no, user_id, lock_type, obj_index);
   } else {
@@ -624,9 +626,11 @@ int LockClient::RequestLock(int seq_no, int user_id, int lock_type, int obj_inde
 
 int LockClient::RequestUnlock(int seq_no, int user_id, int lock_type, int obj_index,
     int lock_mode) {
-  if (lock_mode == LockManager::LOCK_LOCAL) {
+  if (lock_mode == LOCK_PROXY_RETRY ||
+      lock_mode == LOCK_PROXY_QUEUE) {
     return this->SendUnlockRequest(context_, seq_no, user_id, lock_type, obj_index);
-  } else if (lock_mode == LockManager::LOCK_REMOTE) {
+  } else if (lock_mode == LOCK_REMOTE_POLL ||
+      lock_mode == LOCK_REMOTE_NOTIFY) {
     return this->UnlockRemotely(context_, seq_no, user_id, lock_type, obj_index);
   } else {
     cerr << "RequestUnlock(): Unknown lock mode: " << lock_mode << endl;
