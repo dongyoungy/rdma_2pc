@@ -180,9 +180,9 @@ begin_lock:
       //state_ != LockSimulator::STATE_DONE) {
     //goto begin_lock;
   //}
-  if (lock_mode_ == LockManager::LOCK_LOCAL && count_ < count_limit_) {
-    goto begin_lock;
-  }
+  //if (lock_mode_ == LockManager::LOCK_LOCAL && count_ < count_limit_) {
+    //goto begin_lock;
+  //}
 }
 
 int LockSimulator::GetState() const {
@@ -285,6 +285,7 @@ void LockSimulator::CreateLockRequests() {
     }
   }
 
+  is_all_local_ = false;
 
   //for (int i = 0; i < request_size_; ++i) {
     //switch (workload_type_) {
@@ -392,11 +393,11 @@ void LockSimulator::SubmitLockRequest() {
         " for object " << requests_[current_request_idx_]->obj_index << endl;
     if (measure_lock_time_)
       clock_gettime(CLOCK_MONOTONIC, &start_lock_);
-    manager_->Lock(id_, requests_[current_request_idx_]->lm_id,
-        requests_[current_request_idx_]->lock_type,
-        requests_[current_request_idx_]->obj_index);
     last_request_idx_ = current_request_idx_;
     ++current_request_idx_;
+    manager_->Lock(id_, requests_[last_request_idx_]->lm_id,
+        requests_[last_request_idx_]->lock_type,
+        requests_[last_request_idx_]->obj_index);
     ++total_num_locks_;
   } else {
     SimulateTransactionDelay();
@@ -445,11 +446,11 @@ void LockSimulator::SubmitUnlockRequest() {
         requests_[current_request_idx_]->lm_id <<
         " of type " << requests_[current_request_idx_]->lock_type <<
         " for object " << requests_[current_request_idx_]->obj_index << endl;
-    manager_->Unlock(id_, requests_[current_request_idx_]->lm_id,
-        requests_[current_request_idx_]->lock_type,
-        requests_[current_request_idx_]->obj_index);
     last_request_idx_ = current_request_idx_;
     --current_request_idx_;
+    manager_->Unlock(id_, requests_[last_request_idx_]->lm_id,
+        requests_[last_request_idx_]->lock_type,
+        requests_[last_request_idx_]->obj_index);
   } else {
     if (!restart_)
       StartLockRequests();
@@ -549,11 +550,12 @@ int LockSimulator::NotifyResult(int task, int lock_type, int obj_index,
         requests_[last_request_idx_]->lock_type == lock_type &&
         requests_[last_request_idx_]->obj_index == obj_index) {
       ++retry_;
-      if (manager_->GetLockMode() == LockManager::LOCK_REMOTE) {
-        current_request_idx_ = last_request_idx_;
-      } else {
-        current_request_idx_ = last_request_idx_ - 1;
-      }
+      //if (manager_->GetLockMode() == LockManager::LOCK_REMOTE) {
+        //current_request_idx_ = last_request_idx_;
+      //} else {
+        //current_request_idx_ = last_request_idx_ - 1;
+      //}
+      current_request_idx_ = last_request_idx_;
       if (verbose_) {
         cout << "Simulator " << id_ << ": " <<
           "(Retry) Unsuccessful lock request at LM " <<

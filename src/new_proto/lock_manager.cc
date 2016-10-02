@@ -586,13 +586,13 @@ int LockManager::LockLocally(Context* context, Message* message) {
   int user_id   = message->user_id;
   int obj_index = message->obj_index;
   int lock_type = message->lock_type;
+  // lock locally on lock table
+  pthread_mutex_lock(lock_mutex_[obj_index]);
+
   uint64_t* lock_object = (lock_table_+obj_index);
   uint32_t exclusive, shared;
   exclusive = (uint32_t)((*lock_object)>>32);
   shared = (uint32_t)(*lock_object);
-
-  // lock locally on lock table
-  pthread_mutex_lock(lock_mutex_[obj_index]);
 
   // if shared lock is requested
   if (lock_type == LockManager::SHARED) {
@@ -655,14 +655,14 @@ int LockManager::LockLocally(Context* context, int user_id, int lock_type,
   clock_gettime(CLOCK_MONOTONIC, &start_local_lock_);
 
   int lock_result = LockManager::RESULT_FAILURE;
-  uint64_t* lock_object = (lock_table_+obj_index);
-  uint32_t exclusive, shared;
-  exclusive = (uint32_t)((*lock_object)>>32);
-  shared = (uint32_t)(*lock_object);
 
   // lock locally on lock table
   pthread_mutex_lock(lock_mutex_[obj_index]);
 
+  uint64_t* lock_object = (lock_table_+obj_index);
+  uint32_t exclusive, shared;
+  exclusive = (uint32_t)((*lock_object)>>32);
+  shared = (uint32_t)(*lock_object);
   // if shared lock is requested
   if (lock_type == LockManager::SHARED) {
     if (exclusive == 0) {
@@ -759,13 +759,14 @@ int LockManager::UnlockLocally(Context* context, Message* message) {
   int user_id   = message->user_id;
   int obj_index = message->obj_index;
   int lock_type = message->lock_type;
+
+  // lock locally on lock table
+  pthread_mutex_lock(lock_mutex_[obj_index]);
+
   uint64_t* lock_object = (lock_table_+obj_index);
   uint32_t exclusive, shared;
   exclusive = (uint32_t)((*lock_object)>>32);
   shared = (uint32_t)(*lock_object);
-
-  // lock locally on lock table
-  pthread_mutex_lock(lock_mutex_[obj_index]);
 
   // unlocking shared lock
   if (lock_type == LockManager::SHARED) {
@@ -932,10 +933,11 @@ int LockManager::SendMessage(Context* context) {
   send_work_request.send_flags = IBV_SEND_SIGNALED;
 
   Message* msg = context->send_message_buffer->GetMessage();
+  struct ibv_mr* mr = context->send_message_buffer->GetMR();
 
   sge.addr   = (uint64_t)msg;
   sge.length = sizeof(*msg);
-  sge.lkey   = msg->mr->lkey;
+  sge.lkey   = mr->lkey;
 
   int ret = 0;
   if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
@@ -964,10 +966,11 @@ int LockManager::ReceiveMessage(Context* context) {
   receive_work_request.num_sge = 1;
 
   Message* msg = context->receive_message_buffer->GetMessage();
+  struct ibv_mr* mr = context->receive_message_buffer->GetMR();
 
   sge.addr   = (uint64_t)msg;
   sge.length = sizeof(*msg);
-  sge.lkey   = msg->mr->lkey;
+  sge.lkey   = mr->lkey;
 
   int ret = 0;
   if ((ret = ibv_post_recv(context->queue_pair, &receive_work_request,

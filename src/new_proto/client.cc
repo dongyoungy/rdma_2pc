@@ -259,10 +259,11 @@ int Client::SendMessage(Context* context) {
   send_work_request.send_flags = IBV_SEND_SIGNALED;
 
   Message* msg = context->send_message_buffer->GetMessage();
+  struct ibv_mr* mr = context->send_message_buffer->GetMR();
 
   sge.addr   = (uint64_t)msg;
   sge.length = sizeof(*msg);
-  sge.lkey   = msg->mr->lkey;
+  sge.lkey   = mr->lkey;
 
   int ret = 0;
   if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
@@ -293,10 +294,11 @@ int Client::ReceiveMessage(Context* context) {
   receive_work_request.num_sge = 1;
 
   Message* msg = context->receive_message_buffer->GetMessage();
+  struct ibv_mr* mr = context->receive_message_buffer->GetMR();
 
   sge.addr   = (uint64_t)msg;
   sge.length = sizeof(*msg);
-  sge.lkey   = msg->mr->lkey;
+  sge.lkey   = mr->lkey;
 
   int ret = 0;
   if ((ret = ibv_post_recv(context->queue_pair, &receive_work_request,
