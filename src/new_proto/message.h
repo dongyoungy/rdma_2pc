@@ -22,6 +22,7 @@ class Message {
       GRANT_LOCK_ACK,
       REJECT_LOCK
     } type;
+    int task;
     int lock_type;
     int lock_mode;
     struct ibv_mr lock_table_mr;

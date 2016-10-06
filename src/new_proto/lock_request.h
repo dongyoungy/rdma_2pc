@@ -18,6 +18,7 @@ struct LockRequest {
   uint64_t* read_buffer2;
   struct ibv_mr* read_buffer2_mr;
 
+  uint64_t prev_value;
   uint32_t exclusive;
   uint32_t shared;
 };

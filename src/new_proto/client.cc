@@ -26,6 +26,8 @@ Client::Client(const string& work_dir, LockManager* local_manager,
   num_rdma_read_                    = 0;
   num_rdma_atomic_                  = 0;
 
+  local_manager_id_ = local_manager_->GetID();
+
   // initialize local lock mutex
   pthread_mutex_init(&lock_mutex_, NULL);
   pthread_mutex_init(&msg_mutex_, NULL);

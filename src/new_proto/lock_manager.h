@@ -17,6 +17,7 @@
 #include <map>
 #include <set>
 
+#include "local_work_queue.h"
 #include "lock_wait_queue.h"
 #include "lock_simulator.h"
 #include "context.h"
@@ -53,6 +54,12 @@ class LockManager {
         int result);
     int GetID() const;
     int GetLockMode() const;
+    inline int GetCurrentLockMode() const {
+      return current_lock_mode_;
+    }
+    inline LocalWorkQueue<Message>* GetLocalWorkQueue() {
+      return local_work_queue_;
+    }
     void Stop();
     double GetAverageLocalExclusiveLockTime() const;
     double GetAverageLocalSharedLockTime() const;
@@ -65,6 +72,7 @@ class LockManager {
     int SwitchToLocal();
     int SwitchToRemote();
     static void* PollCompletionQueue(void* context);
+    static void* PollLocalWorkQueue(void* arg);
     static void* RunLockClient(void* args);
 
     inline static int GetSharedExclusiveRule() {
@@ -173,12 +181,17 @@ class LockManager {
     vector<LockSimulator*> users;
     map<int, LockSimulator*> user_map;
     map<int, pthread_mutex_t*> user_mutex_map;
+    map<int, int> last_seq_no_map_;
 
     // queue for lock waits
     vector<LockWaitQueue*> wait_queues_;
+    LocalWorkQueue<Message>* local_work_queue_;
+    pthread_t local_work_poller_;
 
     string work_dir_;
     uint64_t* lock_table_;
+    uint64_t* last_lock_table_;
+    uint64_t* fail_count_;
     int* lock_mode_table_;
     uint32_t rank_;
     int lock_mode_;
@@ -203,6 +216,7 @@ class LockManager {
     pthread_mutex_t** lock_mutex_;
     pthread_mutex_t msg_mutex_;
     pthread_mutex_t poll_mutex_;
+    pthread_mutex_t seq_mutex_;
 
     static int shared_exclusive_rule_;
     static int exclusive_shared_rule_;

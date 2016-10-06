@@ -82,10 +82,12 @@ int main(int argc, char** argv) {
   bool transaction_delay = (transaction_delay_num == 0) ? false : true;
 
   string lock_mode_str;
-  if (lock_mode == LockManager::LOCK_LOCAL) {
-    lock_mode_str = "SERVER-BASED/PROXY";
-  } else if (lock_mode == LockManager::LOCK_REMOTE) {
-    lock_mode_str = "CLIENT-BASED/DIRECT";
+  if (lock_mode == LOCK_PROXY_RETRY) {
+    lock_mode_str = "SERVER-BASED/PROXY/RETRY";
+  } else if (lock_mode == LOCK_PROXY_QUEUE) {
+    lock_mode_str = "SERVER-BASED/PROXY/QUEUE";
+  } else if (lock_mode == LOCK_REMOTE_POLL) {
+    lock_mode_str = "CLIENT-BASED/DIRECT/POLL";
   } else if (lock_mode == LOCK_REMOTE_NOTIFY) {
     lock_mode_str = "CLIENT-BASED/DIRECT/NOTIFY";
   }
@@ -159,7 +161,8 @@ int main(int argc, char** argv) {
       exit(-1);
   }
 
-  if (lock_mode == LOCK_REMOTE_NOTIFY) {
+  if (lock_mode == LOCK_REMOTE_NOTIFY || lock_mode == LOCK_PROXY_RETRY ||
+      lock_mode == LOCK_PROXY_QUEUE) {
     shared_exclusive_rule_str = "N/A";
     exclusive_shared_rule_str = "N/A";
     exclusive_exclusive_rule_str = "N/A";
@@ -259,6 +262,10 @@ int main(int argc, char** argv) {
     LockSimulator* simulator = users[i];
     while (simulator->GetState() != LockSimulator::STATE_DONE) {
       ++time_taken2;
+      if (rank == 0) {
+        cout << time_taken2 << " : " << users[0]->GetCount() <<
+          "," << users[0]->GetCurrentBackoff() << endl;
+      }
        sleep(1);
     }
   }

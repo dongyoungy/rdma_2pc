@@ -69,6 +69,7 @@ class Client {
     LockManager* local_manager_;
     LockSimulator* local_user_;
     Context* context_;
+    int local_manager_id_;
     int remote_lm_id_;
     int test_duration_;
     int lock_request_idx_;

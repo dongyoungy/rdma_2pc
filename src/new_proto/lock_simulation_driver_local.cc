@@ -164,7 +164,7 @@ int main(int argc, char** argv) {
         num_tx, // num lock requests
         num_request_per_tx,
         seed,
-        true, // verbose
+        false, // verbose
         true, // measure lock
         workload_type,
         lock_mode,
@@ -214,7 +214,9 @@ int main(int argc, char** argv) {
     LockSimulator* simulator = users[i];
     while (simulator->GetState() != LockSimulator::STATE_DONE) {
        sleep(1);
-       //++count;
+       cout << count << " : " << users[0]->GetCount() <<
+         "," << users[0]->GetCurrentBackoff() << endl;
+       ++count;
        //if (count == 3) {
          //lock_manager->SwitchToLocal();
        //}

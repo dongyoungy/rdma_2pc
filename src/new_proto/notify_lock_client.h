@@ -20,6 +20,9 @@ class NotifyLockClient : public LockClient {
 
     int TryLock(int seq_no, int user_id, int lock_type, int obj_index);
   protected:
+    int ReadForUnlock(Context* context, int seq_no, int user_id, int lock_type, int obj_index);
+    int UnlockRemotely(Context* context, int seq_no, int user_id, int lock_type,
+        int obj_index, uint64_t prev_value, uint64_t new_value);
     int NotifyWaitingNodes(LockRequest* request, uint64_t value);
     int GetNumberOfLockWaiters(uint32_t value);
     int FindNodePosition(uint32_t value);

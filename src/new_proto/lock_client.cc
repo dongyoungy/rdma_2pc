@@ -723,11 +723,11 @@ int LockClient::ReadRemotely(Context* context, int user_id, int read_target, int
 
   pthread_mutex_lock(&lock_mutex_);
   LockRequest* request = lock_requests_[lock_request_idx_];
-  request->user_id = user_id;
+  request->user_id     = user_id;
   request->read_target = read_target;
-  request->obj_index = obj_index;
-  request->task = TASK_READ;
-  lock_request_idx_ = (lock_request_idx_ + 1) % 16;
+  request->obj_index   = obj_index;
+  request->task        = TASK_READ;
+  lock_request_idx_    = (lock_request_idx_ + 1) % 16;
 
   sge.addr   = (uint64_t)request->read_buffer;
   sge.length = sizeof(uint32_t);
@@ -916,6 +916,7 @@ int LockClient::SendLockRequest(Context* context, int seq_no,
   pthread_mutex_lock(&lock_mutex_);
   msg->type      = Message::LOCK_REQUEST;
   msg->seq_no    = seq_no;
+  msg->home_id   = local_manager_id_;
   msg->lock_type = lock_type;
   msg->obj_index = obj_index;
   msg->user_id   = user_id;
@@ -939,6 +940,7 @@ int LockClient::SendUnlockRequest(Context* context, int seq_no,
   pthread_mutex_lock(&lock_mutex_);
   msg->type      = Message::UNLOCK_REQUEST;
   msg->seq_no    = seq_no;
+  msg->home_id   = local_manager_id_;
   msg->lock_type = lock_type;
   msg->obj_index = obj_index;
   msg->user_id   = user_id;

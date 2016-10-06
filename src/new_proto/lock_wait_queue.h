@@ -4,6 +4,7 @@
 #include <queue>
 #include <list>
 #include <vector>
+#include <iostream>
 #include <pthread.h>
 #include "lock_wait_element.h"
 
@@ -15,9 +16,10 @@ class LockWaitQueue {
   public:
     LockWaitQueue(int max_size);
     ~LockWaitQueue();
-    int RemoveAllElements(int seq_no, int user_id, int type);
-    int Insert(int seq_no, int user_id, int type);
+    int RemoveAllElements(int seq_no, int home_id, int user_id, int type);
+    int Insert(int seq_no, int home_id, int user_id, int type);
     LockWaitElement* Pop();
+    LockWaitElement* Front();
     inline int GetSize() const {
       return size_;
     }
