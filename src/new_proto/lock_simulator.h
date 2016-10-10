@@ -31,7 +31,8 @@ class LockSimulator {
         bool measure_lock_time, int workload_type, int lock_mode,
         double local_percentage = 0.5, double shared_lock_ratio = 0.5,
         bool transaction_delay = false, double transaction_delay_min = 10,
-        double transaction_delay_max = 100, int max_backoff_time = 100000,
+        double transaction_delay_max = 100, int min_backoff_time = 5000,
+        int max_backoff_time = 100000,
         double time_out_threshold = 500000000,
         double* custom_cdf = NULL);
     ~LockSimulator();
@@ -40,6 +41,7 @@ class LockSimulator {
     int TimeOut();
     int GetID() const;
     int GetState() const;
+    int GetLockMode() const;
     int GetMaxBackoff() const;
     int GetCurrentBackoff() const;
     bool IsLockTimeMeasured() const;
@@ -67,6 +69,7 @@ class LockSimulator {
     static const int STATE_UNLOCKING = 3;
     static const int STATE_DONE      = 4;
     static const int STATE_TIMEOUT   = 5;
+    static const int STATE_QUEUED    = 6;
 
     static const int WORKLOAD_UNIFORM   = 0;
     static const int WORKLOAD_HOTSPOT   = 1;
@@ -119,6 +122,7 @@ class LockSimulator {
     int lock_mode_;
     int local_lock_count_;
     int local_unlock_count_;
+    int think_time_;
     unsigned int seed_;
     unsigned int seed2_;
     unsigned int backoff_seed_;

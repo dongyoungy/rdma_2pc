@@ -446,7 +446,8 @@ int LockClient::UndoLocking(Context* context, LockRequest* request, bool polling
       request->seq_no,
       request->user_id,
       request->lock_type,
-      request->obj_index
+      request->obj_index,
+      true
       );
   return 0;
 }
@@ -809,7 +810,7 @@ int LockClient::ReadRemotely(Context* context, int user_id, int obj_index) {
 
 
 int LockClient::UnlockRemotely(Context* context, int seq_no, int user_id, int lock_type,
-    int obj_index) {
+    int obj_index, bool is_undo) {
 
   if (lock_type == LockManager::SHARED) {
     clock_gettime(CLOCK_MONOTONIC, &start_remote_shared_lock_);
@@ -832,11 +833,12 @@ int LockClient::UnlockRemotely(Context* context, int seq_no, int user_id, int lo
 
   pthread_mutex_lock(&lock_mutex_);
   LockRequest* request = lock_requests_[lock_request_idx_];
-  request->seq_no = seq_no;
-  request->user_id = user_id;
+  request->seq_no    = seq_no;
+  request->user_id   = user_id;
   request->lock_type = lock_type;
   request->obj_index = obj_index;
-  request->task = TASK_UNLOCK;
+  request->is_undo   = is_undo;
+  request->task      = TASK_UNLOCK;
   lock_request_idx_ = (lock_request_idx_ + 1) % 16;
 
   sge.addr   = (uint64_t)request->original_value;

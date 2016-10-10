@@ -28,6 +28,7 @@ LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
   request_size_             = 1;
   last_seq_no_              = 0;
   is_backing_off_           = false;
+  think_time_               = 10;
 
   lock_times_ = new double[MAX_LOCK_REQUESTS];
 
@@ -43,7 +44,7 @@ LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
     bool measure_lock_time, int workload_type, int lock_mode,
     double local_percentage, double shared_lock_ratio, bool transaction_delay,
     double transaction_delay_min, double transaction_delay_max,
-    int max_backoff_time, double time_out_threshold, double* custom_cdf) {
+    int min_backoff_time, int max_backoff_time, double time_out_threshold, double* custom_cdf) {
   manager_                  = manager;
   id_                       = id;
   num_manager_              = num_manager;
@@ -74,7 +75,7 @@ LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
   last_count_               = 0;
   max_request_size_         = num_request_per_tx;
   max_backoff_time_         = max_backoff_time;
-  default_backoff_time_     = 5000;
+  default_backoff_time_     = min_backoff_time;
   current_backoff_time_     = default_backoff_time_;
   backoff_seed_             = seed_;
   time_out_                 = time_out_threshold;
@@ -82,6 +83,7 @@ LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
   last_seq_no_              = 0;
   seq_count_                = 0;
   is_backing_off_           = false;
+  think_time_               = 10;
 
   lock_times_ = new double[MAX_LOCK_REQUESTS];
 
@@ -210,11 +212,13 @@ void LockSimulator::StartLockRequests() {
   int current_state = STATE_WAIT;
   while (true) {
     pthread_mutex_lock(&state_mutex_);
-    while (state_ == STATE_WAIT) {
+    while (state_ == STATE_WAIT || state_ == STATE_QUEUED) {
       pthread_cond_wait(&state_cond_, &state_mutex_);
     }
     current_state = state_;
-    state_ = STATE_WAIT;
+    if (current_state != STATE_QUEUED) {
+      state_ = STATE_WAIT;
+    }
     pthread_mutex_unlock(&state_mutex_);
     switch (current_state) {
       case STATE_IDLE:
@@ -415,6 +419,8 @@ void LockSimulator::SubmitLockRequest() {
   clock_gettime(CLOCK_MONOTONIC, &last_lock_time_);
   pthread_mutex_unlock(&time_mutex_);
 
+  // enforce think time
+  usleep(think_time_);
   // process local locks first
   //while (current_request_idx_ < request_size_ &&
       //requests_[current_request_idx_]->lm_id == local_manager_id_ &&
@@ -645,12 +651,27 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
       requests_[last_request_idx_]->task != task ||
       (last_seq_no_ > seq_no && task == TASK_LOCK)) {
     // sequence number or task is different --> ignore
-    //pthread_mutex_lock(&PRINT_MUTEX);
-    //cout << "Simulator " << id_ << ", seq no: " <<
-      //requests_[last_request_idx_]->seq_no << " != " << seq_no;
-    //pthread_mutex_unlock(&PRINT_MUTEX);
+    pthread_mutex_lock(&PRINT_MUTEX);
+    cout << "Simulator " << id_ << ", seq no: " <<
+      requests_[last_request_idx_]->seq_no << " != " << seq_no;
+    pthread_mutex_unlock(&PRINT_MUTEX);
     pthread_mutex_unlock(&mutex_);
     return -1;
+  }
+
+  if (task == TASK_LOCK && result == RESULT_QUEUED) {
+    if (verbose_) {
+      pthread_mutex_lock(&PRINT_MUTEX);
+      cout << "Simulator " << id_ << ": " <<
+        "Queued lock request at LM " <<
+        requests_[last_request_idx_]->lm_id <<
+        " of type " << requests_[last_request_idx_]->lock_type <<
+        " for object " << requests_[last_request_idx_]->obj_index << endl;
+      pthread_mutex_unlock(&PRINT_MUTEX);
+    }
+    ChangeState(STATE_QUEUED);
+    pthread_mutex_unlock(&mutex_);
+    return 0;
   }
 
   if (task == LockManager::TASK_LOCK) {
@@ -785,27 +806,21 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
 int LockSimulator::TimeOut() {
 
   pthread_mutex_lock(&mutex_);
-  current_request_idx_ = last_request_idx_;
-  is_tx_failed_ = true;
-  measure_time_out_ = false;
-
+  pthread_mutex_lock(&lock_mutex_);
   if (requests_[last_request_idx_]->task == TASK_LOCK) {
+    if (lock_mode_ == LOCK_PROXY_QUEUE ||
+        (lock_mode_ == LOCK_REMOTE_NOTIFY && state_ == STATE_QUEUED))
+      pthread_mutex_lock(&PRINT_MUTEX);
+      cout << "Time Out" << endl;
+      pthread_mutex_unlock(&PRINT_MUTEX);
 
-    //pthread_mutex_lock(&PRINT_MUTEX);
-    //if (id_ == 1) {
-      //cout << "COUNT = " << count_ << "," << seq_count_ << "," <<
-        //current_backoff_time_ << endl;
-    //}
-    //pthread_mutex_unlock(&PRINT_MUTEX);
-    //if (seq_count_ < 0) {
-      //pthread_mutex_lock(&PRINT_MUTEX);
-      //cout << "Count < 0" << endl;
-      //sleep(100000);
-      //pthread_mutex_unlock(&PRINT_MUTEX);
-    //}
+      current_request_idx_ = last_request_idx_;
+      is_tx_failed_ = true;
+      measure_time_out_ = false;
 
-    ChangeState(STATE_UNLOCKING);
+      ChangeState(STATE_UNLOCKING);
   }
+  pthread_mutex_unlock(&lock_mutex_);
   pthread_mutex_unlock(&mutex_);
 }
 
@@ -825,6 +840,9 @@ double LockSimulator::GetTimeSinceLastLock() {
 
 int LockSimulator::GetID() const {
   return id_;
+}
+int LockSimulator::GetLockMode() const {
+  return lock_mode_;
 }
 
 bool LockSimulator::IsLockTimeMeasured() const {
@@ -895,6 +913,7 @@ void* LockSimulator::CheckTimeOut(void* arg) {
   uint64_t last_count = simulator->GetSeqCount();
   uint64_t count;
   int backoff = simulator->GetMaxBackoff();
+  int lock_mode = simulator->GetLockMode();
   unsigned int backoff_seed = pthread_self();
 
   while (simulator->GetState() != STATE_DONE) {
@@ -904,10 +923,16 @@ void* LockSimulator::CheckTimeOut(void* arg) {
         //simulator->GetCurrentBackoff() << endl;
       //pthread_mutex_unlock(&PRINT_MUTEX);
     //}
-    usleep(20000);
+    usleep(100000);
     //cout << simulator->GetCount() << endl;
-    if (simulator->GetState() == STATE_IDLE) {
-      continue;
+    if (lock_mode == LOCK_REMOTE_NOTIFY) {
+      if (simulator->GetState() != STATE_QUEUED) {
+        continue;
+      }
+    } else if (lock_mode == LOCK_PROXY_QUEUE) {
+      if (simulator->GetState() != STATE_IDLE) {
+        continue;
+      }
     }
     if (simulator->IsBackingOff()) {
       retry = 0;

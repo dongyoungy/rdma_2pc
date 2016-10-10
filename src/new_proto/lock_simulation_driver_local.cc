@@ -25,11 +25,11 @@ struct CPUUsage {
 
 int main(int argc, char** argv) {
 
-  if (argc != 14) {
+  if (argc != 16) {
     cout << "USAGE: " << argv[0] << " <work_dir> <num_lock_object>" <<
       " <num_tx> <num_request_per_tx> <num_users> <lock_mode> <shared_exclusive_rule> " <<
       "<exclusive_shared_rule> <exclusive_exclusive_rule> <workload_type> <local_workload_ratio> "<<
-      "<shared_lock_ratio> <rand_seed>" << endl;
+      "<shared_lock_ratio> <min_backoff_time> <max_backoff_time> <rand_seed>" << endl;
     exit(1);
   }
 
@@ -53,7 +53,9 @@ int main(int argc, char** argv) {
   int workload_type            = atoi(argv[10]);
   double local_workload_ratio  = atof(argv[11]);
   double shared_lock_ratio     = atof(argv[12]);
-  long seed                    = atol(argv[13]);
+  int min_backoff_time         = atoi(argv[13]);
+  int max_backoff_time         = atoi(argv[14]);
+  long seed                    = atol(argv[15]);
 
   string workload_type_str, shared_lock_ratio_str;
   if (workload_type == LockSimulator::WORKLOAD_UNIFORM) {
@@ -164,12 +166,15 @@ int main(int argc, char** argv) {
         num_tx, // num lock requests
         num_request_per_tx,
         seed,
-        false, // verbose
+        true, // verbose
         true, // measure lock
         workload_type,
         lock_mode,
         local_workload_ratio,
-        shared_lock_ratio
+        shared_lock_ratio,
+        0,0,0, // tx delays
+        min_backoff_time,
+        max_backoff_time
         );
     lock_manager->RegisterUser((int)pow(2.0, i), simulator);
     users.push_back(simulator);

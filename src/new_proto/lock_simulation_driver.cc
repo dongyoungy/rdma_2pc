@@ -26,14 +26,14 @@ int main(int argc, char** argv) {
 
   MPI_Init(&argc, &argv);
 
-  if (argc != 20) {
+  if (argc != 21) {
     cout << argv[0] << " <work_dir> <num_lock_object> <num_tx>" <<
       " <num_request_per_tx> <num_users> <lock_mode>" <<
       " <shared_exclusive_rule> <exclusive_shared_rule> <exclusive_exclusive_rule>" <<
       " <fail_retry> <poll_retry>"
       " <workload_type> <local_workload_ratio> " <<
       "<shared_lock_ratio> <transaction_delay> <transaction_delay_min> " <<
-      "<transaction_delay_max> <max_backoff_time> <rand_seed>" << endl;
+      "<transaction_delay_max> <miin_backoff_time> <max_backoff_time> <rand_seed>" << endl;
     exit(1);
   }
 
@@ -67,6 +67,7 @@ int main(int argc, char** argv) {
   int transaction_delay_num    = atoi(argv[k++]);
   int transaction_delay_min    = atoi(argv[k++]);
   int transaction_delay_max    = atoi(argv[k++]);
+  int min_backoff_time         = atoi(argv[k++]);
   int max_backoff_time         = atoi(argv[k++]);
   long seed                    = atol(argv[k++]);
 
@@ -218,6 +219,7 @@ int main(int argc, char** argv) {
         transaction_delay,
         transaction_delay_min,
         transaction_delay_max,
+        min_backoff_time,
         max_backoff_time
         );
     lock_manager->RegisterUser((int)pow(2.0, rank), simulator);
@@ -482,6 +484,7 @@ int main(int argc, char** argv) {
       num_managers <<
       "," << num_lock_object << "," << num_tx << "," << num_request_per_tx << "," <<
       local_workload_ratio_str << "," << shared_lock_ratio_str << "," <<
+      min_backoff_time << "," <<
       max_backoff_time << "," <<
       transaction_delay_str << ",";
     if (transaction_delay) {
