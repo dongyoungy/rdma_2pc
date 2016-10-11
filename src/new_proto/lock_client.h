@@ -27,7 +27,7 @@ class LockClient : public Client {
         int obj_index);
     int UnlockRemotely(Context* context, int seq_no, int user_id, int lock_type,
         int obj_index, bool is_undo = false);
-    int ReadRemotely(Context* context, int user_id, int read_target,
+    int ReadRemotely(Context* context, int seq_no, int user_id, int read_target, int lock_type,
         int obj_index);
     int ReadRemotely(Context* context, int user_id, int obj_index);
     int SendLockTableRequest(Context* context);

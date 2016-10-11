@@ -1,6 +1,9 @@
 #ifndef RDMA_PROTO_LOCKREQUEST_H
 #define RDMA_PROTO_LOCKREQUEST_H
 
+#include <cstddef>
+#include <stdint.h>
+
 namespace rdma { namespace proto{
 
 struct LockRequest {

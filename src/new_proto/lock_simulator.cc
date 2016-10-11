@@ -2,6 +2,17 @@
 
 namespace rdma { namespace proto {
 
+LockSimulator::LockSimulator() {
+
+  lock_times_ = new double[MAX_LOCK_REQUESTS];
+
+  pthread_mutex_init(&mutex_, NULL);
+  pthread_mutex_init(&time_mutex_, NULL);
+  pthread_mutex_init(&lock_mutex_, NULL);
+  pthread_mutex_init(&state_mutex_, NULL);
+  pthread_cond_init(&state_cond_, NULL);
+}
+
 LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
     int num_lock_object, uint64_t num_lock_request) {
   manager_                  = manager;
@@ -810,9 +821,6 @@ int LockSimulator::TimeOut() {
   if (requests_[last_request_idx_]->task == TASK_LOCK) {
     if (lock_mode_ == LOCK_PROXY_QUEUE ||
         (lock_mode_ == LOCK_REMOTE_NOTIFY && state_ == STATE_QUEUED))
-      pthread_mutex_lock(&PRINT_MUTEX);
-      cout << "Time Out" << endl;
-      pthread_mutex_unlock(&PRINT_MUTEX);
 
       current_request_idx_ = last_request_idx_;
       is_tx_failed_ = true;
@@ -923,14 +931,14 @@ void* LockSimulator::CheckTimeOut(void* arg) {
         //simulator->GetCurrentBackoff() << endl;
       //pthread_mutex_unlock(&PRINT_MUTEX);
     //}
-    usleep(100000);
+    usleep(10000);
     //cout << simulator->GetCount() << endl;
     if (lock_mode == LOCK_REMOTE_NOTIFY) {
       if (simulator->GetState() != STATE_QUEUED) {
         continue;
       }
     } else if (lock_mode == LOCK_PROXY_QUEUE) {
-      if (simulator->GetState() != STATE_IDLE) {
+      if (simulator->GetState() != STATE_WAIT) {
         continue;
       }
     }

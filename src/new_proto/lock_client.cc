@@ -351,8 +351,10 @@ int LockClient::HandleSharedToExclusive(LockRequest* request) {
     case RULE_POLL:
       request->read_target = SHARED;
       this->ReadRemotely(context_,
+          request->seq_no,
           request->user_id,
           request->read_target,
+          request->lock_type,
           request->obj_index);
       break;
     default:
@@ -373,8 +375,10 @@ int LockClient::HandleExclusiveToShared(LockRequest* request) {
     case RULE_POLL:
       request->read_target = EXCLUSIVE;
       this->ReadRemotely(context_,
+          request->seq_no,
           request->user_id,
           request->read_target,
+          request->lock_type,
           request->obj_index);
       break;
     case RULE_QUEUE:
@@ -386,8 +390,10 @@ int LockClient::HandleExclusiveToShared(LockRequest* request) {
         context_->waiters = request->exclusive;
         request->read_target = EXCLUSIVE;
         this->ReadRemotely(context_,
+          request->seq_no,
             request->user_id,
             request->read_target,
+            request->lock_type,
             request->obj_index);
       } else {
         // lock acquisition failed, undoing FA
@@ -411,8 +417,10 @@ int LockClient::HandleExclusiveToExclusive(LockRequest* request) {
       this->UndoLocking(context_, request, true);
       request->read_target = EXCLUSIVE;
       this->ReadRemotely(context_,
+          request->seq_no,
           request->user_id,
           request->read_target,
+          request->lock_type,
           request->obj_index);
       break;
     case RULE_QUEUE:
@@ -424,8 +432,10 @@ int LockClient::HandleExclusiveToExclusive(LockRequest* request) {
         context_->waiters = request->exclusive;
         request->read_target = EXCLUSIVE;
         this->ReadRemotely(context_,
+            request->seq_no,
             request->user_id,
             request->read_target,
+            request->lock_type,
             request->obj_index);
       } else {
         // lock acquisition failed, undoing FA
@@ -463,8 +473,10 @@ int LockClient::PollSharedToExclusive(LockRequest* request) {
   switch (rule) {
     case RULE_POLL:
       this->ReadRemotely(context_,
+          request->seq_no,
           request->user_id,
           request->read_target,
+          request->lock_type,
           request->obj_index);
       break;
     default:
@@ -493,8 +505,10 @@ int LockClient::PollExclusiveToShared(LockRequest* request) {
             LockManager::RESULT_SUCCESS);
       } else {
         this->ReadRemotely(context_,
+            request->seq_no,
             request->user_id,
             request->read_target,
+            request->lock_type,
             request->obj_index);
       }
       break;
@@ -508,8 +522,10 @@ int LockClient::PollExclusiveToShared(LockRequest* request) {
             RESULT_SUCCESS);
       } else {
         this->ReadRemotely(context_,
+            request->seq_no,
             request->user_id,
             request->read_target,
+            request->lock_type,
             request->obj_index);
       }
       break;
@@ -542,8 +558,10 @@ int LockClient::PollExclusiveToExclusive(LockRequest* request) {
             request->obj_index);
       } else {
         this->ReadRemotely(context_,
+            request->seq_no,
             request->user_id,
             request->read_target,
+            request->lock_type,
             request->obj_index);
       }
       break;
@@ -557,8 +575,10 @@ int LockClient::PollExclusiveToExclusive(LockRequest* request) {
             RESULT_SUCCESS);
       } else {
         this->ReadRemotely(context_,
+            request->seq_no,
             request->user_id,
             request->read_target,
+            request->lock_type,
             request->obj_index);
       }
       break;
@@ -710,7 +730,8 @@ int LockClient::LockRemotely(Context* context, int seq_no, int user_id, int lock
   return 0;
 }
 
-int LockClient::ReadRemotely(Context* context, int user_id, int read_target, int obj_index) {
+int LockClient::ReadRemotely(Context* context, int seq_no, int user_id, int read_target,
+    int lock_type, int obj_index) {
   struct ibv_exp_send_wr send_work_request;
   struct ibv_exp_send_wr* bad_work_request;
   struct ibv_sge sge;
@@ -724,9 +745,11 @@ int LockClient::ReadRemotely(Context* context, int user_id, int read_target, int
 
   pthread_mutex_lock(&lock_mutex_);
   LockRequest* request = lock_requests_[lock_request_idx_];
+  request->seq_no      = seq_no;
   request->user_id     = user_id;
   request->read_target = read_target;
   request->obj_index   = obj_index;
+  request->lock_type   = lock_type;
   request->task        = TASK_READ;
   lock_request_idx_    = (lock_request_idx_ + 1) % 16;
 
