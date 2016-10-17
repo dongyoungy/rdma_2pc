@@ -6,7 +6,7 @@ TPCCLockSimulator::TPCCLockSimulator(LockManager* manager, int id, int num_manag
     int num_tx, long seed, bool verbose, bool measure_lock_time, int lock_mode,
         bool transaction_delay, double transaction_delay_min,
         double transaction_delay_max, int min_backoff_time,
-        int max_backoff_time) {
+        int max_backoff_time, int sleep_time, int think_time) {
   manager_                  = manager;
   id_                       = id;
   num_manager_              = num_manager;
@@ -28,13 +28,15 @@ TPCCLockSimulator::TPCCLockSimulator(LockManager* manager, int id, int num_manag
   total_num_unlocks_        = 0;
   total_num_lock_success_   = 0;
   total_num_lock_failure_   = 0;
+  total_num_timeouts_       = 0;
   total_time_taken_to_lock_ = 0;
   count_                    = 0;
   last_count_               = 0;
   last_seq_no_              = 0;
   seq_count_                = 0;
   is_backing_off_           = false;
-  think_time_               = 10;
+  sleep_time_               = sleep_time;
+  think_time_               = think_time;
 }
 
 void TPCCLockSimulator::Run() {
@@ -113,6 +115,8 @@ void TPCCLockSimulator::CreateLockRequests() {
 
   if (!is_tx_failed_) {
     request_size_ = tpcc_lock_gen_->Generate(requests_);
+    if (measure_lock_time_)
+      clock_gettime(CLOCK_MONOTONIC, &start_lock_);
   } else {
     // if tx failed & backoff time exists, randomly backoff
     if (max_backoff_time_ > 0) {
@@ -130,6 +134,8 @@ void TPCCLockSimulator::CreateLockRequests() {
       usleep(amount);
       is_backing_off_ = false;
     }
+
+    ++total_num_timeouts_;
   }
 
   last_request_idx_ = 0;
@@ -161,8 +167,8 @@ void TPCCLockSimulator::SubmitLockRequest() {
         " for object " << requests_[current_request_idx_]->obj_index << endl;
       pthread_mutex_unlock(&PRINT_MUTEX);
     }
-    if (measure_lock_time_)
-      clock_gettime(CLOCK_MONOTONIC, &start_lock_);
+    //if (measure_lock_time_)
+      //clock_gettime(CLOCK_MONOTONIC, &start_lock_);
     requests_[current_request_idx_]->task = TASK_LOCK;
     requests_[current_request_idx_]->seq_no = seq_count_;
     last_seq_no_ = seq_count_;

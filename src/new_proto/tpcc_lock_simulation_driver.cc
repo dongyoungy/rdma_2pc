@@ -26,11 +26,11 @@ int main(int argc, char** argv) {
 
   MPI_Init(&argc, &argv);
 
-  if (argc != 16) {
+  if (argc != 18) {
     cout << argv[0] << " <work_dir> <num_tx>" <<
       " <num_users> <lock_mode>" <<
       " <shared_exclusive_rule> <exclusive_shared_rule> <exclusive_exclusive_rule>" <<
-      " <fail_retry> <poll_retry>"
+      " <fail_retry> <poll_retry> <sleep_time_for_timeout> <think_time>"
       " <transaction_delay> <transaction_delay_min> " <<
       "<transaction_delay_max> <miin_backoff_time> <max_backoff_time> <rand_seed>" << endl;
     exit(1);
@@ -58,6 +58,8 @@ int main(int argc, char** argv) {
   int exclusive_exclusive_rule = atoi(argv[k++]);
   int fail_retry               = atoi(argv[k++]);
   int poll_retry               = atoi(argv[k++]);
+  int sleep_time               = atoi(argv[k++]);
+  int think_time               = atoi(argv[k++]);
   int transaction_delay_num    = atoi(argv[k++]);
   int transaction_delay_min    = atoi(argv[k++]);
   int transaction_delay_max    = atoi(argv[k++]);
@@ -85,6 +87,8 @@ int main(int argc, char** argv) {
     lock_mode_str = "CLIENT-BASED/DIRECT/RETRY";
   } else if (lock_mode == LOCK_REMOTE_NOTIFY) {
     lock_mode_str = "CLIENT-BASED/DIRECT/NOTIFY";
+  } else if (lock_mode == LOCK_REMOTE_QUEUE) {
+    lock_mode_str = "CLIENT-BASED/DIRECT/QUEUE";
   }
 
   string workload_type_str, shared_lock_ratio_str;
@@ -138,7 +142,7 @@ int main(int argc, char** argv) {
   }
 
   if (lock_mode == LOCK_REMOTE_NOTIFY || lock_mode == LOCK_PROXY_RETRY ||
-      lock_mode == LOCK_PROXY_QUEUE) {
+      lock_mode == LOCK_PROXY_QUEUE || LOCK_REMOTE_QUEUE) {
     shared_exclusive_rule_str = "N/A";
     exclusive_shared_rule_str = "N/A";
     exclusive_exclusive_rule_str = "N/A";
@@ -187,7 +191,9 @@ int main(int argc, char** argv) {
         transaction_delay_min,
         transaction_delay_max,
         min_backoff_time,
-        max_backoff_time
+        max_backoff_time,
+        sleep_time,
+        think_time
         );
     lock_manager->RegisterUser((int)pow(2.0, rank), simulator);
     users.push_back(simulator);
@@ -251,6 +257,8 @@ int main(int argc, char** argv) {
   long global_lock_success                 = 0;
   long local_lock_failure                  = 0;
   long global_lock_failure                 = 0;
+  long local_timeout                       = 0;
+  long global_timeout                      = 0;
   double local_lock_time                   = 0;
   double global_lock_time                  = 0;
   double local_cpu_usage                   = 0;
@@ -270,6 +278,8 @@ int main(int argc, char** argv) {
   double global_receive_message_time       = 0;
   double local_99_lock_time                = 0;
   double global_99_lock_time               = 0;
+  double local_95_lock_time                = 0;
+  double global_95_lock_time               = 0;
 
   double local_rdma_read_count = 0;
   double global_rdma_read_count = 0;
@@ -298,9 +308,11 @@ int main(int argc, char** argv) {
         local_unlock_sum += simulator->GetTotalNumUnlocks();
         local_lock_success += simulator->GetTotalNumLockSuccess();
         local_lock_failure += simulator->GetTotalNumLockFailure();
+        local_timeout += simulator->GetTotalNumTimeout();
         if (simulator->IsLockTimeMeasured()) {
           local_lock_time += simulator->GetAverageTimeTakenToLock();
           local_99_lock_time += simulator->Get99PercentileLockTime();
+          local_95_lock_time += simulator->Get95PercentileLockTime();
         }
       }
       //MPI_Barrier(MPI_COMM_WORLD);
@@ -338,9 +350,13 @@ int main(int argc, char** argv) {
       MPI_COMM_WORLD);
   MPI_Reduce(&local_lock_time, &global_lock_time, 1, MPI_DOUBLE, MPI_SUM, 0,
       MPI_COMM_WORLD);
+  MPI_Reduce(&local_timeout, &global_timeout, 1, MPI_LONG, MPI_SUM, 0,
+      MPI_COMM_WORLD);
   MPI_Allreduce(&local_cpu_usage, &global_cpu_usage, 1, MPI_DOUBLE, MPI_SUM,
       MPI_COMM_WORLD);
-  MPI_Reduce(&local_99_lock_time, &global_99_lock_time, 1, MPI_DOUBLE, MPI_SUM, 0,
+  MPI_Reduce(&local_99_lock_time, &global_99_lock_time, 1, MPI_DOUBLE, MPI_MAX, 0,
+      MPI_COMM_WORLD);
+  MPI_Reduce(&local_95_lock_time, &global_95_lock_time, 1, MPI_DOUBLE, MPI_MAX, 0,
       MPI_COMM_WORLD);
   MPI_Reduce(&local_remote_shared_lock_time,
       &global_remote_shared_lock_time,
@@ -391,6 +407,14 @@ int main(int argc, char** argv) {
       MPI_COMM_WORLD);
   global_time_taken_std = sqrt(global_time_taken_diff / (num_managers * users.size()));
 
+  double global_99_lock_time_diff;
+  double global_99_lock_time_avg = global_99_lock_time / (double)num_managers;
+  double local_99_lock_time_diff = (global_99_lock_time_avg - local_99_lock_time) *
+    (global_99_lock_time_avg - local_99_lock_time);
+  MPI_Reduce(&local_99_lock_time_diff, &global_99_lock_time_diff, 1, MPI_DOUBLE, MPI_SUM,
+      0, MPI_COMM_WORLD);
+  double global_99_lock_time_std = sqrt(global_99_lock_time_diff / num_managers);
+
   if (rank==0) {
     cout << endl;
     cout << "Global Total Lock # = " << global_sum << "(# nodes: " <<
@@ -403,6 +427,9 @@ int main(int argc, char** argv) {
       "(# nodes: " << num_managers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Total Lock Failure # = " << global_lock_failure <<
+      "(# nodes: " << num_managers <<
+      ", mode: " << lock_mode_str << ")" << endl;
+    cout << "Global Total Timeout # = " << global_timeout <<
       "(# nodes: " << num_managers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average Lock Time = " << global_lock_time / num_managers <<
@@ -449,7 +476,7 @@ int main(int argc, char** argv) {
     cerr << lock_mode_str << "," << workload_type_str <<
       "," << shared_exclusive_rule_str << "," << exclusive_shared_rule_str << "," <<
       exclusive_exclusive_rule_str << "," << fail_retry << "," << poll_retry << "," <<
-      num_managers <<
+      sleep_time << "," << think_time << "," << num_managers <<
       "," << "N/A" << "," << num_tx << "," << "N/A" << "," <<
       local_workload_ratio_str << "," << shared_lock_ratio_str << "," <<
       min_backoff_time << "," <<
@@ -461,9 +488,10 @@ int main(int argc, char** argv) {
       cerr << "N/A,N/A,";
     }
     cerr << global_lock_time / num_managers <<
-      "," << global_99_lock_time / num_managers << "," <<
+      "," << global_99_lock_time << "," << global_95_lock_time << "," <<
       (long)((double)global_sum / (double)time_taken) << "," <<
       global_sum << "," << global_lock_success << "," << global_lock_failure << "," <<
+      global_timeout << "," <<
       global_cpu_usage_avg << "," << global_cpu_usage_std <<
       "," << global_time_taken_avg / (double)(1000*1000*1000) << "," <<
       global_time_taken_std / (double)(1000*1000*1000) << endl;

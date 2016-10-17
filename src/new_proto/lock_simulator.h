@@ -34,7 +34,7 @@ class LockSimulator {
         bool transaction_delay = false, double transaction_delay_min = 10,
         double transaction_delay_max = 100, int min_backoff_time = 5000,
         int max_backoff_time = 100000,
-        double time_out_threshold = 500000000,
+        int sleep_time = 10000,
         double* custom_cdf = NULL);
     ~LockSimulator();
     virtual void Run();
@@ -45,6 +45,8 @@ class LockSimulator {
     int GetLockMode() const;
     int GetMaxBackoff() const;
     int GetCurrentBackoff() const;
+    int GetLastTask();
+    int GetSleepTime() const;
     bool IsLockTimeMeasured() const;
     bool GetMeasureTimeOut() const;
     bool IsBackingOff() const;
@@ -53,11 +55,13 @@ class LockSimulator {
     uint64_t GetTotalNumUnlocks() const;
     uint64_t GetTotalNumLockSuccess() const;
     uint64_t GetTotalNumLockFailure() const;
+    uint64_t GetTotalNumTimeout() const;
     double GetAverageTimeTakenToLock() const;
     double GetTimeTaken() const;
     double Get99PercentileLockTime();
+    double Get95PercentileLockTime();
+    double Get99PercentileSingleLockTime();
     double GetTimeSinceLastLock();
-    double GetTimeOutThreshold();
     uint64_t GetCount() const;
     uint64_t GetSeqCount() const;
     void ChangeState(int state);
@@ -96,10 +100,12 @@ class LockSimulator {
     bool transaction_delay_;
     bool is_tx_failed_;
     volatile bool is_backing_off_;
-    double* lock_times_;
+    double* lock_times_; // time taken to get all locks requred by a tx
+    double* single_lock_times_; // average time taken to get a single lock in a tx
     double transaction_delay_min_;
     double transaction_delay_max_;
     double time_taken_;
+    int sleep_time_;
     int num_manager_;
     int id_;
     int lock_mode_;
@@ -112,6 +118,7 @@ class LockSimulator {
     int retry_;
     int state_;
     int last_seq_no_;
+    int last_task_;
     int think_time_;
     unsigned int seed_;
     unsigned int seed2_;
@@ -125,6 +132,7 @@ class LockSimulator {
     uint64_t total_num_unlocks_;
     uint64_t total_num_lock_success_;
     uint64_t total_num_lock_failure_;
+    uint64_t total_num_timeouts_;
     vector<LockRequest*> requests_;
     pthread_mutex_t mutex_;
     pthread_mutex_t time_mutex_;
@@ -159,7 +167,6 @@ class LockSimulator {
     int local_unlock_count_;
     int workload_type_;
     uint64_t count_limit_;
-    double time_out_;
 };
 
 }}

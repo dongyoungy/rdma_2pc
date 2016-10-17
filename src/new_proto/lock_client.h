@@ -15,7 +15,8 @@ class LockClient : public Client {
         int remote_lm_id);
     ~LockClient();
     virtual int RequestLock(int seq_no, int user_id, int lock_type, int obj_index, int lock_mode);
-    virtual int RequestUnlock(int seq_no, int user_id, int lock_type, int obj_index, int lock_mode);
+    virtual int RequestUnlock(int seq_no, int user_id, int lock_type, int obj_index,
+        int lock_mode);
     double GetAverageRemoteExclusiveLockTime() const;
     double GetAverageRemoteSharedLockTime() const;
 
@@ -29,7 +30,7 @@ class LockClient : public Client {
         int obj_index, bool is_undo = false);
     int ReadRemotely(Context* context, int seq_no, int user_id, int read_target, int lock_type,
         int obj_index);
-    int ReadRemotely(Context* context, int user_id, int obj_index);
+    int ReadRemotely(Context* context, int seq_no, int user_id, int lock_type, int obj_index);
     int SendLockTableRequest(Context* context);
     int SendLockModeRequest(Context* context);
     int SendLockRequest(Context* context, int seq_no, int user_id,

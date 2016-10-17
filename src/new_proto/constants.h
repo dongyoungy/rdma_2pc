@@ -7,13 +7,15 @@ namespace rdma { namespace proto {
 
   static const int EXCLUSIVE = 0;
   static const int SHARED = 1;
+  static const int ALL = 2;
 
   static const int LOCK_LOCAL = 0;
   static const int LOCK_PROXY_RETRY = 0; // LOCAL == PROXY
   static const int LOCK_PROXY_QUEUE = 1; // LOCAL == PROXY
   static const int LOCK_REMOTE_POLL = 2;
   static const int LOCK_REMOTE_NOTIFY = 3;
-  static const int LOCK_ADAPTIVE = 4;
+  static const int LOCK_REMOTE_QUEUE = 4;
+  static const int LOCK_ADAPTIVE = 5;
 
   static const int TASK_LOCK = 0;
   static const int TASK_UNLOCK = 1;

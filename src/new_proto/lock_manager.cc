@@ -1,5 +1,6 @@
 #include "lock_manager.h"
 #include "notify_lock_client.h"
+#include "direct_queue_lock_client.h"
 #include "lock_client.h"
 #include "communication_client.h"
 
@@ -154,6 +155,8 @@ int LockManager::InitializeLockClients() {
       LockClient* client;
       if (lock_mode_ == LOCK_REMOTE_NOTIFY)
         client = new NotifyLockClient(work_dir_, this, user, i);
+      else if (lock_mode_ == LOCK_REMOTE_QUEUE)
+        client = new DirectQueueLockClient(work_dir_, this, user, i);
       else
         client = new LockClient(work_dir_, this, user, i);
 

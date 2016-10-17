@@ -43,6 +43,7 @@ struct Context {
   uint32_t shared;
   uint32_t exclusive;
   uint32_t waiters;
+  uint64_t all_waiters;
 
   uint64_t* lock_table;
   struct ibv_mr* lock_table_mr;

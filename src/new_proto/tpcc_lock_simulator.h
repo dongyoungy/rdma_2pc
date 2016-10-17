@@ -14,7 +14,7 @@ class TPCCLockSimulator : public LockSimulator {
         int num_tx, long seed, bool verbose, bool measure_lock_time, int lock_mode,
         bool transaction_delay = false, double transaction_delay_min = 10,
         double transaction_delay_max = 100, int min_backoff_time = 1000,
-        int max_backoff_time = 100000);
+        int max_backoff_time = 100000, int sleep_time = 10000, int think_time = 10);
 
     virtual void Run();
   protected:

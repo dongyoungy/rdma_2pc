@@ -21,8 +21,8 @@ int NotifyLockClient::RequestLock(int seq_no, int user_id, int lock_type, int ob
 
 int NotifyLockClient::RequestUnlock(int seq_no, int user_id, int lock_type, int obj_index,
     int lock_mode) {
-  //return this->UnlockRemotely(context_, seq_no, user_id, lock_type, obj_index);
-  return this->ReadForUnlock(context_, seq_no, user_id, lock_type, obj_index);
+  return this->UnlockRemotely(context_, seq_no, user_id, lock_type, obj_index);
+  //return this->ReadForUnlock(context_, seq_no, user_id, lock_type, obj_index);
 }
 
 // read lock object for unlocking
@@ -182,25 +182,11 @@ int NotifyLockClient::UnlockRemotelyCS(Context* context, int seq_no, int user_id
 }
 
 int NotifyLockClient::TryLock(int seq_no, int user_id, int lock_type, int obj_index) {
-  //if (user_id != wait_user_id_ ||
-      //lock_type != wait_lock_type_ ||
-      //obj_index != wait_obj_index_) {
-    //cerr << "NotifyLockClient::TryLock() : Information do not match, " <<
-      //local_user_->GetID() << endl;
-    //return -1;
-  //} else {
-    //cerr << "NotifyLockClient::TryLock(), " << local_user_->GetID() << endl;
-  //}
-  //pthread_mutex_lock(&wait_mutex_);
-  //if (wait_before_me_[obj_index] == 0) {
-    //pthread_cond_wait(&wait_cond_, &wait_mutex_);
-  //}
-  //pthread_mutex_unlock(&wait_mutex_);
-  pthread_mutex_lock(&PRINT_MUTEX);
-  cout << "TryLock(): " << seq_no << "," << user_id << "," << obj_index << "," << lock_type << endl;
-  pthread_mutex_unlock(&PRINT_MUTEX);
+  //pthread_mutex_lock(&PRINT_MUTEX);
+  //cout << "TryLock(): " << seq_no << "," << user_id << "," << obj_index << "," << lock_type << endl;
+  //pthread_mutex_unlock(&PRINT_MUTEX);
 
-  return this->ReadRemotely(context_, user_id, obj_index);
+  return this->ReadRemotely(context_, seq_no, user_id, lock_type, obj_index);
 }
 
 int NotifyLockClient::GetNumberOfLockWaiters(uint32_t value) {
@@ -370,15 +356,15 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               request->lock_type,
               request->obj_index,
               RESULT_SUCCESS);
-        } else if ((wait_after_me_[request->obj_index] & value) != 0){
-          this->UndoLocking(context_, request);
-          wait_seq_no_ = -1;
-          local_manager_->NotifyLockRequestResult(
-              request->seq_no,
-              request->user_id,
-              request->lock_type,
-              request->obj_index,
-              RESULT_FAILURE);
+        //} else if ((wait_after_me_[request->obj_index] & value) != 0){
+          //this->UndoLocking(context_, request);
+          //wait_seq_no_ = -1;
+          //local_manager_->NotifyLockRequestResult(
+              //request->seq_no,
+              //request->user_id,
+              //request->lock_type,
+              //request->obj_index,
+              //RESULT_FAILURE);
         } else {
           //pthread_mutex_lock(&PRINT_MUTEX);
           //cerr << "wait exclusive: " << local_user_->GetID() << endl;
@@ -411,15 +397,15 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               request->lock_type,
               request->obj_index,
               LockManager::RESULT_SUCCESS);
-        } else if ((wait_after_me_[request->obj_index] & value) != 0){
-          this->UndoLocking(context_, request);
-          wait_seq_no_ = -1;
-          local_manager_->NotifyLockRequestResult(
-              request->seq_no,
-              request->user_id,
-              request->lock_type,
-              request->obj_index,
-              RESULT_FAILURE);
+        //} else if ((wait_after_me_[request->obj_index] & value) != 0){
+          //this->UndoLocking(context_, request);
+          //wait_seq_no_ = -1;
+          //local_manager_->NotifyLockRequestResult(
+              //request->seq_no,
+              //request->user_id,
+              //request->lock_type,
+              //request->obj_index,
+              //RESULT_FAILURE);
         } else {
           //pthread_mutex_lock(&PRINT_MUTEX);
           //cerr << "wait shared: " << local_user_->GetID() << endl;
@@ -497,10 +483,10 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     } else if (request->task == TASK_READ_UNLOCK) {
        // Read for unlocking
       uint32_t exclusive, shared;
-      int user_id         = request->user_id;
-      int lock_type       = request->lock_type;
-      exclusive           = (uint32_t)((value)>>32);
-      shared              = (uint32_t)value;
+      int user_id   = request->user_id;
+      int lock_type = request->lock_type;
+      exclusive     = (uint32_t)((value)>>32);
+      shared        = (uint32_t)value;
 
       if (lock_type == SHARED) {
         if ((shared & user_id) != 0) {

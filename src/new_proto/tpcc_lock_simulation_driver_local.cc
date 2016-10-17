@@ -65,6 +65,8 @@ int main(int argc, char** argv) {
     lock_method_str = "SERVER-BASED/PROXY/QUEUE";
   } else if (lock_mode == LOCK_REMOTE_NOTIFY) {
     lock_method_str = "CLIENT-BASED/DIRECT/NOTIFY";
+  } else if (lock_mode == LOCK_REMOTE_QUEUE) {
+    lock_method_str = "CLIENT-BASED/DIRECT/QUEUE";
   }
 
   string shared_exclusive_rule_str, exclusive_shared_rule_str, exclusive_exclusive_rule_str;

@@ -15,6 +15,7 @@ struct LockRequest {
   int lock_type; // shared, exclusive
   int task; // lock, unlock
   int read_target;
+  int retry;
   uint64_t* original_value;
   struct ibv_mr* original_value_mr;
   uint32_t* read_buffer;
@@ -22,7 +23,9 @@ struct LockRequest {
   uint64_t* read_buffer2;
   struct ibv_mr* read_buffer2_mr;
 
+  uint64_t all_waiters;
   uint64_t prev_value;
+  uint32_t waiters;
   uint32_t exclusive;
   uint32_t shared;
 };

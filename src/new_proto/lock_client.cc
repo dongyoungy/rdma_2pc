@@ -629,15 +629,17 @@ int LockClient::SendLockTableRequest(Context* context) {
 
 int LockClient::RequestLock(int seq_no, int user_id, int lock_type, int obj_index,
     int lock_mode) {
-  context_->fail = false;
-  context_->polling = false;
-  context_->retry = 0;
+  context_->fail        = false;
+  context_->polling     = false;
+  context_->retry       = 0;
+  context_->waiters     = 0;
+  context_->all_waiters = 0;
   if (lock_mode == LOCK_PROXY_RETRY ||
       lock_mode == LOCK_PROXY_QUEUE) {
     // ask lock manager to place the lock
     return this->SendLockRequest(context_, seq_no, user_id, lock_type, obj_index);
   } else if (lock_mode == LOCK_REMOTE_POLL ||
-      lock_mode == LOCK_REMOTE_NOTIFY) {
+      lock_mode == LOCK_REMOTE_NOTIFY || lock_mode == LOCK_REMOTE_QUEUE) {
     // try locking remotely
     return this->LockRemotely(context_, seq_no, user_id, lock_type, obj_index);
   } else {
@@ -651,7 +653,8 @@ int LockClient::RequestUnlock(int seq_no, int user_id, int lock_type, int obj_in
       lock_mode == LOCK_PROXY_QUEUE) {
     return this->SendUnlockRequest(context_, seq_no, user_id, lock_type, obj_index);
   } else if (lock_mode == LOCK_REMOTE_POLL ||
-      lock_mode == LOCK_REMOTE_NOTIFY) {
+      lock_mode == LOCK_REMOTE_NOTIFY ||
+      lock_mode == LOCK_REMOTE_QUEUE) {
     return this->UnlockRemotely(context_, seq_no, user_id, lock_type, obj_index);
   } else {
     cerr << "RequestUnlock(): Unknown lock mode: " << lock_mode << endl;
@@ -682,12 +685,12 @@ int LockClient::LockRemotely(Context* context, int seq_no, int user_id, int lock
 
   pthread_mutex_lock(&lock_mutex_);
   LockRequest* request = lock_requests_[lock_request_idx_];
-  request->seq_no = seq_no;
-  request->user_id = user_id;
-  request->lock_type = lock_type;
-  request->obj_index = obj_index;
-  request->task = TASK_LOCK;
-  lock_request_idx_ = (lock_request_idx_ + 1) % 16;
+  request->seq_no      = seq_no;
+  request->user_id     = user_id;
+  request->lock_type   = lock_type;
+  request->obj_index   = obj_index;
+  request->task        = TASK_LOCK;
+  lock_request_idx_    = (lock_request_idx_ + 1) % 16;
 
   sge.addr   = (uint64_t)request->original_value;
   sge.length = sizeof(uint64_t);
@@ -786,7 +789,8 @@ int LockClient::ReadRemotely(Context* context, int seq_no, int user_id, int read
 }
 
 // read both exclusive and shared portions of the lock object
-int LockClient::ReadRemotely(Context* context, int user_id, int obj_index) {
+int LockClient::ReadRemotely(Context* context, int seq_no, int user_id, int lock_type,
+    int obj_index) {
   struct ibv_exp_send_wr send_work_request;
   struct ibv_exp_send_wr* bad_work_request;
   struct ibv_sge sge;
@@ -799,10 +803,13 @@ int LockClient::ReadRemotely(Context* context, int user_id, int obj_index) {
 
   pthread_mutex_lock(&lock_mutex_);
   LockRequest* request = lock_requests_[lock_request_idx_];
-  request->user_id = user_id;
-  request->obj_index = obj_index;
-  request->task = TASK_READ;
-  lock_request_idx_ = (lock_request_idx_ + 1) % 16;
+  request->seq_no      = seq_no;
+  request->user_id     = user_id;
+  request->lock_type   = lock_type;
+  request->obj_index   = obj_index;
+  request->read_target = ALL;
+  request->task        = TASK_READ;
+  lock_request_idx_    = (lock_request_idx_ + 1) % 16;
 
   sge.addr   = (uint64_t)request->read_buffer2;
   sge.length = sizeof(uint64_t);
