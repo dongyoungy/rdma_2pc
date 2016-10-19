@@ -668,19 +668,28 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
 
   pthread_mutex_lock(&mutex_);
 
+  pthread_mutex_lock(&lock_mutex_);
   if (requests_[last_request_idx_]->seq_no != seq_no ||
       requests_[last_request_idx_]->task != task ||
-      (last_seq_no_ > seq_no && task == TASK_LOCK)) {
+      (last_seq_no_ > seq_no && task == TASK_LOCK) ||
+      (result == RESULT_SUCCESS_FROM_QUEUED && state_ != STATE_QUEUED)) {
     // sequence number or task is different --> ignore
     //pthread_mutex_lock(&PRINT_MUTEX);
     //cout << "Simulator " << id_ << ", seq no: " <<
       //requests_[last_request_idx_]->seq_no << " != " << seq_no << endl;
     //pthread_mutex_unlock(&PRINT_MUTEX);
+    pthread_mutex_unlock(&lock_mutex_);
     pthread_mutex_unlock(&mutex_);
     return -1;
   }
+  if (task == TASK_LOCK && result == RESULT_SUCCESS_FROM_QUEUED && state_ == STATE_QUEUED) {
+    result = RESULT_SUCCESS;
+    ChangeState(STATE_WAIT);
+  }
+  pthread_mutex_unlock(&lock_mutex_);
 
   if (task == TASK_LOCK && result == RESULT_QUEUED) {
+    if (verbose_) {
       pthread_mutex_lock(&PRINT_MUTEX);
       cout << "Simulator " << id_ << ": " <<
         "Queued lock request at LM " <<
@@ -688,10 +697,12 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
         " of type " << requests_[last_request_idx_]->lock_type <<
         " for object " << requests_[last_request_idx_]->obj_index << endl;
       pthread_mutex_unlock(&PRINT_MUTEX);
+    }
     ChangeState(STATE_QUEUED);
     pthread_mutex_unlock(&mutex_);
     return 0;
   }
+
 
   if (task == LockManager::TASK_LOCK) {
 
@@ -755,7 +766,9 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
       } else {
         ChangeState(STATE_LOCKING);
       }
-    } else {
+    } else if (result == RESULT_FAILURE &&
+        requests_[last_request_idx_]->lock_type == lock_type &&
+        requests_[last_request_idx_]->obj_index == obj_index) {
       current_request_idx_ = last_request_idx_ - 1;
       if (verbose_) {
         pthread_mutex_lock(&PRINT_MUTEX);
@@ -833,6 +846,9 @@ int LockSimulator::TimeOut() {
       current_request_idx_ = last_request_idx_;
       is_tx_failed_ = true;
       measure_time_out_ = false;
+      //pthread_mutex_lock(&PRINT_MUTEX);
+      //cout << "Timeout: " << id_ << endl;
+      //pthread_mutex_unlock(&PRINT_MUTEX);
 
       ChangeState(STATE_UNLOCKING);
     }

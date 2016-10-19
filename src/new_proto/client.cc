@@ -23,6 +23,9 @@ Client::Client(const string& work_dir, LockManager* local_manager,
   num_shared_lock_                  = 0;
   num_send_message_                 = 0;
   num_receive_message_              = 0;
+  num_rdma_send_                    = 0;
+  num_rdma_recv_                    = 0;
+  num_rdma_write_                   = 0;
   num_rdma_read_                    = 0;
   num_rdma_atomic_                  = 0;
 
@@ -287,6 +290,7 @@ int Client::SendMessage(Context* context) {
 
   context->send_message_buffer->Rotate();
   ++num_send_message_;
+  ++num_rdma_send_;
   pthread_mutex_unlock(&msg_mutex_);
 
   return ret;
@@ -333,6 +337,7 @@ int Client::ReceiveMessage(Context* context) {
      (double)start_receive_message_.tv_nsec);
   total_receive_message_time_ += time_taken;
   ++num_receive_message_;
+  ++num_rdma_recv_;
 
   return 0;
 }
@@ -506,6 +511,27 @@ double Client::GetAverageReceiveMessageTime() const {
   return num_receive_message_ > 0 ?
     total_receive_message_time_ / num_receive_message_ : 0;
 }
+
+uint64_t Client::GetRDMASendCount() const {
+  return num_rdma_send_;
+}
+
+uint64_t Client::GetRDMARecvCount() const {
+  return num_rdma_recv_;
+}
+
+uint64_t Client::GetRDMAReadCount() const {
+  return num_rdma_read_;
+}
+
+uint64_t Client::GetRDMAWriteCount() const {
+  return num_rdma_write_;
+}
+
+uint64_t Client::GetRDMAAtomicCount() const {
+  return num_rdma_atomic_;
+}
+
 
 // Polls work completion from completion queue
 void* Client::PollCompletionQueue(void* arg) {

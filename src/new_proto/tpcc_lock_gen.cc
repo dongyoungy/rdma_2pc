@@ -2,7 +2,8 @@
 
 namespace rdma { namespace proto {
 
-TPCCLockGen::TPCCLockGen(int num_warehouse, unsigned int seed, int* mix) {
+TPCCLockGen::TPCCLockGen(int workload_type, int num_warehouse, unsigned int seed, int* mix) {
+  workload_type_ = workload_type;
   num_warehouse_ = num_warehouse;
   mix_           = mix;
   seed_          = seed;
@@ -64,8 +65,13 @@ int TPCCLockGen::Generate(vector<LockRequest*>& requests) {
 int TPCCLockGen::GenerateNewOrder(vector<LockRequest*>& requests) {
 
   int req_idx = 0;
+  int w_id = 0;
   // "getWarehouseTaxRate": "SELECT W_TAX FROM WAREHOUSE WHERE W_ID = ?"
-  int w_id = rand_r(&seed_) % num_warehouse_;
+  if (workload_type_ == WORKLOAD_UNIFORM) {
+    w_id = rand_r(&seed_) % num_warehouse_;
+  } else if (workload_type_ == WORKLOAD_HOTSPOT) {
+    w_id = 0;
+  }
   requests[req_idx]->lm_id     = w_id;
   requests[req_idx]->lock_type = SHARED;
   requests[req_idx]->obj_index = WAREHOUSE_START_IDX;
@@ -148,7 +154,12 @@ int TPCCLockGen::GeneratePayment(vector<LockRequest*>& requests) {
   // "getWarehouse": "SELECT W_NAME, W_STREET_1, W_STREET_2, W_CITY, W_STATE, W_ZIP
   // FROM WAREHOUSE WHERE W_ID = ?"
   // "updateWarehouseBalance": "UPDATE WAREHOUSE SET W_YTD = W_YTD + ? WHERE W_ID = ?"
-  int w_id = rand_r(&seed_) % num_warehouse_;
+  int w_id = 0;
+  if (workload_type_ == WORKLOAD_UNIFORM) {
+    w_id = rand_r(&seed_) % num_warehouse_;
+  } else if (workload_type_ == WORKLOAD_HOTSPOT) {
+    w_id = 0;
+  }
   requests[req_idx]->lm_id     = w_id;
   requests[req_idx]->lock_type = EXCLUSIVE;
   requests[req_idx]->obj_index = WAREHOUSE_START_IDX;
@@ -204,7 +215,12 @@ int TPCCLockGen::GenerateOrderStatus(vector<LockRequest*>& requests) {
   // WHERE C_W_ID = ? AND C_D_ID = ? AND C_ID = ?"
   // "getCustomersByLastName": "SELECT C_ID, C_FIRST, C_MIDDLE, C_LAST, C_BALANCE FROM CUSTOMER
   // WHERE C_W_ID = ? AND C_D_ID = ? AND C_LAST = ? ORDER BY C_FIRST"
-  int w_id = rand_r(&seed_) % num_warehouse_;
+  int w_id = 0;
+  if (workload_type_ == WORKLOAD_UNIFORM) {
+    w_id = rand_r(&seed_) % num_warehouse_;
+  } else if (workload_type_ == WORKLOAD_HOTSPOT) {
+    w_id = 0;
+  }
   int c_id = rand_r(&seed_) % NUM_ROW_CUSTOMER;
   requests[req_idx]->lm_id     = w_id;
   requests[req_idx]->lock_type = SHARED;
@@ -241,7 +257,12 @@ int TPCCLockGen::GenerateDelivery(vector<LockRequest*>& requests) {
   // "getNewOrder": "SELECT NO_O_ID FROM NEW_ORDER
   // WHERE NO_D_ID = ? AND NO_W_ID = ? AND NO_O_ID > -1 LIMIT 1"
   // "deleteNewOrder": "DELETE FROM NEW_ORDER WHERE NO_D_ID = ? AND NO_W_ID = ? AND NO_O_ID = ?"
-  int w_id = rand_r(&seed_) % num_warehouse_;
+  int w_id = 0;
+  if (workload_type_ == WORKLOAD_UNIFORM) {
+    w_id = rand_r(&seed_) % num_warehouse_;
+  } else if (workload_type_ == WORKLOAD_HOTSPOT) {
+    w_id = 0;
+  }
   int d_id = rand_r(&seed_) % NUM_ROW_DISTRICT;
   int c_d_id = rand_r(&seed_) % NUM_CUSTOMER_PER_DISTRICT;
   int n_o_id = (d_id * NUM_CUSTOMER_PER_DISTRICT) + c_d_id;
@@ -290,7 +311,12 @@ int TPCCLockGen::GenerateStockLevel(vector<LockRequest*>& requests) {
   int req_idx = 0;
 
   // "getOId": "SELECT D_NEXT_O_ID FROM DISTRICT WHERE D_W_ID = ? AND D_ID = ?"
-  int w_id = rand_r(&seed_) % num_warehouse_;
+  int w_id = 0;
+  if (workload_type_ == WORKLOAD_UNIFORM) {
+    w_id = rand_r(&seed_) % num_warehouse_;
+  } else if (workload_type_ == WORKLOAD_HOTSPOT) {
+    w_id = 0;
+  }
   int d_id = rand_r(&seed_) % NUM_ROW_DISTRICT;
   requests[req_idx]->lm_id     = w_id;
   requests[req_idx]->lock_type = EXCLUSIVE;

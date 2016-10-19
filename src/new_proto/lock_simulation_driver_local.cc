@@ -166,7 +166,7 @@ int main(int argc, char** argv) {
         num_tx, // num lock requests
         num_request_per_tx,
         seed,
-        true, // verbose
+        false, // verbose
         true, // measure lock
         workload_type,
         lock_mode,

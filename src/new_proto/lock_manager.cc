@@ -9,8 +9,8 @@ namespace rdma { namespace proto {
 int LockManager::shared_exclusive_rule_    = LockManager::RULE_FAIL;
 int LockManager::exclusive_shared_rule_    = LockManager::RULE_FAIL;
 int LockManager::exclusive_exclusive_rule_ = LockManager::RULE_FAIL;
-int LockManager::poll_retry_               = 3;
-int LockManager::fail_retry_               = 3;
+int LockManager::poll_retry_               = 10;
+int LockManager::fail_retry_               = 10;
 
 // constructor
 LockManager::LockManager(const string& work_dir, uint32_t rank,
@@ -168,6 +168,7 @@ int LockManager::InitializeLockClients() {
         return -1;
       }
 
+      notify_lock_clients_[i] = client;
       lock_clients_[MAX_USER*i+user->GetID()] = client;
       lock_client_threads_.push_back(client_thread);
 
@@ -689,9 +690,9 @@ int LockManager::Unlock(int seq_no, int user_id, int manager_id, int lock_type,
       lock_mode_table_[manager_id]);
 }
 
-int LockManager::GrantLock(int seq_no, int user_id, int home_id, int lock_type,
+int LockManager::GrantLock(int seq_no, int user_id, int home_id, int waiting_id, int lock_type,
     int obj_index) {
-  CommunicationClient* client = communication_clients_[home_id];
+  CommunicationClient* client = communication_clients_[waiting_id];
   return client->GrantLock(seq_no, user_id, home_id, obj_index, lock_type);
 }
 
@@ -1267,10 +1268,10 @@ int LockManager::TryLock(Context* context, Message* message) {
   int lock_type = message->lock_type;
   int obj_index = message->obj_index;
   int user_id   = message->user_id;
-  LockClient* client = lock_clients_[MAX_USER*home_id+user_id];
+  LockClient* client = notify_lock_clients_[home_id];
   NotifyLockClient* notify_client = dynamic_cast<NotifyLockClient*>(client);
   if (notify_client == NULL) {
-    cerr << "NotifyLockClient cast fail." << endl;
+    cerr << "NotifyLockClient cast fail:" << home_id << "," << user_id <<endl;
     return -1;
   }
 
@@ -1629,6 +1630,71 @@ double LockManager::GetAverageRDMAAtomicCount() const {
     total_count += (double)it->second->GetRDMAAtomicCount();
   }
   return total_count / num_clients;
+}
+
+uint64_t LockManager::GetTotalRDMAReadCount() const {
+  uint64_t total_count = 0;
+  map<int, LockClient*>::const_iterator it;
+  map<int, CommunicationClient*>::const_iterator it2;
+  for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
+    total_count += it->second->GetRDMAReadCount();
+  }
+  for (it2=communication_clients_.begin(); it2 != communication_clients_.end();++it2) {
+    total_count += it2->second->GetRDMAReadCount();
+  }
+  return total_count;
+}
+
+uint64_t LockManager::GetTotalRDMARecvCount() const {
+  uint64_t total_count = 0;
+  map<int, LockClient*>::const_iterator it;
+  map<int, CommunicationClient*>::const_iterator it2;
+  for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
+    total_count += it->second->GetRDMARecvCount();
+  }
+  for (it2=communication_clients_.begin(); it2 != communication_clients_.end();++it2) {
+    total_count += it2->second->GetRDMARecvCount();
+  }
+  return total_count;
+}
+
+uint64_t LockManager::GetTotalRDMASendCount() const {
+  uint64_t total_count = 0;
+  map<int, LockClient*>::const_iterator it;
+  map<int, CommunicationClient*>::const_iterator it2;
+  for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
+    total_count += it->second->GetRDMASendCount();
+  }
+  for (it2=communication_clients_.begin(); it2 != communication_clients_.end();++it2) {
+    total_count += it2->second->GetRDMASendCount();
+  }
+  return total_count;
+}
+
+uint64_t LockManager::GetTotalRDMAWriteCount() const {
+  uint64_t total_count = 0;
+  map<int, LockClient*>::const_iterator it;
+  map<int, CommunicationClient*>::const_iterator it2;
+  for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
+    total_count += it->second->GetRDMAWriteCount();
+  }
+  for (it2=communication_clients_.begin(); it2 != communication_clients_.end();++it2) {
+    total_count += it2->second->GetRDMAWriteCount();
+  }
+  return total_count;
+}
+
+uint64_t LockManager::GetTotalRDMAAtomicCount() const {
+  uint64_t total_count = 0;
+  map<int, LockClient*>::const_iterator it;
+  map<int, CommunicationClient*>::const_iterator it2;
+  for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
+    total_count += it->second->GetRDMAAtomicCount();
+  }
+  for (it2=communication_clients_.begin(); it2 != communication_clients_.end();++it2) {
+    total_count += it2->second->GetRDMAAtomicCount();
+  }
+  return total_count;
 }
 
 // Polls work completion from completion queue

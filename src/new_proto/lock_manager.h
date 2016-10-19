@@ -45,7 +45,7 @@ class LockManager {
     int Unlock(int seq_no, int user_id, int manager_id, int lock_type, int obj_index);
     int LockLocalDirect(int user_id, int lock_type, int obj_index);
     int UnlockLocalDirect(int user_id, int lock_type, int obj_index);
-    int GrantLock(int seq_no, int user_id, int manager_id, int lock_type, int obj_index);
+    int GrantLock(int seq_no, int user_id, int manager_id, int waiting_id, int lock_type, int obj_index);
     int RejectLock(int seq_no, int user_id, int manager_id, int lock_type, int obj_index);
     int UpdateLockModeTable(int manager_id, int mode);
     int NotifyLockRequestResult(int seq_no, int user_id, int lock_type, int obj_index,
@@ -69,6 +69,13 @@ class LockManager {
     double GetAverageReceiveMessageTime() const;
     double GetAverageRDMAReadCount() const;
     double GetAverageRDMAAtomicCount() const;
+
+    uint64_t GetTotalRDMAReadCount() const;
+    uint64_t GetTotalRDMASendCount() const;
+    uint64_t GetTotalRDMARecvCount() const;
+    uint64_t GetTotalRDMAWriteCount() const;
+    uint64_t GetTotalRDMAAtomicCount() const;
+
     int SwitchToLocal();
     int SwitchToRemote();
     static void* PollCompletionQueue(void* context);
@@ -171,6 +178,7 @@ class LockManager {
 
     // each client connects to each lock manager in the cluster
     map<int, LockClient*> lock_clients_;
+    map<int, LockClient*> notify_lock_clients_;
     set<Context*> context_set_;
     vector<pthread_t*> lock_client_threads_;
 

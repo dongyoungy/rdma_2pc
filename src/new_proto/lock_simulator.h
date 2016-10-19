@@ -34,7 +34,7 @@ class LockSimulator {
         bool transaction_delay = false, double transaction_delay_min = 10,
         double transaction_delay_max = 100, int min_backoff_time = 5000,
         int max_backoff_time = 100000,
-        int sleep_time = 10000,
+        int sleep_time = 1000,
         double* custom_cdf = NULL);
     ~LockSimulator();
     virtual void Run();
@@ -153,6 +153,7 @@ class LockSimulator {
     virtual void CreateLockRequests();
     double total_time_taken_to_lock_;
     int local_manager_id_;
+    int workload_type_;
   private:
     void SubmitLockRequestLocal();
     void SubmitUnlockRequestLocal();
@@ -165,7 +166,6 @@ class LockSimulator {
     int num_lock_object_;
     int local_lock_count_;
     int local_unlock_count_;
-    int workload_type_;
     uint64_t count_limit_;
 };
 

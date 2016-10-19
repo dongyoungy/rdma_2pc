@@ -43,6 +43,12 @@ class Client {
 
     static void* PollCompletionQueue(void* context);
 
+    uint64_t GetRDMASendCount() const;
+    uint64_t GetRDMARecvCount() const;
+    uint64_t GetRDMAReadCount() const;
+    uint64_t GetRDMAWriteCount() const;
+    uint64_t GetRDMAAtomicCount() const;
+
   protected:
     Context* BuildContext(struct rdma_cm_id* id);
     void BuildQueuePairAttr(Context* context,
@@ -62,8 +68,11 @@ class Client {
     virtual int HandleWorkCompletion(struct ibv_wc* work_completion) = 0;
 
 
+    uint64_t num_rdma_send_;
+    uint64_t num_rdma_recv_;
     uint64_t num_rdma_atomic_;
     uint64_t num_rdma_read_;
+    uint64_t num_rdma_write_;
 
     LockRequest** lock_requests_;
     LockManager* local_manager_;

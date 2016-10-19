@@ -232,7 +232,7 @@ int NotifyLockClient::NotifyWaitingNodes(LockRequest* request, uint64_t value) {
     for (int i = 0; i < sz; ++i) {
       int node_id = (int)pow(2.0, nodes[i]);
       local_manager_->GrantLock(request->seq_no,
-          node_id, remote_lm_id_, EXCLUSIVE, request->obj_index);
+          node_id, remote_lm_id_, nodes[i], EXCLUSIVE, request->obj_index);
     }
   } else {
     // notify nodes for shared lock.
@@ -241,7 +241,7 @@ int NotifyLockClient::NotifyWaitingNodes(LockRequest* request, uint64_t value) {
     for (int i = 0; i < sz; ++i) {
       int node_id = (int)pow(2.0, nodes[i]);
       local_manager_->GrantLock(request->seq_no,
-          node_id, remote_lm_id_, SHARED, request->obj_index);
+          node_id, remote_lm_id_, nodes[i], SHARED, request->obj_index);
     }
 
     // notify nodes for exclusive lock.
@@ -250,7 +250,7 @@ int NotifyLockClient::NotifyWaitingNodes(LockRequest* request, uint64_t value) {
     for (int i = 0; i < sz; ++i) {
       int node_id = (int)pow(2.0, nodes[i]);
       local_manager_->GrantLock(request->seq_no,
-          node_id, remote_lm_id_, EXCLUSIVE, request->obj_index);
+          node_id, remote_lm_id_, nodes[i], EXCLUSIVE, request->obj_index);
     }
   }
 
@@ -356,19 +356,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               request->lock_type,
               request->obj_index,
               RESULT_SUCCESS);
-        //} else if ((wait_after_me_[request->obj_index] & value) != 0){
-          //this->UndoLocking(context_, request);
-          //wait_seq_no_ = -1;
-          //local_manager_->NotifyLockRequestResult(
-              //request->seq_no,
-              //request->user_id,
-              //request->lock_type,
-              //request->obj_index,
-              //RESULT_FAILURE);
         } else {
-          //pthread_mutex_lock(&PRINT_MUTEX);
-          //cerr << "wait exclusive: " << local_user_->GetID() << endl;
-          //pthread_mutex_unlock(&PRINT_MUTEX);
           pthread_mutex_lock(&wait_mutex_);
           wait_before_me_[request->obj_index] = value;
           wait_after_me_[request->obj_index]  = 0;
@@ -478,7 +466,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             wait_user_id_,
             wait_lock_type_,
             wait_obj_index_,
-            RESULT_SUCCESS);
+            RESULT_SUCCESS_FROM_QUEUED);
       }
     } else if (request->task == TASK_READ_UNLOCK) {
        // Read for unlocking

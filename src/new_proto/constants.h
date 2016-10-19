@@ -9,6 +9,9 @@ namespace rdma { namespace proto {
   static const int SHARED = 1;
   static const int ALL = 2;
 
+  static const int WORKLOAD_UNIFORM = 0;
+  static const int WORKLOAD_HOTSPOT = 1;
+
   static const int LOCK_LOCAL = 0;
   static const int LOCK_PROXY_RETRY = 0; // LOCAL == PROXY
   static const int LOCK_PROXY_QUEUE = 1; // LOCAL == PROXY
@@ -26,6 +29,7 @@ namespace rdma { namespace proto {
   static const int RESULT_FAILURE = 1;
   static const int RESULT_RETRY   = 2;
   static const int RESULT_QUEUED  = 3;
+  static const int RESULT_SUCCESS_FROM_QUEUED = 4;
 
   static const int RULE_FAIL = 0;
   static const int RULE_POLL = 1;

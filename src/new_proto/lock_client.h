@@ -20,9 +20,6 @@ class LockClient : public Client {
     double GetAverageRemoteExclusiveLockTime() const;
     double GetAverageRemoteSharedLockTime() const;
 
-    uint64_t GetRDMAReadCount() const;
-    uint64_t GetRDMAAtomicCount() const;
-
   protected:
     int LockRemotely(Context* context, int seq_no, int user_id, int lock_type,
         int obj_index);

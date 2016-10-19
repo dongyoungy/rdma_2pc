@@ -26,8 +26,8 @@ int main(int argc, char** argv) {
 
   MPI_Init(&argc, &argv);
 
-  if (argc != 18) {
-    cout << argv[0] << " <work_dir> <num_tx>" <<
+  if (argc != 19) {
+    cout << argv[0] << " <work_dir> <workload_type> <num_tx>" <<
       " <num_users> <lock_mode>" <<
       " <shared_exclusive_rule> <exclusive_shared_rule> <exclusive_exclusive_rule>" <<
       " <fail_retry> <poll_retry> <sleep_time_for_timeout> <think_time>"
@@ -50,6 +50,7 @@ int main(int argc, char** argv) {
   }
 
   int k=2;
+  int workload_type            = atoi(argv[k++]);
   long num_tx                  = atol(argv[k++]);
   int num_users                = atoi(argv[k++]);
   int lock_mode                = atoi(argv[k++]);
@@ -142,10 +143,16 @@ int main(int argc, char** argv) {
   }
 
   if (lock_mode == LOCK_REMOTE_NOTIFY || lock_mode == LOCK_PROXY_RETRY ||
-      lock_mode == LOCK_PROXY_QUEUE || LOCK_REMOTE_QUEUE) {
+      lock_mode == LOCK_PROXY_QUEUE || lock_mode == LOCK_REMOTE_QUEUE) {
     shared_exclusive_rule_str = "N/A";
     exclusive_shared_rule_str = "N/A";
     exclusive_exclusive_rule_str = "N/A";
+  }
+
+  if (workload_type == WORKLOAD_UNIFORM) {
+    workload_type_str = "TPC-C/UNIFORM";
+  } else if (workload_type == WORKLOAD_HOTSPOT) {
+    workload_type_str = "TPC-C/HOTSPOT";
   }
 
   if (rank == 0) {
@@ -181,6 +188,7 @@ int main(int argc, char** argv) {
   for (int i=0;i<num_users;++i) {
     TPCCLockSimulator* simulator = new TPCCLockSimulator(lock_manager,
         (int)pow(2.0, rank), // id
+        workload_type,
         num_managers,
         num_tx,
         seed,
@@ -281,10 +289,22 @@ int main(int argc, char** argv) {
   double local_95_lock_time                = 0;
   double global_95_lock_time               = 0;
 
-  double local_rdma_read_count = 0;
-  double global_rdma_read_count = 0;
-  double local_rdma_atomic_count = 0;
-  double global_rdma_atomic_count = 0;
+  double local_avg_rdma_read_count = 0;
+  double global_avg_rdma_read_count = 0;
+  double local_avg_rdma_atomic_count = 0;
+  double global_avg_rdma_atomic_count = 0;
+
+  long local_rdma_read_count = 0;
+  long local_rdma_send_count = 0;
+  long local_rdma_recv_count = 0;
+  long local_rdma_atomic_count = 0;
+  long local_rdma_write_count = 0;
+
+  long global_rdma_read_count = 0;
+  long global_rdma_send_count = 0;
+  long global_rdma_recv_count = 0;
+  long global_rdma_atomic_count = 0;
+  long global_rdma_write_count = 0;
 
   double local_cpu_diff = 0;
   double local_time_taken_diff = 0;
@@ -333,8 +353,14 @@ int main(int argc, char** argv) {
     lock_manager->GetAverageLocalExclusiveLockTime();
   local_send_message_time = lock_manager->GetAverageSendMessageTime();
   local_receive_message_time = lock_manager->GetAverageReceiveMessageTime();
-  local_rdma_read_count = lock_manager->GetAverageRDMAReadCount();
-  local_rdma_atomic_count = lock_manager->GetAverageRDMAAtomicCount();
+  local_avg_rdma_read_count = lock_manager->GetAverageRDMAReadCount();
+  local_avg_rdma_atomic_count = lock_manager->GetAverageRDMAAtomicCount();
+
+  local_rdma_read_count = lock_manager->GetTotalRDMAReadCount();
+  local_rdma_recv_count = lock_manager->GetTotalRDMARecvCount();
+  local_rdma_send_count = lock_manager->GetTotalRDMASendCount();
+  local_rdma_write_count = lock_manager->GetTotalRDMAWriteCount();
+  local_rdma_atomic_count = lock_manager->GetTotalRDMAAtomicCount();
 
   usage.terminate = true;
   pthread_join(cpu_measure_thread, NULL);
@@ -376,12 +402,28 @@ int main(int argc, char** argv) {
   MPI_Reduce(&local_receive_message_time,
       &global_receive_message_time,
       1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-  MPI_Reduce(&local_rdma_read_count,
-      &global_rdma_read_count,
+  MPI_Reduce(&local_avg_rdma_read_count,
+      &global_avg_rdma_read_count,
       1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_avg_rdma_atomic_count,
+      &global_avg_rdma_atomic_count,
+      1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+
   MPI_Reduce(&local_rdma_atomic_count,
       &global_rdma_atomic_count,
-      1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+      1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_rdma_read_count,
+      &global_rdma_read_count,
+      1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_rdma_write_count,
+      &global_rdma_write_count,
+      1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_rdma_send_count,
+      &global_rdma_send_count,
+      1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_rdma_recv_count,
+      &global_rdma_recv_count,
+      1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
 
     cout << "Local Avg CPU Usage = " << local_cpu_usage << "% "
       "(" << "ID = " << rank <<  " ,# nodes: " << num_managers <<
@@ -460,12 +502,12 @@ int main(int argc, char** argv) {
       " ns " << "(# nodes: " << num_managers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average RDMA Read Count = " <<
-      global_rdma_read_count / num_managers <<
-      " ns " << "(# nodes: " << num_managers <<
+      global_avg_rdma_read_count / num_managers <<
+      "" << "(# nodes: " << num_managers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average RDMA Atomic Count = " <<
-      global_rdma_atomic_count / num_managers <<
-      " ns " << "(# nodes: " << num_managers <<
+      global_avg_rdma_atomic_count / num_managers <<
+      "" << "(# nodes: " << num_managers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Overall Avg CPU Usage = " <<
       global_cpu_usage / num_managers << "% "
@@ -494,7 +536,11 @@ int main(int argc, char** argv) {
       global_timeout << "," <<
       global_cpu_usage_avg << "," << global_cpu_usage_std <<
       "," << global_time_taken_avg / (double)(1000*1000*1000) << "," <<
-      global_time_taken_std / (double)(1000*1000*1000) << endl;
+      global_time_taken_std / (double)(1000*1000*1000) << "," <<
+      global_rdma_send_count << "," << global_rdma_recv_count << "," <<
+      global_rdma_write_count << "," << global_rdma_read_count << "," <<
+      global_rdma_atomic_count <<
+      endl;
   }
 
   MPI_Finalize();

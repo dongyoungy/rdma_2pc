@@ -997,12 +997,4 @@ double LockClient::GetAverageRemoteExclusiveLockTime() const {
     total_exclusive_lock_remote_time_ / num_exclusive_lock_ : 0;
 }
 
-uint64_t LockClient::GetRDMAReadCount() const {
-  return num_rdma_read_;
-}
-
-uint64_t LockClient::GetRDMAAtomicCount() const {
-  return num_rdma_atomic_;
-}
-
 }}

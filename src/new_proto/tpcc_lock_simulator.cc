@@ -2,8 +2,8 @@
 
 namespace rdma { namespace proto {
 
-TPCCLockSimulator::TPCCLockSimulator(LockManager* manager, int id, int num_manager,
-    int num_tx, long seed, bool verbose, bool measure_lock_time, int lock_mode,
+TPCCLockSimulator::TPCCLockSimulator(LockManager* manager, int id, int workload_type,
+    int num_manager, int num_tx, long seed, bool verbose, bool measure_lock_time, int lock_mode,
         bool transaction_delay, double transaction_delay_min,
         double transaction_delay_max, int min_backoff_time,
         int max_backoff_time, int sleep_time, int think_time) {
@@ -37,6 +37,7 @@ TPCCLockSimulator::TPCCLockSimulator(LockManager* manager, int id, int num_manag
   is_backing_off_           = false;
   sleep_time_               = sleep_time;
   think_time_               = think_time;
+  workload_type_            = workload_type;
 }
 
 void TPCCLockSimulator::Run() {
@@ -47,7 +48,7 @@ void TPCCLockSimulator::Run() {
   srand48(seed_+id_);
   is_tx_failed_ = false;
 
-  tpcc_lock_gen_ = new TPCCLockGen(num_manager_, seed_, NULL);
+  tpcc_lock_gen_ = new TPCCLockGen(workload_type_, num_manager_, seed_, NULL);
 
   if (lock_mode_ == LOCK_REMOTE_NOTIFY || lock_mode_ == LOCK_PROXY_QUEUE) {
     int ret = pthread_create(&timeout_thread_, NULL, &LockSimulator::CheckTimeOut, (void*)this);
