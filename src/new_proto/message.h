@@ -27,9 +27,9 @@ class Message {
     int lock_mode;
     struct ibv_mr lock_table_mr;
     int seq_no; // seq. no. of lock request
-    int home_id; // home id of lock object
-    int user_id;
-    int manager_id; // id of lock manager requesting lock
+    uint32_t home_id; // home id of lock object
+    uint32_t user_id;
+    uint32_t manager_id; // id of lock manager requesting lock
     int obj_index; // obj index in lock table
     int lock_result;
 };

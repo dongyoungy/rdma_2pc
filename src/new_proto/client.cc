@@ -6,7 +6,7 @@ namespace rdma { namespace proto {
 // constructor
 Client::Client(const string& work_dir, LockManager* local_manager,
     LockSimulator* local_user,
-    int remote_lm_id) {
+    uint32_t remote_lm_id) {
   work_dir_                         = work_dir;
   context_                          = NULL;
   event_channel_                    = NULL;

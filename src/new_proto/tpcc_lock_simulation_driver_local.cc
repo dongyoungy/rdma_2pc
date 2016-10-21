@@ -34,7 +34,7 @@ int main(int argc, char** argv) {
   }
 
   int num_managers = 1;
-  int rank = 0;
+  int rank = 6;
 
   if (1 == htons(1)) {
     cout << "The current machine uses BIG ENDIAN" << endl;
@@ -113,14 +113,14 @@ int main(int argc, char** argv) {
       exit(-1);
   }
 
-  if (rank == 0) {
+  //if (rank == 0) {
     cout << "Lock Method = " << lock_method_str << endl;
     cout << "Type of Workload = " << workload_type_str << endl;
     cout << "SHARED -> EXCLUSIVE = " << shared_exclusive_rule_str << endl;
     cout << "EXCLUSIVE -> SHARED = " << exclusive_shared_rule_str << endl;
     cout << "EXCLUSIVE -> EXCLUSIVE = " << exclusive_exclusive_rule_str << endl;
     cout << "Num Tx = " << num_tx << endl;
-  }
+  //}
 
   LockManager::SetSharedExclusiveRule(shared_exclusive_rule);
   LockManager::SetExclusiveSharedRule(exclusive_shared_rule);
@@ -144,7 +144,9 @@ int main(int argc, char** argv) {
   vector<LockSimulator*> users;
   for (int i=0;i<num_users;++i) {
     TPCCLockSimulator* simulator = new TPCCLockSimulator(lock_manager,
-        (int)pow(2.0, i), // id
+        (uint32_t)pow(2.0, rank*num_users+i), // id
+        rank,
+        WORKLOAD_UNIFORM,
         num_managers,
         num_tx,
         seed,
@@ -155,7 +157,7 @@ int main(int argc, char** argv) {
         min_backoff_time,
         max_backoff_time
         );
-    lock_manager->RegisterUser((int)pow(2.0, i), simulator);
+    lock_manager->RegisterUser((uint32_t)pow(2.0, rank*num_users+i), simulator);
     users.push_back(simulator);
   }
 

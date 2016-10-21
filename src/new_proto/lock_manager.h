@@ -39,21 +39,29 @@ class LockManager {
     ~LockManager();
     int Initialize();
     int InitializeLockClients();
-    int RegisterUser(int user_id, LockSimulator* user);
+    int RegisterUser(uint32_t user_id, LockSimulator* user);
     int Run();
-    int Lock(int seq_no, int user_id, int manager_id, int lock_type, int obj_index);
-    int Unlock(int seq_no, int user_id, int manager_id, int lock_type, int obj_index);
-    int LockLocalDirect(int user_id, int lock_type, int obj_index);
-    int UnlockLocalDirect(int user_id, int lock_type, int obj_index);
-    int GrantLock(int seq_no, int user_id, int manager_id, int waiting_id, int lock_type, int obj_index);
-    int RejectLock(int seq_no, int user_id, int manager_id, int lock_type, int obj_index);
+    int Lock(int seq_no, uint32_t user_id, uint32_t manager_id, int lock_type, int obj_index);
+    int Unlock(int seq_no, uint32_t user_id, uint32_t manager_id, int lock_type, int obj_index);
+    int LockLocalDirect(uint32_t user_id, int lock_type, int obj_index);
+    int UnlockLocalDirect(uint32_t user_id, int lock_type, int obj_index);
+    int GrantLock(int seq_no, uint32_t user_id, uint32_t manager_id, uint32_t waiting_id,
+        int lock_type, int obj_index);
+    int RejectLock(int seq_no, uint32_t user_id, uint32_t manager_id,
+        int lock_type, int obj_index);
     int UpdateLockModeTable(int manager_id, int mode);
-    int NotifyLockRequestResult(int seq_no, int user_id, int lock_type, int obj_index,
+    int NotifyLockRequestResult(int seq_no, uint32_t user_id, int lock_type, int obj_index,
         int result);
-    int NotifyUnlockRequestResult(int seq_no, int user_id, int lock_type, int obj_index,
+    int NotifyUnlockRequestResult(int seq_no, uint32_t user_id, int lock_type, int obj_index,
         int result);
     int GetID() const;
     int GetLockMode() const;
+    inline int GetNumManager() const {
+      return num_manager_;
+    }
+    inline int GetNumUser() const {
+      return num_user_;
+    }
     inline int GetCurrentLockMode() const {
       return current_lock_mode_;
     }
@@ -134,6 +142,7 @@ class LockManager {
     static const int MAX_USER = 65536;
     static const int NUM_LOCK_HISTORY = 10000;
     static const double ADAPT_THRESHOLD = 0.8;
+    uint64_t* lock_table_;
 
   private:
     Context* BuildContext(struct rdma_cm_id* id);
@@ -149,10 +158,10 @@ class LockManager {
     int NotifyLockModeAll();
     int SendMessage(Context* context);
     int SendLockTableMemoryRegion(Context* context);
-    int SendGrantLockAck(Context* context, int seq_no, int user_id, int lock_type, int obj_index);
-    int SendLockRequestResult(Context* context, int seq_no, int user_id,
+    int SendGrantLockAck(Context* context, int seq_no, uint32_t user_id, int lock_type, int obj_index);
+    int SendLockRequestResult(Context* context, int seq_no, uint32_t user_id,
         int lock_type, int obj_index, int result);
-    int SendUnlockRequestResult(Context* context, int seq_no, int user_id,
+    int SendUnlockRequestResult(Context* context, int seq_no, uint32_t user_id,
         int lock_type, int obj_index, int result);
 
     int LockLocallyWithRetry(Context* context, Message* message);
@@ -177,19 +186,20 @@ class LockManager {
     void DestroyListener();
 
     // each client connects to each lock manager in the cluster
-    map<int, LockClient*> lock_clients_;
-    map<int, LockClient*> notify_lock_clients_;
+    map<uint64_t, LockClient*> lock_clients_;
+    map<uint64_t, LockClient*> notify_lock_clients_;
     set<Context*> context_set_;
     vector<pthread_t*> lock_client_threads_;
 
-    map<int, CommunicationClient*> communication_clients_;
+    map<uint64_t, CommunicationClient*> communication_clients_;
     vector<pthread_t*> communication_client_threads_;
 
     // vector for actual user/clients/simulators
     vector<LockSimulator*> users;
     map<int, LockSimulator*> user_map;
     map<int, pthread_mutex_t*> user_mutex_map;
-    map<int, int> last_seq_no_map_;
+    map<uint32_t, int> last_seq_no_map_;
+    map<uint64_t, uint64_t> user_to_home_map_;
 
     // queue for lock waits
     vector<LockWaitQueue*> wait_queues_;
@@ -197,7 +207,6 @@ class LockManager {
     pthread_t local_work_poller_;
 
     string work_dir_;
-    uint64_t* lock_table_;
     uint64_t* last_lock_table_;
     uint64_t* fail_count_;
     int* lock_mode_table_;
@@ -206,6 +215,7 @@ class LockManager {
     int current_lock_mode_;
     int proxy_fail_rule_;
     int num_manager_;
+    int num_user_;
     int num_lock_object_;
     int num_local_lock_;
     int num_remote_lock_;

@@ -32,7 +32,7 @@ LockWaitQueue::~LockWaitQueue() {
 }
 
 // insert new element into the queue
-int LockWaitQueue::Insert(int seq_no, int home_id, int user_id, int type) {
+int LockWaitQueue::Insert(int seq_no, uint32_t home_id, uint32_t user_id, int type) {
   pthread_mutex_lock(&mutex_);
   LockWaitElement* elem = pool_.front();
   pool_.pop_front();
@@ -78,12 +78,9 @@ LockWaitElement* LockWaitQueue::Front() {
 }
 
 // remove all elements from queue that match the given condition
-int LockWaitQueue::RemoveAllElements(int seq_no, int home_id, int user_id, int type) {
+int LockWaitQueue::RemoveAllElements(int seq_no, uint32_t home_id, uint32_t user_id, int type) {
   int num_elem = 0;
   list<LockWaitElement*>::iterator it;
-  if (queue_.size() > 10) {
-     cout << "HERE" << endl;
-  }
   pthread_mutex_lock(&mutex_);
   for (it = queue_.begin();it != queue_.end();) {
     LockWaitElement* elem = *it;
@@ -101,6 +98,30 @@ int LockWaitQueue::RemoveAllElements(int seq_no, int home_id, int user_id, int t
   }
   pthread_mutex_unlock(&mutex_);
   return num_elem;
+}
+
+void LockWaitQueue::PrintAll() {
+  list<LockWaitElement*>::iterator it;
+  int cnt = 0;
+  for (it = queue_.begin();it != queue_.end();++it) {
+    LockWaitElement* elem = *it;
+    cout << "queue elem #" << cnt << " = " << elem->seq_no << "," << elem->home_id << "," << elem->user_id << "," << elem->type << endl;
+    ++cnt;
+  }
+}
+
+void LockWaitQueue::RemoveAll() {
+  list<LockWaitElement*>::iterator it;
+  pthread_mutex_lock(&mutex_);
+  for (it = queue_.begin();it != queue_.end();) {
+    LockWaitElement* elem = *it;
+    // erase it from the queue
+    it = queue_.erase(it);
+    --size_;
+    // add it back to the pool
+    pool_.push_back(elem);
+  }
+  pthread_mutex_unlock(&mutex_);
 }
 
 }}

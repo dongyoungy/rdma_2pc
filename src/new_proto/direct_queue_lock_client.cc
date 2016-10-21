@@ -5,7 +5,7 @@ namespace rdma { namespace proto {
 // constructor
 DirectQueueLockClient::DirectQueueLockClient(const string& work_dir, LockManager* local_manager,
     LockSimulator* local_user,
-    int remote_lm_id) : LockClient(work_dir, local_manager, local_user, remote_lm_id) {
+    uint32_t remote_lm_id) : LockClient(work_dir, local_manager, local_user, remote_lm_id) {
 }
 
 // destructor

@@ -2,13 +2,15 @@
 
 namespace rdma { namespace proto {
 
-TPCCLockSimulator::TPCCLockSimulator(LockManager* manager, int id, int workload_type,
-    int num_manager, int num_tx, long seed, bool verbose, bool measure_lock_time, int lock_mode,
-        bool transaction_delay, double transaction_delay_min,
-        double transaction_delay_max, int min_backoff_time,
-        int max_backoff_time, int sleep_time, int think_time) {
+TPCCLockSimulator::TPCCLockSimulator(LockManager* manager, uint32_t id, uint32_t home_id,
+    int workload_type, int num_manager, int num_tx, long seed, bool verbose,
+    bool measure_lock_time, int lock_mode,
+    bool transaction_delay, double transaction_delay_min,
+    double transaction_delay_max, int min_backoff_time,
+    int max_backoff_time, int sleep_time, int think_time) {
   manager_                  = manager;
   id_                       = id;
+  home_id_                  = home_id;
   num_manager_              = num_manager;
   num_tx_                   = num_tx;
   seed_                     = seed;
@@ -22,7 +24,7 @@ TPCCLockSimulator::TPCCLockSimulator(LockManager* manager, int id, int workload_
   current_backoff_time_     = default_backoff_time_;
   max_backoff_time_         = max_backoff_time;
   local_manager_id_         = manager_->GetID();
-  max_request_size_         = 64;
+  max_request_size_         = 128;
   is_tx_failed_             = false;
   total_num_locks_          = 0;
   total_num_unlocks_        = 0;
@@ -48,7 +50,7 @@ void TPCCLockSimulator::Run() {
   srand48(seed_+id_);
   is_tx_failed_ = false;
 
-  tpcc_lock_gen_ = new TPCCLockGen(workload_type_, num_manager_, seed_, NULL);
+  tpcc_lock_gen_ = new TPCCLockGen(workload_type_, home_id_, num_manager_, seed_, NULL);
 
   if (lock_mode_ == LOCK_REMOTE_NOTIFY || lock_mode_ == LOCK_PROXY_QUEUE) {
     int ret = pthread_create(&timeout_thread_, NULL, &LockSimulator::CheckTimeOut, (void*)this);

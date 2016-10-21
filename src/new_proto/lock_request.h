@@ -9,8 +9,8 @@ namespace rdma { namespace proto{
 struct LockRequest {
   int seq_no; // sequence no (id)
   bool is_undo;
-  int user_id;
-  int lm_id;
+  uint32_t user_id;
+  uint32_t lm_id;
   int obj_index;
   int lock_type; // shared, exclusive
   int task; // lock, unlock

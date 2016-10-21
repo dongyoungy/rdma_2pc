@@ -31,13 +31,13 @@ class Client {
   public:
     Client(const string& work_dir, LockManager* local_manager,
         LockSimulator* local_user,
-        int remote_lm_id);
+        uint32_t remote_lm_id);
     ~Client();
     int Run();
     void Stop();
     Context* GetContext();
-    int RequestLock(int user_id, int lock_type, int obj_index, int lock_mode);
-    int RequestUnlock(int user_id, int lock_type, int obj_index, int lock_mode);
+    //int RequestLock(uint32_t user_id, int lock_type, int obj_index, int lock_mode);
+    //int RequestUnlock(uint32_t user_id, int lock_type, int obj_index, int lock_mode);
     double GetAverageSendMessageTime() const;
     double GetAverageReceiveMessageTime() const;
 
@@ -78,8 +78,8 @@ class Client {
     LockManager* local_manager_;
     LockSimulator* local_user_;
     Context* context_;
-    int local_manager_id_;
-    int remote_lm_id_;
+    uint32_t local_manager_id_;
+    uint32_t remote_lm_id_;
     int test_duration_;
     int lock_request_idx_;
     string work_dir_;

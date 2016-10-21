@@ -5,7 +5,7 @@ namespace rdma { namespace proto {
 // constructor
 NotifyLockClient::NotifyLockClient(const string& work_dir, LockManager* local_manager,
     LockSimulator* local_user,
-    int remote_lm_id) : LockClient(work_dir, local_manager, local_user, remote_lm_id) {
+    uint32_t remote_lm_id) : LockClient(work_dir, local_manager, local_user, remote_lm_id) {
   pthread_mutex_init(&wait_mutex_, NULL);
   pthread_cond_init(&wait_cond_, NULL);
 }
@@ -14,19 +14,19 @@ NotifyLockClient::NotifyLockClient(const string& work_dir, LockManager* local_ma
 NotifyLockClient::~NotifyLockClient() {
 }
 
-int NotifyLockClient::RequestLock(int seq_no, int user_id, int lock_type, int obj_index,
+int NotifyLockClient::RequestLock(int seq_no, uint32_t user_id, int lock_type, int obj_index,
     int lock_mode) {
   return this->LockRemotely(context_, seq_no, user_id, lock_type, obj_index);
 }
 
-int NotifyLockClient::RequestUnlock(int seq_no, int user_id, int lock_type, int obj_index,
+int NotifyLockClient::RequestUnlock(int seq_no, uint32_t user_id, int lock_type, int obj_index,
     int lock_mode) {
   return this->UnlockRemotely(context_, seq_no, user_id, lock_type, obj_index);
   //return this->ReadForUnlock(context_, seq_no, user_id, lock_type, obj_index);
 }
 
 // read lock object for unlocking
-int NotifyLockClient::ReadForUnlock(Context* context, int seq_no, int user_id, int lock_type,
+int NotifyLockClient::ReadForUnlock(Context* context, int seq_no, uint32_t user_id, int lock_type,
     int obj_index) {
 
   struct ibv_exp_send_wr send_work_request;
@@ -71,7 +71,7 @@ int NotifyLockClient::ReadForUnlock(Context* context, int seq_no, int user_id, i
   return 0;
 }
 
-int NotifyLockClient::UnlockRemotely(Context* context, int seq_no, int user_id, int lock_type,
+int NotifyLockClient::UnlockRemotely(Context* context, int seq_no, uint32_t user_id, int lock_type,
     int obj_index, bool is_undo) {
 
   uint32_t exclusive, shared;
@@ -132,8 +132,8 @@ int NotifyLockClient::UnlockRemotely(Context* context, int seq_no, int user_id, 
   return 0;
 }
 
-int NotifyLockClient::UnlockRemotelyCS(Context* context, int seq_no, int user_id, int lock_type,
-    int obj_index, uint64_t prev_value, uint64_t new_value) {
+int NotifyLockClient::UnlockRemotelyCS(Context* context, int seq_no, uint32_t user_id,
+    int lock_type, int obj_index, uint64_t prev_value, uint64_t new_value) {
 
   uint32_t exclusive, shared;
   struct ibv_exp_send_wr send_work_request;
@@ -225,32 +225,33 @@ int NotifyLockClient::NotifyWaitingNodes(LockRequest* request, uint64_t value) {
 
   int nodes[64];
   int sz;
+  int num_user = local_manager_->GetNumUser();
   if (request->lock_type == SHARED) {
     // notify nodes for exclusive lock.
     memset(nodes, 0x00, sizeof(int)*64);
     sz = FindNodePositions(exclusive, nodes);
     for (int i = 0; i < sz; ++i) {
-      int node_id = (int)pow(2.0, nodes[i]);
+      uint32_t node_id = (uint32_t)pow(2.0, nodes[i]);
       local_manager_->GrantLock(request->seq_no,
-          node_id, remote_lm_id_, nodes[i], EXCLUSIVE, request->obj_index);
+          node_id, remote_lm_id_, nodes[i]/num_user, EXCLUSIVE, request->obj_index);
     }
   } else {
     // notify nodes for shared lock.
     memset(nodes, 0x00, sizeof(int)*64);
     sz = FindNodePositions(shared, nodes);
     for (int i = 0; i < sz; ++i) {
-      int node_id = (int)pow(2.0, nodes[i]);
+      uint32_t node_id = (uint32_t)pow(2.0, nodes[i]);
       local_manager_->GrantLock(request->seq_no,
-          node_id, remote_lm_id_, nodes[i], SHARED, request->obj_index);
+          node_id, remote_lm_id_, nodes[i]/num_user, SHARED, request->obj_index);
     }
 
     // notify nodes for exclusive lock.
     memset(nodes, 0x00, sizeof(int)*64);
     sz = FindNodePositions(exclusive, nodes);
     for (int i = 0; i < sz; ++i) {
-      int node_id = (int)pow(2.0, nodes[i]);
+      uint32_t node_id = (uint32_t)pow(2.0, nodes[i]);
       local_manager_->GrantLock(request->seq_no,
-          node_id, remote_lm_id_, nodes[i], EXCLUSIVE, request->obj_index);
+          node_id, remote_lm_id_, nodes[i]/num_user, EXCLUSIVE, request->obj_index);
     }
   }
 

@@ -14,7 +14,7 @@ LockSimulator::LockSimulator() {
   pthread_cond_init(&state_cond_, NULL);
 }
 
-LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
+LockSimulator::LockSimulator(LockManager* manager, uint32_t id, int num_manager,
     int num_lock_object, uint64_t num_lock_request) {
   manager_                  = manager;
   id_                       = id;
@@ -53,7 +53,7 @@ LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
   pthread_cond_init(&state_cond_, NULL);
 }
 
-LockSimulator::LockSimulator(LockManager* manager, int id, int num_manager,
+LockSimulator::LockSimulator(LockManager* manager, uint32_t id, int num_manager,
     int num_lock_object, uint64_t num_tx, int num_request_per_tx, long seed, bool verbose,
     bool measure_lock_time, int workload_type, int lock_mode,
     double local_percentage, double shared_lock_ratio, bool transaction_delay,
@@ -846,9 +846,11 @@ int LockSimulator::TimeOut() {
       current_request_idx_ = last_request_idx_;
       is_tx_failed_ = true;
       measure_time_out_ = false;
-      //pthread_mutex_lock(&PRINT_MUTEX);
-      //cout << "Timeout: " << id_ << endl;
-      //pthread_mutex_unlock(&PRINT_MUTEX);
+      if (verbose_) {
+        pthread_mutex_lock(&PRINT_MUTEX);
+        cout << "Timeout: " << id_ << endl;
+        pthread_mutex_unlock(&PRINT_MUTEX);
+      }
 
       ChangeState(STATE_UNLOCKING);
     }
@@ -871,7 +873,7 @@ double LockSimulator::GetTimeSinceLastLock() {
   return time_taken;
 }
 
-int LockSimulator::GetID() const {
+uint32_t LockSimulator::GetID() const {
   return id_;
 }
 int LockSimulator::GetLockMode() const {
@@ -946,6 +948,10 @@ int LockSimulator::GetMaxBackoff() const {
 
 int LockSimulator::GetCurrentBackoff() const {
   return current_backoff_time_;
+}
+
+bool LockSimulator::IsVerbose() const {
+  return verbose_;
 }
 
 int LockSimulator::GetLastTask() {

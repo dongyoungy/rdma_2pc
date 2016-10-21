@@ -68,12 +68,12 @@ int main(int argc, char** argv) {
   int max_backoff_time         = atoi(argv[k++]);
   long seed                    = atol(argv[k++]);
 
-  if (num_users != 1) {
-     cerr << "# of users must be 1." << endl;
-     exit(-1);
-  }
-  if (num_managers > 32) {
-     cerr << "# of nodes must be less than 33" << endl;
+  //if (num_users != 1) {
+     //cerr << "# of users must be 1." << endl;
+     //exit(-1);
+  //}
+  if (num_managers * num_users > 32) {
+     cerr << "# of node/clients must be less than 33" << endl;
      exit(-1);
   }
 
@@ -186,13 +186,16 @@ int main(int argc, char** argv) {
 
   vector<LockSimulator*> users;
   for (int i=0;i<num_users;++i) {
+    uint32_t id = (uint32_t)pow(2.0, rank*num_users+i);
+    bool verbose = false;
     TPCCLockSimulator* simulator = new TPCCLockSimulator(lock_manager,
-        (int)pow(2.0, rank), // id
+        id, // id
+        rank, // home id
         workload_type,
         num_managers,
         num_tx,
         seed,
-        false, // verbose
+        verbose, // verbose
         true, // measure lock time
         lock_mode,
         transaction_delay,
@@ -203,7 +206,7 @@ int main(int argc, char** argv) {
         sleep_time,
         think_time
         );
-    lock_manager->RegisterUser((int)pow(2.0, rank), simulator);
+    lock_manager->RegisterUser(id, simulator);
     users.push_back(simulator);
   }
 
@@ -241,16 +244,42 @@ int main(int argc, char** argv) {
      exit(-1);
   }
 
+  int min_time_taken = 0;
   int time_taken2 = 0;
+  int time_taken3 = 0;
+  uint64_t* tx_done = new uint64_t[64000];
+  uint64_t* locks_done = new uint64_t[64000];
+  memset(tx_done, 0x00, sizeof(uint64_t)*64000);
+  memset(locks_done, 0x00, sizeof(uint64_t)*64000);
+
+  bool simulator_done = false;
+  while (true) {
+    for (int i=0;i<users.size();++i) {
+      tx_done[time_taken2] += users[i]->GetCount();
+      locks_done[time_taken2] += users[i]->GetTotalNumLockSuccess();
+      if (users[i]->GetState() == LockSimulator::STATE_DONE) {
+        simulator_done = true;
+      }
+    }
+    ++time_taken2;
+    if (rank == 0) {
+      cout << rank << "," << time_taken2 << " : " << users[0]->GetCount() <<
+        "," << users[0]->GetCurrentBackoff() << endl;
+    }
+    if (simulator_done) break;
+    sleep(1);
+  }
+  time_taken3 = time_taken2;
+
   for (int i=0;i<users.size();++i) {
     LockSimulator* simulator = users[i];
     while (simulator->GetState() != LockSimulator::STATE_DONE) {
       ++time_taken2;
       if (rank == 0) {
-        cout << time_taken2 << " : " << users[0]->GetCount() <<
+        cout << rank << "," << time_taken2 << " : " << users[0]->GetCount() <<
           "," << users[0]->GetCurrentBackoff() << endl;
       }
-       sleep(1);
+      sleep(1);
     }
   }
 
@@ -318,6 +347,53 @@ int main(int argc, char** argv) {
   double global_time_taken_diff = 0;
 
   MPI_Barrier(MPI_COMM_WORLD);
+
+  // calculate max throughput
+  MPI_Allreduce(&time_taken3, &min_time_taken, 1, MPI_INT, MPI_MIN,
+      MPI_COMM_WORLD);
+
+  uint64_t* local_tx_throughput = new uint64_t[min_time_taken];
+  uint64_t* global_tx_throughput = new uint64_t[min_time_taken];
+  uint64_t* local_lock_throughput = new uint64_t[min_time_taken];
+  uint64_t* global_lock_throughput = new uint64_t[min_time_taken];
+
+  for (int i = 0; i < min_time_taken; ++i) {
+    if (i == 0) {
+      local_tx_throughput[i] = tx_done[i];
+      local_lock_throughput[i] = locks_done[i];
+    } else {
+      local_tx_throughput[i] = tx_done[i] - tx_done[i-1];
+      local_lock_throughput[i] = locks_done[i] - locks_done[i-1];
+    }
+  }
+
+  MPI_Barrier(MPI_COMM_WORLD);
+  for (int i = 0; i < min_time_taken; ++i) {
+    uint64_t local = local_tx_throughput[i];
+    uint64_t global;
+    MPI_Reduce(&local, &global, 1, MPI_LONG_LONG_INT, MPI_SUM, 0,
+        MPI_COMM_WORLD);
+    global_tx_throughput[i] = global;
+    MPI_Barrier(MPI_COMM_WORLD);
+    local = local_lock_throughput[i];
+    MPI_Reduce(&local, &global, 1, MPI_LONG_LONG_INT, MPI_SUM, 0,
+        MPI_COMM_WORLD);
+    global_lock_throughput[i] = global;
+    MPI_Barrier(MPI_COMM_WORLD);
+  }
+
+  uint64_t max_tx_throughput = 0;
+  uint64_t max_lock_throughput = 0;
+
+  if (rank == 0) {
+    for (int i = 0; i < min_time_taken; ++i) {
+      if (max_tx_throughput < global_tx_throughput[i])
+        max_tx_throughput = global_tx_throughput[i];
+
+      if (max_lock_throughput < global_lock_throughput[i])
+        max_lock_throughput = global_lock_throughput[i];
+    }
+  }
 
   for (int i=0;i<num_managers;++i) {
     if (rank==i) {
@@ -537,6 +613,7 @@ int main(int argc, char** argv) {
       global_cpu_usage_avg << "," << global_cpu_usage_std <<
       "," << global_time_taken_avg / (double)(1000*1000*1000) << "," <<
       global_time_taken_std / (double)(1000*1000*1000) << "," <<
+      max_tx_throughput << "," << max_lock_throughput << "," <<
       global_rdma_send_count << "," << global_rdma_recv_count << "," <<
       global_rdma_write_count << "," << global_rdma_read_count << "," <<
       global_rdma_atomic_count <<

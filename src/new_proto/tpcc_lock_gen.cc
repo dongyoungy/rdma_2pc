@@ -2,11 +2,13 @@
 
 namespace rdma { namespace proto {
 
-TPCCLockGen::TPCCLockGen(int workload_type, int num_warehouse, unsigned int seed, int* mix) {
-  workload_type_ = workload_type;
-  num_warehouse_ = num_warehouse;
-  mix_           = mix;
-  seed_          = seed;
+TPCCLockGen::TPCCLockGen(int workload_type, int home_warehouse_id, int num_warehouse,
+    unsigned int seed, int* mix) {
+  workload_type_     = workload_type;
+  num_warehouse_     = num_warehouse;
+  home_warehouse_id_ = home_warehouse_id;
+  mix_               = mix;
+  seed_              = seed;
 
   if (mix_ == NULL) {
     mix_    = new int[5];
@@ -16,6 +18,7 @@ TPCCLockGen::TPCCLockGen(int workload_type, int num_warehouse, unsigned int seed
     mix_[3] = 96; // Delivery 4
     mix_[4] = 100; // StockLevel 4
   }
+  stocks_ = new int[NUM_ORDER_LINE_PER_ORDER];
 }
 
 TPCCLockGen::~TPCCLockGen() {
@@ -65,13 +68,8 @@ int TPCCLockGen::Generate(vector<LockRequest*>& requests) {
 int TPCCLockGen::GenerateNewOrder(vector<LockRequest*>& requests) {
 
   int req_idx = 0;
-  int w_id = 0;
+  int w_id = home_warehouse_id_;
   // "getWarehouseTaxRate": "SELECT W_TAX FROM WAREHOUSE WHERE W_ID = ?"
-  if (workload_type_ == WORKLOAD_UNIFORM) {
-    w_id = rand_r(&seed_) % num_warehouse_;
-  } else if (workload_type_ == WORKLOAD_HOTSPOT) {
-    w_id = 0;
-  }
   requests[req_idx]->lm_id     = w_id;
   requests[req_idx]->lock_type = SHARED;
   requests[req_idx]->obj_index = WAREHOUSE_START_IDX;
@@ -137,12 +135,13 @@ int TPCCLockGen::GenerateNewOrder(vector<LockRequest*>& requests) {
   // "createOrderLine": "INSERT INTO ORDER_LINE
   // (OL_O_ID, OL_D_ID, OL_W_ID, OL_NUMBER, OL_I_ID, OL_SUPPLY_W_ID, OL_DELIVERY_D, OL_QUANTITY,
   // OL_AMOUNT, OL_DIST_INFO) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-  int ol_id = rand_r(&seed_) % NUM_ORDER_LINE_PER_ORDER;
-  requests[req_idx]->lm_id     = w_id;
-  requests[req_idx]->lock_type = EXCLUSIVE;
-  requests[req_idx]->obj_index = ORDER_LINE_START_IDX + (o_id * NUM_ORDER_LINE_PER_ORDER) + ol_id;
-  requests[req_idx]->task      = TASK_LOCK;
-  ++req_idx;
+  for (int i = 0; i < NUM_ORDER_LINE_PER_ORDER; ++i) {
+    requests[req_idx]->lm_id     = w_id;
+    requests[req_idx]->lock_type = EXCLUSIVE;
+    requests[req_idx]->obj_index = ORDER_LINE_START_IDX + (o_id * NUM_ORDER_LINE_PER_ORDER) + i;
+    requests[req_idx]->task      = TASK_LOCK;
+    ++req_idx;
+  }
 
   return req_idx;
 }
@@ -150,59 +149,104 @@ int TPCCLockGen::GenerateNewOrder(vector<LockRequest*>& requests) {
 int TPCCLockGen::GeneratePayment(vector<LockRequest*>& requests) {
 
   int req_idx = 0;
+  int x = 1 + rand_r(&seed_) % 100;
+  int y = 1 + rand_r(&seed_) % 100;
 
   // "getWarehouse": "SELECT W_NAME, W_STREET_1, W_STREET_2, W_CITY, W_STATE, W_ZIP
   // FROM WAREHOUSE WHERE W_ID = ?"
   // "updateWarehouseBalance": "UPDATE WAREHOUSE SET W_YTD = W_YTD + ? WHERE W_ID = ?"
-  int w_id = 0;
-  if (workload_type_ == WORKLOAD_UNIFORM) {
-    w_id = rand_r(&seed_) % num_warehouse_;
-  } else if (workload_type_ == WORKLOAD_HOTSPOT) {
-    w_id = 0;
-  }
+  int w_id = home_warehouse_id_;
   requests[req_idx]->lm_id     = w_id;
   requests[req_idx]->lock_type = EXCLUSIVE;
   requests[req_idx]->obj_index = WAREHOUSE_START_IDX;
   requests[req_idx]->task      = TASK_LOCK;
   ++req_idx;
 
+  int d_id = rand_r(&seed_) % NUM_ROW_DISTRICT;
+  int d_w_id = d_id;
+  int c_d_id, c_w_id;
+
+  if (x <= 85 || num_warehouse_ == 1) {
+    c_d_id = d_id;
+    c_w_id = w_id;
+  } else {
+    c_d_id = rand_r(&seed_) % NUM_ROW_DISTRICT;
+    c_w_id = rand_r(&seed_) % num_warehouse_;
+    while (c_w_id == w_id) {
+      c_w_id = rand_r(&seed_) % num_warehouse_;
+    }
+  }
+
   // "getDistrict": "SELECT D_NAME, D_STREET_1, D_STREET_2, D_CITY, D_STATE, D_ZIP FROM DISTRICT
   // WHERE D_W_ID = ? AND D_ID = ?"
   // "updateDistrictBalance": "UPDATE DISTRICT SET D_YTD = D_YTD + ?
   // WHERE D_W_ID  = ? AND D_ID = ?"
-  int d_id = rand_r(&seed_) % NUM_ROW_DISTRICT;
   requests[req_idx]->lm_id     = w_id;
   requests[req_idx]->lock_type = EXCLUSIVE;
   requests[req_idx]->obj_index = DISTRICT_START_IDX + d_id;
   requests[req_idx]->task      = TASK_LOCK;
   ++req_idx;
+  int c_id1 = rand_r(&seed_) % NUM_ROW_CUSTOMER;
 
-  // "getCustomerByCustomerId": "SELECT C_ID, C_FIRST, C_MIDDLE, C_LAST, C_STREET_1, C_STREET_2,
-  // C_CITY, C_STATE, C_ZIP, C_PHONE, C_SINCE, C_CREDIT, C_CREDIT_LIM, C_DISCOUNT, C_BALANCE,
-  // C_YTD_PAYMENT, C_PAYMENT_CNT, C_DATA FROM CUSTOMER
-  // WHERE C_W_ID = ? AND C_D_ID = ? AND C_ID = ?"
-  // "getCustomersByLastName": "SELECT C_ID, C_FIRST, C_MIDDLE, C_LAST, C_STREET_1, C_STREET_2,
-  // C_CITY, C_STATE, C_ZIP, C_PHONE, C_SINCE, C_CREDIT, C_CREDIT_LIM, C_DISCOUNT, C_BALANCE,
-  // C_YTD_PAYMENT, C_PAYMENT_CNT, C_DATA FROM CUSTOMER
-  // WHERE C_W_ID = ? AND C_D_ID = ? AND C_LAST = ? ORDER BY C_FIRST"
-  // "updateBCCustomer": "UPDATE CUSTOMER SET C_BALANCE = ?, C_YTD_PAYMENT = ?, C_PAYMENT_CNT = ?,
-  // C_DATA = ? WHERE C_W_ID = ? AND C_D_ID = ? AND C_ID = ?"
-  // "updateGCCustomer": "UPDATE CUSTOMER SET C_BALANCE = ?, C_YTD_PAYMENT = ?, C_PAYMENT_CNT = ?
-  // WHERE C_W_ID = ? AND C_D_ID = ? AND C_ID = ?"
-  int c_d_id = rand_r(&seed_) % NUM_CUSTOMER_PER_DISTRICT;
-  int c_id = (d_id * NUM_CUSTOMER_PER_DISTRICT) + c_d_id;
-  requests[req_idx]->lm_id     = w_id;
-  requests[req_idx]->lock_type = EXCLUSIVE;
-  requests[req_idx]->obj_index = CUSTOMER_START_IDX + c_id;
-  requests[req_idx]->task      = TASK_LOCK;
-  ++req_idx;
+  if (y <= 60) {
+    // "getCustomersByLastName": "SELECT C_ID, C_FIRST, C_MIDDLE, C_LAST, C_STREET_1, C_STREET_2,
+    // C_CITY, C_STATE, C_ZIP, C_PHONE, C_SINCE, C_CREDIT, C_CREDIT_LIM, C_DISCOUNT, C_BALANCE,
+    // C_YTD_PAYMENT, C_PAYMENT_CNT, C_DATA FROM CUSTOMER
+    // WHERE C_W_ID = ? AND C_D_ID = ? AND C_LAST = ? ORDER BY C_FIRST"
+    // "updateBCCustomer": "UPDATE CUSTOMER SET C_BALANCE = ?, C_YTD_PAYMENT = ?, C_PAYMENT_CNT = ?,
+    // C_DATA = ? WHERE C_W_ID = ? AND C_D_ID = ? AND C_ID = ?"
+    // "updateGCCustomer": "UPDATE CUSTOMER SET C_BALANCE = ?, C_YTD_PAYMENT = ?, C_PAYMENT_CNT = ?
+    // WHERE C_W_ID = ? AND C_D_ID = ? AND C_ID = ?"
+    int c_id2 = rand_r(&seed_) % NUM_ROW_CUSTOMER;
+    while (c_id2 == c_id1) {
+      c_id2 = rand_r(&seed_) % NUM_ROW_CUSTOMER;
+    }
+    requests[req_idx]->lm_id     = c_w_id;
+    requests[req_idx]->lock_type = EXCLUSIVE;
+    requests[req_idx]->obj_index = CUSTOMER_START_IDX + c_id1;
+    requests[req_idx]->task      = TASK_LOCK;
+    ++req_idx;
 
-  // "insertHistory": "INSERT INTO HISTORY VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-  requests[req_idx]->lm_id     = w_id;
-  requests[req_idx]->lock_type = EXCLUSIVE;
-  requests[req_idx]->obj_index = HISTORY_START_IDX + c_id;
-  requests[req_idx]->task      = TASK_LOCK;
-  ++req_idx;
+    requests[req_idx]->lm_id     = c_w_id;
+    requests[req_idx]->lock_type = EXCLUSIVE;
+    requests[req_idx]->obj_index = CUSTOMER_START_IDX + c_id2;
+    requests[req_idx]->task      = TASK_LOCK;
+    ++req_idx;
+
+    // "insertHistory": "INSERT INTO HISTORY VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    requests[req_idx]->lm_id     = w_id;
+    requests[req_idx]->lock_type = EXCLUSIVE;
+    requests[req_idx]->obj_index = HISTORY_START_IDX + c_id1;
+    requests[req_idx]->task      = TASK_LOCK;
+    ++req_idx;
+
+    requests[req_idx]->lm_id     = w_id;
+    requests[req_idx]->lock_type = EXCLUSIVE;
+    requests[req_idx]->obj_index = HISTORY_START_IDX + c_id2;
+    requests[req_idx]->task      = TASK_LOCK;
+    ++req_idx;
+  } else {
+    // "getCustomerByCustomerId": "SELECT C_ID, C_FIRST, C_MIDDLE, C_LAST, C_STREET_1, C_STREET_2,
+    // C_CITY, C_STATE, C_ZIP, C_PHONE, C_SINCE, C_CREDIT, C_CREDIT_LIM, C_DISCOUNT, C_BALANCE,
+    // C_YTD_PAYMENT, C_PAYMENT_CNT, C_DATA FROM CUSTOMER
+    // WHERE C_W_ID = ? AND C_D_ID = ? AND C_ID = ?"
+    // "updateBCCustomer": "UPDATE CUSTOMER SET C_BALANCE = ?, C_YTD_PAYMENT = ?, C_PAYMENT_CNT = ?,
+    // C_DATA = ? WHERE C_W_ID = ? AND C_D_ID = ? AND C_ID = ?"
+    // "updateGCCustomer": "UPDATE CUSTOMER SET C_BALANCE = ?, C_YTD_PAYMENT = ?, C_PAYMENT_CNT = ?
+    // WHERE C_W_ID = ? AND C_D_ID = ? AND C_ID = ?"
+    requests[req_idx]->lm_id     = c_w_id;
+    requests[req_idx]->lock_type = EXCLUSIVE;
+    requests[req_idx]->obj_index = CUSTOMER_START_IDX + c_id1;
+    requests[req_idx]->task      = TASK_LOCK;
+    ++req_idx;
+
+    // "insertHistory": "INSERT INTO HISTORY VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    requests[req_idx]->lm_id     = w_id;
+    requests[req_idx]->lock_type = EXCLUSIVE;
+    requests[req_idx]->obj_index = HISTORY_START_IDX + c_id1;
+    requests[req_idx]->task      = TASK_LOCK;
+    ++req_idx;
+  }
 
   return req_idx;
 }
@@ -210,32 +254,60 @@ int TPCCLockGen::GeneratePayment(vector<LockRequest*>& requests) {
 int TPCCLockGen::GenerateOrderStatus(vector<LockRequest*>& requests) {
 
   int req_idx = 0;
+  int y = 1 + rand_r(&seed_) % 100;
+  int w_id = home_warehouse_id_;
+  int c_id = rand_r(&seed_) % NUM_ROW_CUSTOMER;
+  int o_id = c_id;
 
-  // "getCustomerByCustomerId": "SELECT C_ID, C_FIRST, C_MIDDLE, C_LAST, C_BALANCE FROM CUSTOMER
-  // WHERE C_W_ID = ? AND C_D_ID = ? AND C_ID = ?"
+  if (y <= 40) {
   // "getCustomersByLastName": "SELECT C_ID, C_FIRST, C_MIDDLE, C_LAST, C_BALANCE FROM CUSTOMER
   // WHERE C_W_ID = ? AND C_D_ID = ? AND C_LAST = ? ORDER BY C_FIRST"
-  int w_id = 0;
-  if (workload_type_ == WORKLOAD_UNIFORM) {
-    w_id = rand_r(&seed_) % num_warehouse_;
-  } else if (workload_type_ == WORKLOAD_HOTSPOT) {
-    w_id = 0;
-  }
-  int c_id = rand_r(&seed_) % NUM_ROW_CUSTOMER;
-  requests[req_idx]->lm_id     = w_id;
-  requests[req_idx]->lock_type = SHARED;
-  requests[req_idx]->obj_index = CUSTOMER_START_IDX + c_id;
-  requests[req_idx]->task      = TASK_LOCK;
-  ++req_idx;
+    int c_id2= rand_r(&seed_) % NUM_ROW_CUSTOMER;
+    while (c_id2 == c_id) {
+      c_id2= rand_r(&seed_) % NUM_ROW_CUSTOMER;
+    }
+    requests[req_idx]->lm_id     = w_id;
+    requests[req_idx]->lock_type = SHARED;
+    requests[req_idx]->obj_index = CUSTOMER_START_IDX + c_id;
+    requests[req_idx]->task      = TASK_LOCK;
+    ++req_idx;
 
-  // "getLastOrder": "SELECT O_ID, O_CARRIER_ID, O_ENTRY_D FROM ORDERS
-  // WHERE O_W_ID = ? AND O_D_ID = ? AND O_C_ID = ? ORDER BY O_ID DESC LIMIT 1"
-  int o_id = c_id;
-  requests[req_idx]->lm_id     = w_id;
-  requests[req_idx]->lock_type = SHARED;
-  requests[req_idx]->obj_index = ORDER_START_IDX + o_id;
-  requests[req_idx]->task      = TASK_LOCK;
-  ++req_idx;
+    requests[req_idx]->lm_id     = w_id;
+    requests[req_idx]->lock_type = SHARED;
+    requests[req_idx]->obj_index = CUSTOMER_START_IDX + c_id2;
+    requests[req_idx]->task      = TASK_LOCK;
+    ++req_idx;
+
+    // "getLastOrder": "SELECT O_ID, O_CARRIER_ID, O_ENTRY_D FROM ORDERS
+    // WHERE O_W_ID = ? AND O_D_ID = ? AND O_C_ID = ? ORDER BY O_ID DESC LIMIT 1"
+    requests[req_idx]->lm_id     = w_id;
+    requests[req_idx]->lock_type = SHARED;
+    requests[req_idx]->obj_index = ORDER_START_IDX + c_id;
+    requests[req_idx]->task      = TASK_LOCK;
+    ++req_idx;
+
+    requests[req_idx]->lm_id     = w_id;
+    requests[req_idx]->lock_type = SHARED;
+    requests[req_idx]->obj_index = ORDER_START_IDX + c_id2;
+    requests[req_idx]->task      = TASK_LOCK;
+    ++req_idx;
+  } else {
+    // "getCustomerByCustomerId": "SELECT C_ID, C_FIRST, C_MIDDLE, C_LAST, C_BALANCE FROM CUSTOMER
+    // WHERE C_W_ID = ? AND C_D_ID = ? AND C_ID = ?"
+    requests[req_idx]->lm_id     = w_id;
+    requests[req_idx]->lock_type = SHARED;
+    requests[req_idx]->obj_index = CUSTOMER_START_IDX + c_id;
+    requests[req_idx]->task      = TASK_LOCK;
+    ++req_idx;
+
+    // "getLastOrder": "SELECT O_ID, O_CARRIER_ID, O_ENTRY_D FROM ORDERS
+    // WHERE O_W_ID = ? AND O_D_ID = ? AND O_C_ID = ? ORDER BY O_ID DESC LIMIT 1"
+    requests[req_idx]->lm_id     = w_id;
+    requests[req_idx]->lock_type = SHARED;
+    requests[req_idx]->obj_index = ORDER_START_IDX + c_id;
+    requests[req_idx]->task      = TASK_LOCK;
+    ++req_idx;
+  }
 
   // "getOrderLines": "SELECT OL_SUPPLY_W_ID, OL_I_ID, OL_QUANTITY, OL_AMOUNT, OL_DELIVERY_D
   // FROM ORDER_LINE WHERE OL_W_ID = ? AND OL_D_ID = ? AND OL_O_ID = ?"
@@ -257,12 +329,7 @@ int TPCCLockGen::GenerateDelivery(vector<LockRequest*>& requests) {
   // "getNewOrder": "SELECT NO_O_ID FROM NEW_ORDER
   // WHERE NO_D_ID = ? AND NO_W_ID = ? AND NO_O_ID > -1 LIMIT 1"
   // "deleteNewOrder": "DELETE FROM NEW_ORDER WHERE NO_D_ID = ? AND NO_W_ID = ? AND NO_O_ID = ?"
-  int w_id = 0;
-  if (workload_type_ == WORKLOAD_UNIFORM) {
-    w_id = rand_r(&seed_) % num_warehouse_;
-  } else if (workload_type_ == WORKLOAD_HOTSPOT) {
-    w_id = 0;
-  }
+  int w_id = home_warehouse_id_;
   int d_id = rand_r(&seed_) % NUM_ROW_DISTRICT;
   int c_d_id = rand_r(&seed_) % NUM_CUSTOMER_PER_DISTRICT;
   int n_o_id = (d_id * NUM_CUSTOMER_PER_DISTRICT) + c_d_id;
@@ -311,15 +378,10 @@ int TPCCLockGen::GenerateStockLevel(vector<LockRequest*>& requests) {
   int req_idx = 0;
 
   // "getOId": "SELECT D_NEXT_O_ID FROM DISTRICT WHERE D_W_ID = ? AND D_ID = ?"
-  int w_id = 0;
-  if (workload_type_ == WORKLOAD_UNIFORM) {
-    w_id = rand_r(&seed_) % num_warehouse_;
-  } else if (workload_type_ == WORKLOAD_HOTSPOT) {
-    w_id = 0;
-  }
+  int w_id = home_warehouse_id_;
   int d_id = rand_r(&seed_) % NUM_ROW_DISTRICT;
   requests[req_idx]->lm_id     = w_id;
-  requests[req_idx]->lock_type = EXCLUSIVE;
+  requests[req_idx]->lock_type = SHARED;
   requests[req_idx]->obj_index = DISTRICT_START_IDX + d_id;
   requests[req_idx]->task      = TASK_LOCK;
   ++req_idx;
@@ -334,11 +396,32 @@ int TPCCLockGen::GenerateStockLevel(vector<LockRequest*>& requests) {
   //    AND S_I_ID = OL_I_ID
   //    AND S_QUANTITY < ?
   //   """
+  int o_id = rand_r(&seed_) % NUM_ROW_ORDER;
   int s_id = rand_r(&seed_) % NUM_ROW_STOCK;
-  for (int i = 0 ; i < NUM_ORDER_LINE_PER_STOCK; ++i) {
+  for (int i = 0 ; i < NUM_ORDER_LINE_PER_ORDER; ++i) {
     requests[req_idx]->lm_id     = w_id;
-    requests[req_idx]->lock_type = EXCLUSIVE;
-    requests[req_idx]->obj_index = ORDER_LINE_START_IDX + (s_id * NUM_ORDER_LINE_PER_STOCK) + i;
+    requests[req_idx]->lock_type = SHARED;
+    requests[req_idx]->obj_index = ORDER_LINE_START_IDX + (o_id * NUM_ORDER_LINE_PER_ORDER) + i;
+    requests[req_idx]->task      = TASK_LOCK;
+    ++req_idx;
+  }
+  int cnt = 0;
+  while (cnt < NUM_ORDER_LINE_PER_ORDER) {
+    stocks_[cnt] = rand_r(&seed_) % NUM_ROW_STOCK;
+    bool duplicate = false;
+    for (int i = 0; i < cnt; ++i) {
+      if (stocks_[cnt] == stocks_[i]) {
+        duplicate = true;
+      }
+    }
+    if (!duplicate) {
+      ++cnt;
+    }
+  }
+  for (int i = 0 ; i < NUM_ORDER_LINE_PER_ORDER; ++i) {
+    requests[req_idx]->lm_id     = w_id;
+    requests[req_idx]->lock_type = SHARED;
+    requests[req_idx]->obj_index = STOCK_START_IDX + stocks_[i];
     requests[req_idx]->task      = TASK_LOCK;
     ++req_idx;
   }

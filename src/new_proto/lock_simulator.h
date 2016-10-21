@@ -24,9 +24,9 @@ class LockSimulator {
 
   public:
     LockSimulator();
-    LockSimulator(LockManager* manager, int id, int num_manager,
+    LockSimulator(LockManager* manager, uint32_t id, int num_manager,
         int num_lock_object, uint64_t num_lock_request);
-    LockSimulator(LockManager* manager, int id, int num_manager,
+    LockSimulator(LockManager* manager, uint32_t id, int num_manager,
         int num_lock_object, uint64_t num_lock_request, int num_request_per_tx,
         long seed, bool verbose,
         bool measure_lock_time, int workload_type, int lock_mode,
@@ -40,7 +40,7 @@ class LockSimulator {
     virtual void Run();
     int NotifyResult(int seq_no, int task, int lock_type, int obj_index, int result);
     int TimeOut();
-    int GetID() const;
+    uint32_t GetID() const;
     int GetState() const;
     int GetLockMode() const;
     int GetMaxBackoff() const;
@@ -50,6 +50,7 @@ class LockSimulator {
     bool IsLockTimeMeasured() const;
     bool GetMeasureTimeOut() const;
     bool IsBackingOff() const;
+    bool IsVerbose() const;
     uint64_t GetDuration() const;
     uint64_t GetTotalNumLocks() const;
     uint64_t GetTotalNumUnlocks() const;
@@ -107,7 +108,7 @@ class LockSimulator {
     double time_taken_;
     int sleep_time_;
     int num_manager_;
-    int id_;
+    uint32_t id_;
     int lock_mode_;
     int seq_count_;
     int last_request_idx_;

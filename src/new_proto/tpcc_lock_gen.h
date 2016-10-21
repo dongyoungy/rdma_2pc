@@ -15,7 +15,8 @@ namespace rdma { namespace proto {
 
 class TPCCLockGen {
   public:
-    TPCCLockGen(int workload_type, int num_warehouse, unsigned int seed, int* mix = NULL);
+    TPCCLockGen(int workload_type, int home_warehouse_id, int num_warehouse,
+        unsigned int seed, int* mix = NULL);
     ~TPCCLockGen();
     int Generate(vector<LockRequest*>& requests);
 
@@ -57,9 +58,11 @@ class TPCCLockGen {
     int GenerateDelivery(vector<LockRequest*>& requests);
     int GenerateStockLevel(vector<LockRequest*>& requests);
 
+    int home_warehouse_id_;
     int workload_type_;
     int num_warehouse_;
     int* mix_;
+    int* stocks_;
     unsigned int seed_;
     int tx_type_;
 

@@ -56,7 +56,7 @@ LockManager::LockManager(const string& work_dir, uint32_t rank,
   // initialize lock wait queues, one for each lock object
   wait_queues_.reserve(num_lock_object_);
   for (int i = 0; i < num_lock_object_; ++i) {
-    LockWaitQueue* queue = new LockWaitQueue(num_manager+16); // +16 is for the buffer
+    LockWaitQueue* queue = new LockWaitQueue(num_manager+36); // +36 is for the buffer
     wait_queues_.push_back(queue);
   }
 
@@ -137,12 +137,13 @@ int LockManager::Run() {
   return 0;
 }
 
-int LockManager::RegisterUser(int user_id, LockSimulator* user) {
+int LockManager::RegisterUser(uint32_t user_id, LockSimulator* user) {
   user_map[user_id] = user;
   pthread_mutex_t* mutex = new pthread_mutex_t;
   pthread_mutex_init(mutex, NULL);
   user_mutex_map[user_id] = mutex;
   users.push_back(user);
+  num_user_ = users.size();
   return 0;
 }
 
@@ -168,7 +169,6 @@ int LockManager::InitializeLockClients() {
         return -1;
       }
 
-      notify_lock_clients_[i] = client;
       lock_clients_[MAX_USER*i+user->GetID()] = client;
       lock_client_threads_.push_back(client_thread);
 
@@ -176,14 +176,22 @@ int LockManager::InitializeLockClients() {
         cout << "LockManager::pthread_create(): " << strerror(ret) << endl;
         return -1;
       }
+
+      user_to_home_map_[user->GetID()] = i;
     }
 
     CommunicationClient* comm_client = new CommunicationClient(work_dir_, this, NULL, i);
     pthread_t* comm_client_thread    = new pthread_t;
     ret = pthread_create(comm_client_thread, NULL,
         &LockManager::RunLockClient, (void*)comm_client);
+
+    if (ret) {
+      cout << "LockManager::pthread_create(): " << strerror(ret) << endl;
+      return -1;
+    }
     communication_clients_[i] = comm_client;
     communication_client_threads_.push_back(comm_client_thread);
+
   }
   // initialize local work queue/poller.
   local_work_queue_ = new LocalWorkQueue<Message>;
@@ -500,7 +508,7 @@ int LockManager::SendLockTableMemoryRegion(Context* context) {
 }
 
 // Send lock request result to client.
-int LockManager::SendLockRequestResult(Context* context, int seq_no, int user_id,
+int LockManager::SendLockRequestResult(Context* context, int seq_no, uint32_t user_id,
     int lock_type, int obj_index, int result) {
 
   pthread_mutex_lock(&msg_mutex_);
@@ -525,7 +533,7 @@ int LockManager::SendLockRequestResult(Context* context, int seq_no, int user_id
 }
 
 // Send unlock request result to client.
-int LockManager::SendUnlockRequestResult(Context* context, int seq_no, int user_id,
+int LockManager::SendUnlockRequestResult(Context* context, int seq_no, uint32_t user_id,
     int lock_type, int obj_index, int result) {
 
   pthread_mutex_lock(&msg_mutex_);
@@ -549,7 +557,7 @@ int LockManager::SendUnlockRequestResult(Context* context, int seq_no, int user_
 }
 
 // Send unlock request result to client.
-int LockManager::SendGrantLockAck(Context* context, int seq_no, int user_id, int lock_type,
+int LockManager::SendGrantLockAck(Context* context, int seq_no, uint32_t user_id, int lock_type,
     int obj_index) {
 
   pthread_mutex_lock(&msg_mutex_);
@@ -597,7 +605,7 @@ int LockManager::NotifyLockMode(Context* context) {
   return 0;
 }
 
-int LockManager::Lock(int seq_no, int user_id, int manager_id, int lock_type,
+int LockManager::Lock(int seq_no, uint32_t user_id, uint32_t manager_id, int lock_type,
     int obj_index) {
   LockClient* lock_client = lock_clients_[manager_id*MAX_USER+user_id];
   if (lock_mode_ == LockManager::LOCK_ADAPTIVE) {
@@ -666,7 +674,7 @@ int LockManager::SwitchToRemote() {
   return 0;
 }
 
-int LockManager::Unlock(int seq_no, int user_id, int manager_id, int lock_type,
+int LockManager::Unlock(int seq_no, uint32_t user_id, uint32_t manager_id, int lock_type,
     int obj_index) {
   //if ((current_lock_mode_ == LOCK_PROXY_QUEUE || current_lock_mode_ == LOCK_PROXY_RETRY) &&
       //manager_id == rank_) {
@@ -690,13 +698,17 @@ int LockManager::Unlock(int seq_no, int user_id, int manager_id, int lock_type,
       lock_mode_table_[manager_id]);
 }
 
-int LockManager::GrantLock(int seq_no, int user_id, int home_id, int waiting_id, int lock_type,
-    int obj_index) {
+int LockManager::GrantLock(int seq_no, uint32_t user_id, uint32_t home_id, uint32_t waiting_id,
+    int lock_type, int obj_index) {
+  //uint64_t waiting_id = user_to_home_map_[user_id];
+  //CommunicationClient* client = communication_clients_[MAX_USER*waiting_id+user_id];
   CommunicationClient* client = communication_clients_[waiting_id];
+  //cerr << "GrantLock():" << rank_ << "," << waiting_id << "," << home_id << "," <<
+    //user_id <<endl;
   return client->GrantLock(seq_no, user_id, home_id, obj_index, lock_type);
 }
 
-int LockManager::RejectLock(int seq_no, int user_id, int home_id, int lock_type,
+int LockManager::RejectLock(int seq_no, uint32_t user_id, uint32_t home_id, int lock_type,
     int obj_index) {
   CommunicationClient* client = communication_clients_[home_id];
   return client->RejectLock(seq_no, user_id, home_id, obj_index, lock_type);
@@ -713,11 +725,11 @@ int LockManager::LockLocallyWithRetry(Context* context, Message* message) {
   // get time
   clock_gettime(CLOCK_MONOTONIC, &start_local_lock_);
 
-  int lock_result = RESULT_FAILURE;
-  int seq_no    = message->seq_no;
-  int user_id   = message->user_id;
-  int obj_index = message->obj_index;
-  int lock_type = message->lock_type;
+  int lock_result  = RESULT_FAILURE;
+  int seq_no       = message->seq_no;
+  uint32_t user_id = message->user_id;
+  int obj_index    = message->obj_index;
+  int lock_type    = message->lock_type;
 
   // lock locally on lock table
   pthread_mutex_lock(lock_mutex_[obj_index]);
@@ -798,13 +810,13 @@ int LockManager::LockLocallyWithQueue(Context* context, Message* message) {
   // get time
   clock_gettime(CLOCK_MONOTONIC, &start_local_lock_);
 
-  int lock_result       = RESULT_FAILURE;
-  int seq_no            = message->seq_no;
-  int home_id           = message->home_id;
-  int user_id           = message->user_id;
-  int obj_index         = message->obj_index;
-  int lock_type         = message->lock_type;
-  LockWaitQueue* queue  = wait_queues_[obj_index];
+  int lock_result      = RESULT_FAILURE;
+  int seq_no           = message->seq_no;
+  uint32_t home_id     = message->home_id;
+  uint32_t user_id     = message->user_id;
+  int obj_index        = message->obj_index;
+  int lock_type        = message->lock_type;
+  LockWaitQueue* queue = wait_queues_[obj_index];
 
 
   pthread_mutex_lock(&seq_mutex_);
@@ -826,6 +838,10 @@ int LockManager::LockLocallyWithQueue(Context* context, Message* message) {
   uint32_t exclusive, shared;
   exclusive = (uint32_t)((*lock_object)>>32);
   shared = (uint32_t)(*lock_object);
+
+  if (exclusive == 0 && shared == 0 && queue->GetSize() > 0) {
+    queue->RemoveAll();
+  }
 
   if (queue->GetSize() > 0) {
     // there are some users already waiting...
@@ -965,7 +981,7 @@ int LockManager::LockLocallyWithQueue(Context* context, Message* message) {
   //return 0;
 //}
 
-int LockManager::LockLocalDirect(int user_id, int lock_type, int obj_index) {
+int LockManager::LockLocalDirect(uint32_t user_id, int lock_type, int obj_index) {
   int lock_result = LockManager::RESULT_FAILURE;
 
   // lock locally on lock table
@@ -1088,7 +1104,7 @@ int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
 
   int lock_result      = RESULT_FAILURE;
   int seq_no           = message->seq_no;
-  int home_id          = message->home_id;
+  uint32_t home_id     = message->home_id;
   uint32_t user_id     = message->user_id;
   int obj_index        = message->obj_index;
   int lock_type        = message->lock_type;
@@ -1141,10 +1157,11 @@ int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
   // reset lock object if we see same value too many
   if (fail_count_[obj_index] > 10) {
     *lock_object = 0;
+    queue->RemoveAll();
     fail_count_[obj_index] = 0;
   }
 
-  // TODO: add logic to notify users waiting for lock to proceed.
+  // Notify waiting users
   if (lock_result == RESULT_SUCCESS) {
     LockWaitElement* elem = queue->Pop();
     if (elem) {
@@ -1263,15 +1280,15 @@ int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
 //}
 
 int LockManager::TryLock(Context* context, Message* message) {
-  int seq_no    = message->seq_no;
-  int home_id   = message->home_id;
-  int lock_type = message->lock_type;
-  int obj_index = message->obj_index;
-  int user_id   = message->user_id;
-  LockClient* client = notify_lock_clients_[home_id];
+  int seq_no       = message->seq_no;
+  uint32_t home_id = message->home_id;
+  int lock_type    = message->lock_type;
+  int obj_index    = message->obj_index;
+  uint32_t user_id = message->user_id;
+  LockClient* client = lock_clients_[MAX_USER*home_id+user_id];
   NotifyLockClient* notify_client = dynamic_cast<NotifyLockClient*>(client);
   if (notify_client == NULL) {
-    cerr << "NotifyLockClient cast fail:" << home_id << "," << user_id <<endl;
+    cerr << "NotifyLockClient cast fail:" << rank_ << "," << home_id << "," << user_id <<endl;
     return -1;
   }
 
@@ -1282,7 +1299,7 @@ int LockManager::TryLock(Context* context, Message* message) {
 }
 
 
-int LockManager::UnlockLocalDirect(int user_id, int lock_type, int obj_index) {
+int LockManager::UnlockLocalDirect(uint32_t user_id, int lock_type, int obj_index) {
   int lock_result;
   uint64_t* lock_object = (lock_table_+obj_index);
   uint32_t exclusive, shared;
@@ -1328,7 +1345,7 @@ int LockManager::UpdateLockTableRemote(Context* context) {
   return 0;
 }
 
-int LockManager::NotifyLockRequestResult(int seq_no, int user_id, int lock_type,
+int LockManager::NotifyLockRequestResult(int seq_no, uint32_t user_id, int lock_type,
     int obj_index, int result) {
   LockSimulator* user = user_map[user_id];
   //pthread_mutex_lock(user_mutex_map[user_id]);
@@ -1336,7 +1353,7 @@ int LockManager::NotifyLockRequestResult(int seq_no, int user_id, int lock_type,
   //pthread_mutex_unlock(user_mutex_map[user_id]);
 }
 
-int LockManager::NotifyUnlockRequestResult(int seq_no, int user_id, int lock_type,
+int LockManager::NotifyUnlockRequestResult(int seq_no, uint32_t user_id, int lock_type,
     int obj_index, int result) {
   LockSimulator* user = user_map[user_id];
   //pthread_mutex_lock(user_mutex_map[user_id]);
@@ -1575,7 +1592,7 @@ double LockManager::GetAverageLocalExclusiveLockTime() const {
 double LockManager::GetAverageRemoteExclusiveLockTime() const {
   double num_clients = lock_clients_.size();
   double total_time = 0.0;
-  map<int, LockClient*>::const_iterator it;
+  map<uint64_t, LockClient*>::const_iterator it;
   for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
     total_time += it->second->GetAverageRemoteExclusiveLockTime();
   }
@@ -1585,7 +1602,7 @@ double LockManager::GetAverageRemoteExclusiveLockTime() const {
 double LockManager::GetAverageRemoteSharedLockTime() const {
   double num_clients = lock_clients_.size();
   double total_time = 0.0;
-  map<int, LockClient*>::const_iterator it;
+  map<uint64_t, LockClient*>::const_iterator it;
   for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
     total_time += it->second->GetAverageRemoteSharedLockTime();
   }
@@ -1595,7 +1612,7 @@ double LockManager::GetAverageRemoteSharedLockTime() const {
 double LockManager::GetAverageSendMessageTime() const {
   double num_clients = lock_clients_.size();
   double total_time = 0.0;
-  map<int, LockClient*>::const_iterator it;
+  map<uint64_t, LockClient*>::const_iterator it;
   for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
     total_time += it->second->GetAverageSendMessageTime();
   }
@@ -1605,7 +1622,7 @@ double LockManager::GetAverageSendMessageTime() const {
 double LockManager::GetAverageReceiveMessageTime() const {
   double num_clients = lock_clients_.size();
   double total_time = 0.0;
-  map<int, LockClient*>::const_iterator it;
+  map<uint64_t, LockClient*>::const_iterator it;
   for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
     total_time += it->second->GetAverageReceiveMessageTime();
   }
@@ -1615,7 +1632,7 @@ double LockManager::GetAverageReceiveMessageTime() const {
 double LockManager::GetAverageRDMAReadCount() const {
   double num_clients = lock_clients_.size();
   double total_count = 0.0;
-  map<int, LockClient*>::const_iterator it;
+  map<uint64_t, LockClient*>::const_iterator it;
   for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
     total_count += (double)it->second->GetRDMAReadCount();
   }
@@ -1625,7 +1642,7 @@ double LockManager::GetAverageRDMAReadCount() const {
 double LockManager::GetAverageRDMAAtomicCount() const {
   double num_clients = lock_clients_.size();
   double total_count = 0.0;
-  map<int, LockClient*>::const_iterator it;
+  map<uint64_t, LockClient*>::const_iterator it;
   for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
     total_count += (double)it->second->GetRDMAAtomicCount();
   }
@@ -1634,8 +1651,8 @@ double LockManager::GetAverageRDMAAtomicCount() const {
 
 uint64_t LockManager::GetTotalRDMAReadCount() const {
   uint64_t total_count = 0;
-  map<int, LockClient*>::const_iterator it;
-  map<int, CommunicationClient*>::const_iterator it2;
+  map<uint64_t, LockClient*>::const_iterator it;
+  map<uint64_t, CommunicationClient*>::const_iterator it2;
   for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
     total_count += it->second->GetRDMAReadCount();
   }
@@ -1647,8 +1664,8 @@ uint64_t LockManager::GetTotalRDMAReadCount() const {
 
 uint64_t LockManager::GetTotalRDMARecvCount() const {
   uint64_t total_count = 0;
-  map<int, LockClient*>::const_iterator it;
-  map<int, CommunicationClient*>::const_iterator it2;
+  map<uint64_t, LockClient*>::const_iterator it;
+  map<uint64_t, CommunicationClient*>::const_iterator it2;
   for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
     total_count += it->second->GetRDMARecvCount();
   }
@@ -1660,8 +1677,8 @@ uint64_t LockManager::GetTotalRDMARecvCount() const {
 
 uint64_t LockManager::GetTotalRDMASendCount() const {
   uint64_t total_count = 0;
-  map<int, LockClient*>::const_iterator it;
-  map<int, CommunicationClient*>::const_iterator it2;
+  map<uint64_t, LockClient*>::const_iterator it;
+  map<uint64_t, CommunicationClient*>::const_iterator it2;
   for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
     total_count += it->second->GetRDMASendCount();
   }
@@ -1673,8 +1690,8 @@ uint64_t LockManager::GetTotalRDMASendCount() const {
 
 uint64_t LockManager::GetTotalRDMAWriteCount() const {
   uint64_t total_count = 0;
-  map<int, LockClient*>::const_iterator it;
-  map<int, CommunicationClient*>::const_iterator it2;
+  map<uint64_t, LockClient*>::const_iterator it;
+  map<uint64_t, CommunicationClient*>::const_iterator it2;
   for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
     total_count += it->second->GetRDMAWriteCount();
   }
@@ -1686,8 +1703,8 @@ uint64_t LockManager::GetTotalRDMAWriteCount() const {
 
 uint64_t LockManager::GetTotalRDMAAtomicCount() const {
   uint64_t total_count = 0;
-  map<int, LockClient*>::const_iterator it;
-  map<int, CommunicationClient*>::const_iterator it2;
+  map<uint64_t, LockClient*>::const_iterator it;
+  map<uint64_t, CommunicationClient*>::const_iterator it2;
   for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
     total_count += it->second->GetRDMAAtomicCount();
   }

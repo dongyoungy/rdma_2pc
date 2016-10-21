@@ -5,7 +5,7 @@ namespace rdma { namespace proto {
 // constructor
 LockClient::LockClient(const string& work_dir, LockManager* local_manager,
     LockSimulator* local_user,
-    int remote_lm_id) : Client(work_dir, local_manager, local_user, remote_lm_id) {
+    uint32_t remote_lm_id) : Client(work_dir, local_manager, local_user, remote_lm_id) {
 }
 
 // destructor
@@ -627,7 +627,7 @@ int LockClient::SendLockTableRequest(Context* context) {
   return 0;
 }
 
-int LockClient::RequestLock(int seq_no, int user_id, int lock_type, int obj_index,
+int LockClient::RequestLock(int seq_no, uint32_t user_id, int lock_type, int obj_index,
     int lock_mode) {
   context_->fail        = false;
   context_->polling     = false;
@@ -647,7 +647,7 @@ int LockClient::RequestLock(int seq_no, int user_id, int lock_type, int obj_inde
   }
 }
 
-int LockClient::RequestUnlock(int seq_no, int user_id, int lock_type, int obj_index,
+int LockClient::RequestUnlock(int seq_no, uint32_t user_id, int lock_type, int obj_index,
     int lock_mode) {
   if (lock_mode == LOCK_PROXY_RETRY ||
       lock_mode == LOCK_PROXY_QUEUE) {
@@ -661,7 +661,7 @@ int LockClient::RequestUnlock(int seq_no, int user_id, int lock_type, int obj_in
   }
 }
 
-int LockClient::LockRemotely(Context* context, int seq_no, int user_id, int lock_type,
+int LockClient::LockRemotely(Context* context, int seq_no, uint32_t user_id, int lock_type,
     int obj_index) {
 
   if (lock_type == LockManager::SHARED) {
@@ -733,7 +733,7 @@ int LockClient::LockRemotely(Context* context, int seq_no, int user_id, int lock
   return 0;
 }
 
-int LockClient::ReadRemotely(Context* context, int seq_no, int user_id, int read_target,
+int LockClient::ReadRemotely(Context* context, int seq_no, uint32_t user_id, int read_target,
     int lock_type, int obj_index) {
   struct ibv_exp_send_wr send_work_request;
   struct ibv_exp_send_wr* bad_work_request;
@@ -789,7 +789,7 @@ int LockClient::ReadRemotely(Context* context, int seq_no, int user_id, int read
 }
 
 // read both exclusive and shared portions of the lock object
-int LockClient::ReadRemotely(Context* context, int seq_no, int user_id, int lock_type,
+int LockClient::ReadRemotely(Context* context, int seq_no, uint32_t user_id, int lock_type,
     int obj_index) {
   struct ibv_exp_send_wr send_work_request;
   struct ibv_exp_send_wr* bad_work_request;
@@ -839,7 +839,7 @@ int LockClient::ReadRemotely(Context* context, int seq_no, int user_id, int lock
 }
 
 
-int LockClient::UnlockRemotely(Context* context, int seq_no, int user_id, int lock_type,
+int LockClient::UnlockRemotely(Context* context, int seq_no, uint32_t user_id, int lock_type,
     int obj_index, bool is_undo) {
 
   if (lock_type == LockManager::SHARED) {
@@ -941,7 +941,7 @@ int LockClient::UnlockRemotely(Context* context, int seq_no, int user_id, int lo
 //}
 
 int LockClient::SendLockRequest(Context* context, int seq_no,
-    int user_id, int lock_type, int obj_index) {
+    uint32_t user_id, int lock_type, int obj_index) {
 
   Message* msg = context->send_message_buffer->GetMessage();
 
@@ -965,7 +965,7 @@ int LockClient::SendLockRequest(Context* context, int seq_no,
 }
 
 int LockClient::SendUnlockRequest(Context* context, int seq_no,
-    int user_id, int lock_type, int obj_index) {
+    uint32_t user_id, int lock_type, int obj_index) {
 
   Message* msg = context->send_message_buffer->GetMessage();
 

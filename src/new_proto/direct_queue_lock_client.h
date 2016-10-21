@@ -12,7 +12,7 @@ class DirectQueueLockClient : public LockClient {
   public:
     DirectQueueLockClient(const string& work_dir, LockManager* local_manager,
         LockSimulator* local_user,
-        int remote_lm_id);
+        uint32_t remote_lm_id);
     ~DirectQueueLockClient();
 
   protected:
@@ -21,11 +21,11 @@ class DirectQueueLockClient : public LockClient {
     int HandleExclusive(LockRequest* request);
 
   private:
-    map<int, uint64_t> wait_after_me_;
-    map<int, uint64_t> wait_before_me_;
+    map<uint32_t, uint64_t> wait_after_me_;
+    map<uint32_t, uint64_t> wait_before_me_;
 
     int wait_seq_no_;
-    int wait_user_id_;
+    uint32_t wait_user_id_;
     int wait_lock_type_;
     int wait_obj_index_;
     pthread_mutex_t wait_mutex_;
