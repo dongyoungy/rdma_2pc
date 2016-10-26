@@ -176,13 +176,12 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
 
     LockRequest* request = (LockRequest *)work_completion->wr_id;
     // get time
-    clock_gettime(CLOCK_MONOTONIC, &end_remote_shared_lock_);
-    double time_taken = ((double)end_remote_shared_lock_.tv_sec * 1e+9 +
-        (double)end_remote_shared_lock_.tv_nsec) -
-      ((double)start_remote_shared_lock_.tv_sec * 1e+9 +
-          (double)start_remote_shared_lock_.tv_nsec);
-    total_shared_lock_remote_time_ += time_taken;
-    ++num_shared_lock_;
+    clock_gettime(CLOCK_MONOTONIC, &end_rdma_atomic_);
+    double time_taken = ((double)end_rdma_atomic_.tv_sec * 1e+9 +
+        (double)end_rdma_atomic_.tv_nsec) -
+      ((double)start_rdma_atomic_.tv_sec * 1e+9 +
+          (double)start_rdma_atomic_.tv_nsec);
+    total_rdma_atomic_time_ += time_taken;
 
     uint64_t prev_value = *request->original_value;
 #if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -199,6 +198,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       if (request->lock_type == LockManager::EXCLUSIVE) {
         if (exclusive == 0 && shared == 0) {
           // exclusive lock acquisition successful
+          ++total_lock_success_;
           local_manager_->NotifyLockRequestResult(
               request->seq_no,
               request->user_id,
@@ -207,18 +207,22 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               LockManager::RESULT_SUCCESS);
         } else if (exclusive == 0 && shared != 0) {
           // shared lock exists, handle shared -> exclusive
+          ++total_lock_contention_;
           this->HandleSharedToExclusive(request);
         } else if (exclusive != 0 && shared == 0) {
           // exclusive lock exists, wait for others
+          ++total_lock_contention_;
           this->HandleExclusiveToExclusive(request);
         } else {
           // lock acquisition failed, undoing FA
+          ++total_lock_contention_;
           this->UndoLocking(context_, request);
         }
       } else {
         // shared lock
         if (exclusive == 0) {
           // it should have been successful since exclusive and shared was 0
+          ++total_lock_success_;
           local_manager_->NotifyLockRequestResult(
               request->seq_no,
               request->user_id,
@@ -227,8 +231,10 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               LockManager::RESULT_SUCCESS);
         } else if (exclusive != 0 && shared == 0){
           // exclusive lock exists
+          ++total_lock_contention_;
           this->HandleExclusiveToShared(request);
         } else {
+          ++total_lock_contention_;
           this->UndoLocking(context_, request);
         }
       }
@@ -286,6 +292,14 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
   } else if (work_completion->opcode == IBV_WC_RDMA_READ) {
 
     LockRequest* request = (LockRequest *)work_completion->wr_id;
+
+    // get time
+    clock_gettime(CLOCK_MONOTONIC, &end_rdma_read_);
+    double time_taken = ((double)end_rdma_read_.tv_sec * 1e+9 +
+        (double)end_rdma_read_.tv_nsec) -
+      ((double)start_rdma_read_.tv_sec * 1e+9 +
+          (double)start_rdma_read_.tv_nsec);
+    total_rdma_read_time_ += time_taken;
     // polling result
     uint32_t value = *request->read_buffer;
     //#if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -457,7 +471,7 @@ int LockClient::UndoLocking(Context* context, LockRequest* request, bool polling
       request->user_id,
       request->lock_type,
       request->obj_index,
-      true
+      true, polling
       );
   return 0;
 }
@@ -497,6 +511,8 @@ int LockClient::PollExclusiveToShared(LockRequest* request) {
   switch (rule) {
     case RULE_POLL:
       if (value == 0) {
+        ++total_lock_success_with_poll_;
+        sum_poll_when_success_ += context_->retry;
         local_manager_->NotifyLockRequestResult(
             request->seq_no,
             request->user_id,
@@ -735,6 +751,8 @@ int LockClient::LockRemotely(Context* context, int seq_no, uint32_t user_id, int
 
 int LockClient::ReadRemotely(Context* context, int seq_no, uint32_t user_id, int read_target,
     int lock_type, int obj_index) {
+
+
   struct ibv_exp_send_wr send_work_request;
   struct ibv_exp_send_wr* bad_work_request;
   struct ibv_sge sge;
@@ -774,6 +792,8 @@ int LockClient::ReadRemotely(Context* context, int seq_no, uint32_t user_id, int
     // add 4 bytes here because of BIG-ENDIAN?
     send_work_request.wr.rdma.remote_addr += 4;
   } // otherwise, read exclusive portion.
+
+  clock_gettime(CLOCK_MONOTONIC, &start_rdma_read_);
 
   int ret = 0;
   if ((ret = ibv_exp_post_send(context->queue_pair, &send_work_request,
@@ -825,6 +845,8 @@ int LockClient::ReadRemotely(Context* context, int seq_no, uint32_t user_id, int
   send_work_request.wr.rdma.remote_addr =
       (uint64_t)context->lock_table_mr->addr + (obj_index*sizeof(uint64_t));
 
+  clock_gettime(CLOCK_MONOTONIC, &start_rdma_read_);
+
   int ret = 0;
   if ((ret = ibv_exp_post_send(context->queue_pair, &send_work_request,
           &bad_work_request))) {
@@ -840,7 +862,7 @@ int LockClient::ReadRemotely(Context* context, int seq_no, uint32_t user_id, int
 
 
 int LockClient::UnlockRemotely(Context* context, int seq_no, uint32_t user_id, int lock_type,
-    int obj_index, bool is_undo) {
+    int obj_index, bool is_undo, bool retry) {
 
   if (lock_type == LockManager::SHARED) {
     clock_gettime(CLOCK_MONOTONIC, &start_remote_shared_lock_);
@@ -863,13 +885,14 @@ int LockClient::UnlockRemotely(Context* context, int seq_no, uint32_t user_id, i
 
   pthread_mutex_lock(&lock_mutex_);
   LockRequest* request = lock_requests_[lock_request_idx_];
-  request->seq_no    = seq_no;
-  request->user_id   = user_id;
-  request->lock_type = lock_type;
-  request->obj_index = obj_index;
-  request->is_undo   = is_undo;
-  request->task      = TASK_UNLOCK;
-  lock_request_idx_ = (lock_request_idx_ + 1) % 16;
+  request->seq_no      = seq_no;
+  request->user_id     = user_id;
+  request->lock_type   = lock_type;
+  request->obj_index   = obj_index;
+  request->is_undo     = is_undo;
+  request->is_retry    = retry;
+  request->task        = TASK_UNLOCK;
+  lock_request_idx_    = (lock_request_idx_ + 1) % 16;
 
   sge.addr   = (uint64_t)request->original_value;
   sge.length = sizeof(uint64_t);
@@ -898,6 +921,8 @@ int LockClient::UnlockRemotely(Context* context, int seq_no, uint32_t user_id, i
     (uint64_t)context->lock_table_mr->addr + (obj_index*sizeof(uint64_t));
   send_work_request.wr.atomic.rkey        =
     context->lock_table_mr->rkey;
+
+  clock_gettime(CLOCK_MONOTONIC, &start_rdma_atomic_);
 
   int ret = 0;
   if ((ret = ibv_exp_post_send(context->queue_pair, &send_work_request,

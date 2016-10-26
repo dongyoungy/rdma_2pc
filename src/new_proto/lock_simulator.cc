@@ -4,6 +4,7 @@ namespace rdma { namespace proto {
 
 LockSimulator::LockSimulator() {
 
+  num_lock_acquired_till_timeout_ = 0;
   lock_times_ = new double[MAX_LOCK_REQUESTS];
   single_lock_times_ = new double[MAX_LOCK_REQUESTS];
 
@@ -59,46 +60,49 @@ LockSimulator::LockSimulator(LockManager* manager, uint32_t id, int num_manager,
     double local_percentage, double shared_lock_ratio, bool transaction_delay,
     double transaction_delay_min, double transaction_delay_max,
     int min_backoff_time, int max_backoff_time, int sleep_time, double* custom_cdf) {
-  manager_                  = manager;
-  id_                       = id;
-  num_manager_              = num_manager;
-  num_lock_object_          = num_lock_object;
-  state_                    = LockSimulator::STATE_IDLE;
-  //request_size_           = num_lock_request;
-  seed_                     = seed;
-  seed2_                    = seed;
-  verbose_                  = verbose;
-  measure_lock_time_        = measure_lock_time;
-  workload_type_            = workload_type;
-  lock_mode_                = lock_mode;
-  local_percentage_         = local_percentage;
-  shared_lock_ratio_        = shared_lock_ratio;
-  total_num_locks_          = 0;
-  total_num_unlocks_        = 0;
-  total_num_lock_success_   = 0;
-  total_num_lock_failure_   = 0;
-  total_num_timeouts_       = 0;
-  total_time_taken_to_lock_ = 0;
-  measure_time_out_         = false;
-  is_all_local_             = false;
-  transaction_delay_        = transaction_delay;
-  transaction_delay_min_    = transaction_delay_min;
-  transaction_delay_max_    = transaction_delay_max;
-  local_manager_id_         = manager_->GetID();
-  count_limit_              = num_tx;
-  count_                    = 0;
-  last_count_               = 0;
-  max_request_size_         = num_request_per_tx;
-  max_backoff_time_         = max_backoff_time;
-  default_backoff_time_     = min_backoff_time;
-  current_backoff_time_     = default_backoff_time_;
-  backoff_seed_             = seed_;
-  sleep_time_               = sleep_time;
-  time_out_seed_            = seed_ + id;
-  last_seq_no_              = 0;
-  seq_count_                = 0;
-  is_backing_off_           = false;
-  think_time_               = 10;
+  manager_                           = manager;
+  id_                                = id;
+  num_manager_                       = num_manager;
+  num_lock_object_                   = num_lock_object;
+  state_                             = LockSimulator::STATE_IDLE;
+  //request_size_                    = num_lock_request;
+  seed_                              = seed;
+  seed2_                             = seed;
+  verbose_                           = verbose;
+  measure_lock_time_                 = measure_lock_time;
+  workload_type_                     = workload_type;
+  lock_mode_                         = lock_mode;
+  local_percentage_                  = local_percentage;
+  shared_lock_ratio_                 = shared_lock_ratio;
+  total_num_locks_                   = 0;
+  total_num_unlocks_                 = 0;
+  total_num_lock_success_            = 0;
+  total_num_lock_success_with_retry_ = 0;
+  sum_retry_when_success_            = 0;
+  total_num_lock_failure_            = 0;
+  total_num_timeouts_                = 0;
+  sum_index_when_timeout_            = 0;
+  total_time_taken_to_lock_          = 0;
+  measure_time_out_                  = false;
+  is_all_local_                      = false;
+  transaction_delay_                 = transaction_delay;
+  transaction_delay_min_             = transaction_delay_min;
+  transaction_delay_max_             = transaction_delay_max;
+  local_manager_id_                  = manager_->GetID();
+  count_limit_                       = num_tx;
+  count_                             = 0;
+  last_count_                        = 0;
+  max_request_size_                  = num_request_per_tx;
+  max_backoff_time_                  = max_backoff_time;
+  default_backoff_time_              = min_backoff_time;
+  current_backoff_time_              = default_backoff_time_;
+  backoff_seed_                      = seed_;
+  sleep_time_                        = sleep_time;
+  time_out_seed_                     = seed_ + id;
+  last_seq_no_                       = 0;
+  seq_count_                         = 0;
+  is_backing_off_                    = false;
+  think_time_                        = 10;
 
   lock_times_ = new double[MAX_LOCK_REQUESTS];
   single_lock_times_ = new double[MAX_LOCK_REQUESTS];
@@ -385,6 +389,7 @@ void LockSimulator::CreateLockRequests() {
       is_backing_off_ = false;
     }
     ++total_num_timeouts_;
+    sum_index_when_timeout_ += num_lock_acquired_till_timeout_;
   }
 
 
@@ -719,6 +724,10 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
         pthread_mutex_unlock(&PRINT_MUTEX);
       }
       ++total_num_lock_success_;
+      if (retry_ > 0) {
+        ++total_num_lock_success_with_retry_;
+        sum_retry_when_success_ += retry_;
+      }
       retry_ = 0;
       if (current_request_idx_ < request_size_) {
         ChangeState(STATE_LOCKING);
@@ -757,6 +766,7 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
         current_request_idx_ = last_request_idx_ - 1;
         ++total_num_lock_failure_;
         retry_ = 0;
+        num_lock_acquired_till_timeout_ = last_request_idx_;
         is_tx_failed_ = true;
         if (last_request_idx_ == 0) {
           ChangeState(STATE_IDLE);
@@ -781,6 +791,7 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
         pthread_mutex_unlock(&PRINT_MUTEX);
       }
       ++total_num_lock_failure_;
+      num_lock_acquired_till_timeout_ = last_request_idx_;
       is_tx_failed_ = true;
       // retry upon failure
       if (last_request_idx_ == 0) {
@@ -843,9 +854,10 @@ int LockSimulator::TimeOut() {
   if (requests_[last_request_idx_]->task == TASK_LOCK) {
     if (lock_mode_ == LOCK_PROXY_QUEUE ||
         (lock_mode_ == LOCK_REMOTE_NOTIFY && state_ == STATE_QUEUED)) {
-      current_request_idx_ = last_request_idx_;
-      is_tx_failed_ = true;
-      measure_time_out_ = false;
+      current_request_idx_            = last_request_idx_;
+      num_lock_acquired_till_timeout_ = last_request_idx_;
+      is_tx_failed_                   = true;
+      measure_time_out_               = false;
       if (verbose_) {
         pthread_mutex_lock(&PRINT_MUTEX);
         cout << "Timeout: " << id_ << endl;
@@ -896,6 +908,10 @@ uint64_t LockSimulator::GetTotalNumLockSuccess() const {
   return total_num_lock_success_;
 }
 
+uint64_t LockSimulator::GetTotalNumLockSuccessWithRetry() const {
+  return total_num_lock_success_with_retry_;
+}
+
 uint64_t LockSimulator::GetTotalNumLockFailure() const {
   return total_num_lock_failure_;
 }
@@ -910,6 +926,24 @@ uint64_t LockSimulator::GetCount() const {
 
 uint64_t LockSimulator::GetSeqCount() const {
   return seq_count_;
+}
+
+uint64_t LockSimulator::GetSumRetryWhenSuccess() const {
+  return sum_retry_when_success_;
+}
+
+uint64_t LockSimulator::GetSumIndexWhenTimeout() const {
+  return sum_index_when_timeout_;
+}
+
+double LockSimulator::GetAverageRetryCountOnSuccess() const {
+  return total_num_lock_success_with_retry_ == 0 ?
+    0 : (double)sum_retry_when_success_ / (double)total_num_lock_success_with_retry_;
+}
+
+double LockSimulator::GetAverageIndexOnTimeout() const {
+  return total_num_timeouts_ == 0 ?
+    0 : (double)sum_index_when_timeout_ / (double)total_num_timeouts_;
 }
 
 double LockSimulator::GetAverageTimeTakenToLock() const {
@@ -969,6 +1003,7 @@ int LockSimulator::GetSleepTime() const {
 bool LockSimulator::IsBackingOff() const {
   return is_backing_off_;
 }
+
 
 void* LockSimulator::CheckTimeOut(void* arg) {
   LockSimulator* simulator = (LockSimulator*)arg;

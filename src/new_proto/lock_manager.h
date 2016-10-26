@@ -84,6 +84,10 @@ class LockManager {
     uint64_t GetTotalRDMAWriteCount() const;
     uint64_t GetTotalRDMAAtomicCount() const;
 
+    uint64_t GetTotalLockContention() const;
+    uint64_t GetTotalLockSuccessWithPoll() const;
+    uint64_t GetTotalSumPollWhenSuccess() const;
+
     int SwitchToLocal();
     int SwitchToRemote();
     static void* PollCompletionQueue(void* context);

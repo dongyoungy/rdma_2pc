@@ -1579,6 +1579,33 @@ int LockManager::RegisterContext(Context* context) {
   return 0;
 }
 
+uint64_t LockManager::GetTotalLockContention() const {
+  uint64_t count = 0;
+  map<uint64_t, LockClient*>::const_iterator it;
+  for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
+    count += it->second->GetNumLockContention();
+  }
+  return count;
+}
+
+uint64_t LockManager::GetTotalLockSuccessWithPoll() const {
+  uint64_t count = 0;
+  map<uint64_t, LockClient*>::const_iterator it;
+  for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
+    count += it->second->GetNumLockSuccessWithPoll();
+  }
+  return count;
+}
+
+uint64_t LockManager::GetTotalSumPollWhenSuccess() const {
+  uint64_t count = 0;
+  map<uint64_t, LockClient*>::const_iterator it;
+  for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
+    count += it->second->GetSumPollWhenSuccess();
+  }
+  return count;
+}
+
 double LockManager::GetAverageLocalSharedLockTime() const {
   return (num_local_shared_lock_ > 0) ?
     total_local_shared_lock_time_ / num_local_shared_lock_ : 0;

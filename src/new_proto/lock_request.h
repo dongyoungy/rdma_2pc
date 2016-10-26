@@ -16,6 +16,7 @@ struct LockRequest {
   int task; // lock, unlock
   int read_target;
   int retry;
+  bool is_retry;
   uint64_t* original_value;
   struct ibv_mr* original_value_mr;
   uint32_t* read_buffer;

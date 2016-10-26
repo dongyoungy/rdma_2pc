@@ -17,8 +17,14 @@ TPCCLockGen::TPCCLockGen(int workload_type, int home_warehouse_id, int num_wareh
     mix_[2] = 92; // OrderStatus 4
     mix_[3] = 96; // Delivery 4
     mix_[4] = 100; // StockLevel 4
+
+    //mix_[0] = 100; // NewOrder 45
+    //mix_[1] = 51; // Payment 43
+    //mix_[2] = 52; // OrderStatus 4
+    //mix_[3] = 53; // Delivery 4
+    //mix_[4] = 100; // StockLevel 4
   }
-  stocks_ = new int[NUM_ORDER_LINE_PER_ORDER];
+  items_ = new int[NUM_ORDER_LINE_PER_ORDER];
 }
 
 TPCCLockGen::~TPCCLockGen() {
@@ -69,12 +75,6 @@ int TPCCLockGen::GenerateNewOrder(vector<LockRequest*>& requests) {
 
   int req_idx = 0;
   int w_id = home_warehouse_id_;
-  // "getWarehouseTaxRate": "SELECT W_TAX FROM WAREHOUSE WHERE W_ID = ?"
-  requests[req_idx]->lm_id     = w_id;
-  requests[req_idx]->lock_type = SHARED;
-  requests[req_idx]->obj_index = WAREHOUSE_START_IDX;
-  requests[req_idx]->task      = TASK_LOCK;
-  ++req_idx;
 
   // "getDistrict": "SELECT D_TAX, D_NEXT_O_ID FROM DISTRICT WHERE D_ID = ? AND D_W_ID = ?"
   // "incrementNextOrderId": "UPDATE DISTRICT SET D_NEXT_O_ID = ? WHERE D_ID = ? AND D_W_ID = ?"
@@ -135,13 +135,34 @@ int TPCCLockGen::GenerateNewOrder(vector<LockRequest*>& requests) {
   // "createOrderLine": "INSERT INTO ORDER_LINE
   // (OL_O_ID, OL_D_ID, OL_W_ID, OL_NUMBER, OL_I_ID, OL_SUPPLY_W_ID, OL_DELIVERY_D, OL_QUANTITY,
   // OL_AMOUNT, OL_DIST_INFO) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  int cnt = 0;
+  while (cnt < NUM_ORDER_LINE_PER_ORDER) {
+    items_[cnt] = rand_r(&seed_) % NUM_ORDER_LINE_PER_ORDER;
+    bool duplicate = false;
+    for (int i = 0; i < cnt; ++i) {
+      if (items_[cnt] == items_[i]) {
+        duplicate = true;
+      }
+    }
+    if (!duplicate) {
+      ++cnt;
+    }
+  }
   for (int i = 0; i < NUM_ORDER_LINE_PER_ORDER; ++i) {
     requests[req_idx]->lm_id     = w_id;
     requests[req_idx]->lock_type = EXCLUSIVE;
-    requests[req_idx]->obj_index = ORDER_LINE_START_IDX + (o_id * NUM_ORDER_LINE_PER_ORDER) + i;
+    requests[req_idx]->obj_index = ORDER_LINE_START_IDX + (o_id * NUM_ORDER_LINE_PER_ORDER) +
+      items_[i];
     requests[req_idx]->task      = TASK_LOCK;
     ++req_idx;
   }
+
+  // "getWarehouseTaxRate": "SELECT W_TAX FROM WAREHOUSE WHERE W_ID = ?"
+  requests[req_idx]->lm_id     = w_id;
+  requests[req_idx]->lock_type = SHARED;
+  requests[req_idx]->obj_index = WAREHOUSE_START_IDX;
+  requests[req_idx]->task      = TASK_LOCK;
+  ++req_idx;
 
   return req_idx;
 }
@@ -151,16 +172,7 @@ int TPCCLockGen::GeneratePayment(vector<LockRequest*>& requests) {
   int req_idx = 0;
   int x = 1 + rand_r(&seed_) % 100;
   int y = 1 + rand_r(&seed_) % 100;
-
-  // "getWarehouse": "SELECT W_NAME, W_STREET_1, W_STREET_2, W_CITY, W_STATE, W_ZIP
-  // FROM WAREHOUSE WHERE W_ID = ?"
-  // "updateWarehouseBalance": "UPDATE WAREHOUSE SET W_YTD = W_YTD + ? WHERE W_ID = ?"
   int w_id = home_warehouse_id_;
-  requests[req_idx]->lm_id     = w_id;
-  requests[req_idx]->lock_type = EXCLUSIVE;
-  requests[req_idx]->obj_index = WAREHOUSE_START_IDX;
-  requests[req_idx]->task      = TASK_LOCK;
-  ++req_idx;
 
   int d_id = rand_r(&seed_) % NUM_ROW_DISTRICT;
   int d_w_id = d_id;
@@ -176,6 +188,14 @@ int TPCCLockGen::GeneratePayment(vector<LockRequest*>& requests) {
       c_w_id = rand_r(&seed_) % num_warehouse_;
     }
   }
+  // "getWarehouse": "SELECT W_NAME, W_STREET_1, W_STREET_2, W_CITY, W_STATE, W_ZIP
+  // FROM WAREHOUSE WHERE W_ID = ?"
+  // "updateWarehouseBalance": "UPDATE WAREHOUSE SET W_YTD = W_YTD + ? WHERE W_ID = ?"
+  requests[req_idx]->lm_id     = w_id;
+  requests[req_idx]->lock_type = EXCLUSIVE;
+  requests[req_idx]->obj_index = WAREHOUSE_START_IDX;
+  requests[req_idx]->task      = TASK_LOCK;
+  ++req_idx;
 
   // "getDistrict": "SELECT D_NAME, D_STREET_1, D_STREET_2, D_CITY, D_STATE, D_ZIP FROM DISTRICT
   // WHERE D_W_ID = ? AND D_ID = ?"
@@ -311,10 +331,24 @@ int TPCCLockGen::GenerateOrderStatus(vector<LockRequest*>& requests) {
 
   // "getOrderLines": "SELECT OL_SUPPLY_W_ID, OL_I_ID, OL_QUANTITY, OL_AMOUNT, OL_DELIVERY_D
   // FROM ORDER_LINE WHERE OL_W_ID = ? AND OL_D_ID = ? AND OL_O_ID = ?"
+  int cnt = 0;
+  while (cnt < NUM_ORDER_LINE_PER_ORDER) {
+    items_[cnt] = rand_r(&seed_) % NUM_ORDER_LINE_PER_ORDER;
+    bool duplicate = false;
+    for (int i = 0; i < cnt; ++i) {
+      if (items_[cnt] == items_[i]) {
+        duplicate = true;
+      }
+    }
+    if (!duplicate) {
+      ++cnt;
+    }
+  }
   for (int i = 0 ; i < NUM_ORDER_LINE_PER_ORDER; ++i) {
     requests[req_idx]->lm_id     = w_id;
     requests[req_idx]->lock_type = SHARED;
-    requests[req_idx]->obj_index = ORDER_LINE_START_IDX + (o_id * NUM_ORDER_LINE_PER_ORDER) + i;
+    requests[req_idx]->obj_index = ORDER_LINE_START_IDX +
+      (o_id * NUM_ORDER_LINE_PER_ORDER) + items_[i];
     requests[req_idx]->task      = TASK_LOCK;
     ++req_idx;
   }
@@ -353,10 +387,24 @@ int TPCCLockGen::GenerateDelivery(vector<LockRequest*>& requests) {
   // WHERE OL_O_ID = ? AND OL_D_ID = ? AND OL_W_ID = ?"
   // "sumOLAmount": "SELECT SUM(OL_AMOUNT) FROM ORDER_LINE
   // WHERE OL_O_ID = ? AND OL_D_ID = ? AND OL_W_ID = ?"
+  int cnt = 0;
+  while (cnt < NUM_ORDER_LINE_PER_ORDER) {
+    items_[cnt] = rand_r(&seed_) % NUM_ORDER_LINE_PER_ORDER;
+    bool duplicate = false;
+    for (int i = 0; i < cnt; ++i) {
+      if (items_[cnt] == items_[i]) {
+        duplicate = true;
+      }
+    }
+    if (!duplicate) {
+      ++cnt;
+    }
+  }
   for (int i = 0 ; i < NUM_ORDER_LINE_PER_ORDER; ++i) {
     requests[req_idx]->lm_id     = w_id;
     requests[req_idx]->lock_type = EXCLUSIVE;
-    requests[req_idx]->obj_index = ORDER_LINE_START_IDX + (o_id * NUM_ORDER_LINE_PER_ORDER) + i;
+    requests[req_idx]->obj_index = ORDER_LINE_START_IDX +
+      (o_id * NUM_ORDER_LINE_PER_ORDER) + items_[i];
     requests[req_idx]->task      = TASK_LOCK;
     ++req_idx;
   }
@@ -398,19 +446,12 @@ int TPCCLockGen::GenerateStockLevel(vector<LockRequest*>& requests) {
   //   """
   int o_id = rand_r(&seed_) % NUM_ROW_ORDER;
   int s_id = rand_r(&seed_) % NUM_ROW_STOCK;
-  for (int i = 0 ; i < NUM_ORDER_LINE_PER_ORDER; ++i) {
-    requests[req_idx]->lm_id     = w_id;
-    requests[req_idx]->lock_type = SHARED;
-    requests[req_idx]->obj_index = ORDER_LINE_START_IDX + (o_id * NUM_ORDER_LINE_PER_ORDER) + i;
-    requests[req_idx]->task      = TASK_LOCK;
-    ++req_idx;
-  }
   int cnt = 0;
   while (cnt < NUM_ORDER_LINE_PER_ORDER) {
-    stocks_[cnt] = rand_r(&seed_) % NUM_ROW_STOCK;
+    items_[cnt] = rand_r(&seed_) % NUM_ORDER_LINE_PER_ORDER;
     bool duplicate = false;
     for (int i = 0; i < cnt; ++i) {
-      if (stocks_[cnt] == stocks_[i]) {
+      if (items_[cnt] == items_[i]) {
         duplicate = true;
       }
     }
@@ -421,7 +462,28 @@ int TPCCLockGen::GenerateStockLevel(vector<LockRequest*>& requests) {
   for (int i = 0 ; i < NUM_ORDER_LINE_PER_ORDER; ++i) {
     requests[req_idx]->lm_id     = w_id;
     requests[req_idx]->lock_type = SHARED;
-    requests[req_idx]->obj_index = STOCK_START_IDX + stocks_[i];
+    requests[req_idx]->obj_index = ORDER_LINE_START_IDX +
+      (o_id * NUM_ORDER_LINE_PER_ORDER) + items_[i];
+    requests[req_idx]->task      = TASK_LOCK;
+    ++req_idx;
+  }
+  cnt = 0;
+  while (cnt < NUM_ORDER_LINE_PER_ORDER) {
+    items_[cnt] = rand_r(&seed_) % NUM_ROW_STOCK;
+    bool duplicate = false;
+    for (int i = 0; i < cnt; ++i) {
+      if (items_[cnt] == items_[i]) {
+        duplicate = true;
+      }
+    }
+    if (!duplicate) {
+      ++cnt;
+    }
+  }
+  for (int i = 0 ; i < NUM_ORDER_LINE_PER_ORDER; ++i) {
+    requests[req_idx]->lm_id     = w_id;
+    requests[req_idx]->lock_type = SHARED;
+    requests[req_idx]->obj_index = STOCK_START_IDX + items_[i];
     requests[req_idx]->task      = TASK_LOCK;
     ++req_idx;
   }

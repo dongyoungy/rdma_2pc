@@ -99,13 +99,19 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
       if (request->lock_type == LockManager::EXCLUSIVE) {
         if (exclusive == 0 && shared == 0) {
           // exclusive lock acquisition successful
+          //wait_after_me_[request->obj_index] = 0;
+          ++total_lock_success_;
           local_manager_->NotifyLockRequestResult(
               request->seq_no,
               request->user_id,
               request->lock_type,
               request->obj_index,
               LockManager::RESULT_SUCCESS);
+        //} else if ((wait_after_me_[request->obj_index] & value) != 0) {
+          //wait_after_me_[request->obj_index] = (wait_after_me_[request->obj_index] & value);
+          //this->UndoLocking(context_, request, true);
         } else {
+          ++total_lock_contention_;
           context_->all_waiters = value;
           this->HandleExclusive(request);
         }
@@ -113,26 +119,36 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
         // shared lock
         if (exclusive == 0) {
           // it should have been successful since exclusive and shared was 0
+          ++total_lock_success_;
           local_manager_->NotifyLockRequestResult(
               request->seq_no,
               request->user_id,
               request->lock_type,
               request->obj_index,
               LockManager::RESULT_SUCCESS);
+        //} else if ((wait_after_me_[request->obj_index] & value) != 0) {
+          //wait_after_me_[request->obj_index] = (wait_after_me_[request->obj_index] & value);
+          //this->UndoLocking(context_, request, true);
         } else {
+          ++total_lock_contention_;
           context_->waiters = exclusive;
           this->HandleShared(request);
         }
       }
     } else if (request->task == TASK_UNLOCK) {
       if (request->is_undo) {
+        int result = RESULT_FAILURE;
+        //if (request->is_retry) {
+          //result = RESULT_RETRY;
+        //}
         local_manager_->NotifyLockRequestResult(
             request->seq_no,
             request->user_id,
             request->lock_type,
             request->obj_index,
-            LockManager::RESULT_FAILURE);
+            result);
       } else {
+        //wait_after_me_[request->obj_index] = value;
         local_manager_->NotifyUnlockRequestResult(
             request->seq_no,
             request->user_id,
@@ -165,6 +181,8 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
       // Polling on X -> proceed if value is zero
       if ((context_->waiters & value) == 0) {
         context_->waiters = 0;
+        ++total_lock_success_with_poll_;
+        sum_poll_when_success_ += context_->retry;
         local_manager_->NotifyLockRequestResult(
             request->seq_no,
             request->user_id,
@@ -178,6 +196,8 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
     } else {
       if ((context_->all_waiters & all_value) == 0) {
         context_->all_waiters = 0;
+        ++total_lock_success_with_poll_;
+        sum_poll_when_success_ += context_->retry;
         local_manager_->NotifyLockRequestResult(
             request->seq_no,
             request->user_id,

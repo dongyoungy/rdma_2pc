@@ -48,6 +48,14 @@ class Client {
     uint64_t GetRDMAReadCount() const;
     uint64_t GetRDMAWriteCount() const;
     uint64_t GetRDMAAtomicCount() const;
+    uint64_t GetNumLockContention() const;
+    uint64_t GetNumLockSuccess() const;
+    uint64_t GetNumLockSuccessWithPoll() const;
+    uint64_t GetSumPollWhenSuccess() const;
+
+    double GetAveragePollWhenSuccess() const;
+    double GetAverageRDMAReadTime() const;
+    double GetAverageRDMAAtomicTime() const;
 
   protected:
     Context* BuildContext(struct rdma_cm_id* id);
@@ -66,7 +74,6 @@ class Client {
     virtual int HandleDisconnect(Context* context);
 
     virtual int HandleWorkCompletion(struct ibv_wc* work_completion) = 0;
-
 
     uint64_t num_rdma_send_;
     uint64_t num_rdma_recv_;
@@ -89,6 +96,8 @@ class Client {
     double num_receive_message_;
     double total_exclusive_lock_remote_time_;
     double total_shared_lock_remote_time_;
+    double total_rdma_atomic_time_;
+    double total_rdma_read_time_;
     double num_exclusive_lock_;
     double num_shared_lock_;
     int test_mode_;
@@ -108,7 +117,15 @@ class Client {
     struct timespec end_send_message_;
     struct timespec start_receive_message_;
     struct timespec end_receive_message_;
+    struct timespec start_rdma_read_;
+    struct timespec end_rdma_read_;
+    struct timespec start_rdma_atomic_;
+    struct timespec end_rdma_atomic_;
     uint64_t current_semaphore_;
+    uint64_t total_lock_success_;
+    uint64_t total_lock_contention_;
+    uint64_t sum_poll_when_success_;
+    uint64_t total_lock_success_with_poll_;
     size_t data_size_;
     time_t test_start_;
     time_t test_end_;

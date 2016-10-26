@@ -292,6 +292,18 @@ int main(int argc, char** argv) {
   long global_unlock_sum                   = 0;
   long local_lock_success                  = 0;
   long global_lock_success                 = 0;
+  long local_lock_contention               = 0;
+  long global_lock_contention              = 0;
+  long local_lock_success_with_retry       = 0;
+  long global_lock_success_with_retry      = 0;
+  long local_lock_success_with_poll        = 0;
+  long global_lock_success_with_poll       = 0;
+  long local_sum_poll_when_success         = 0;
+  long global_sum_poll_when_success        = 0;
+  long local_sum_retry_when_success        = 0;
+  long global_sum_retry_when_success       = 0;
+  long local_sum_index_when_timeout        = 0;
+  long global_sum_index_when_timeout       = 0;
   long local_lock_failure                  = 0;
   long global_lock_failure                 = 0;
   long local_timeout                       = 0;
@@ -403,6 +415,9 @@ int main(int argc, char** argv) {
         local_sum += simulator->GetTotalNumLocks();
         local_unlock_sum += simulator->GetTotalNumUnlocks();
         local_lock_success += simulator->GetTotalNumLockSuccess();
+        local_lock_success_with_retry += simulator->GetTotalNumLockSuccessWithRetry();
+        local_sum_retry_when_success += simulator->GetSumRetryWhenSuccess();
+        local_sum_index_when_timeout += simulator->GetSumIndexWhenTimeout();
         local_lock_failure += simulator->GetTotalNumLockFailure();
         local_timeout += simulator->GetTotalNumTimeout();
         if (simulator->IsLockTimeMeasured()) {
@@ -418,6 +433,10 @@ int main(int argc, char** argv) {
     LockSimulator* simulator = users[j];
     local_time_taken_sum += simulator->GetTimeTaken();
   }
+
+  local_lock_contention = lock_manager->GetTotalLockContention();
+  local_lock_success_with_poll = lock_manager->GetTotalLockSuccessWithPoll();
+  local_sum_poll_when_success = lock_manager->GetTotalSumPollWhenSuccess();
 
   local_remote_shared_lock_time =
     lock_manager->GetAverageRemoteSharedLockTime();
@@ -500,6 +519,19 @@ int main(int argc, char** argv) {
   MPI_Reduce(&local_rdma_recv_count,
       &global_rdma_recv_count,
       1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+
+  MPI_Reduce(&local_lock_contention, &global_lock_contention, 1, MPI_LONG, MPI_SUM, 0,
+      MPI_COMM_WORLD);
+  MPI_Reduce(&local_lock_success_with_retry, &global_lock_success_with_retry, 1, MPI_LONG,
+      MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_lock_success_with_poll, &global_lock_success_with_poll, 1, MPI_LONG,
+      MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_sum_poll_when_success, &global_sum_poll_when_success, 1, MPI_LONG,
+      MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_sum_retry_when_success, &global_sum_retry_when_success, 1, MPI_LONG,
+      MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_sum_index_when_timeout, &global_sum_index_when_timeout, 1, MPI_LONG,
+      MPI_SUM, 0, MPI_COMM_WORLD);
 
     cout << "Local Avg CPU Usage = " << local_cpu_usage << "% "
       "(" << "ID = " << rank <<  " ,# nodes: " << num_managers <<
@@ -605,11 +637,22 @@ int main(int argc, char** argv) {
     } else {
       cerr << "N/A,N/A,";
     }
+    double avg_poll_when_success = (global_lock_success_with_poll == 0) ? 0.0 :
+      (double)global_sum_poll_when_success / (double)global_lock_success_with_poll;
+    double avg_retry_when_success = (global_lock_success_with_retry == 0) ? 0.0 :
+      (double)global_sum_retry_when_success / (double)global_lock_success_with_retry;
     cerr << global_lock_time / num_managers <<
       "," << global_99_lock_time << "," << global_95_lock_time << "," <<
       (long)((double)global_sum / (double)time_taken) << "," <<
-      global_sum << "," << global_lock_success << "," << global_lock_failure << "," <<
+      global_sum << "," << global_lock_success << "," <<
+      global_lock_success_with_retry << "," <<
+      avg_retry_when_success << "," <<
+      global_lock_success_with_poll << "," <<
+      avg_poll_when_success << "," <<
+      global_lock_failure << "," <<
+      global_lock_contention << "," <<
       global_timeout << "," <<
+      (double)global_sum_index_when_timeout / (double)global_timeout << "," <<
       global_cpu_usage_avg << "," << global_cpu_usage_std <<
       "," << global_time_taken_avg / (double)(1000*1000*1000) << "," <<
       global_time_taken_std / (double)(1000*1000*1000) << "," <<

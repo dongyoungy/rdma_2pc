@@ -351,6 +351,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           // exclusive lock acquisition successful
           wait_after_me_[request->obj_index] = 0;
           wait_seq_no_ = -1;
+          ++total_lock_success_;
           local_manager_->NotifyLockRequestResult(
               request->seq_no,
               request->user_id,
@@ -368,6 +369,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           //pthread_cond_signal(&wait_cond_);
           pthread_mutex_unlock(&wait_mutex_);
 
+          ++total_lock_contention_;
           local_manager_->NotifyLockRequestResult(
               request->seq_no,
               request->user_id,
@@ -380,6 +382,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           // shared lock acquisition successful
           wait_after_me_[request->obj_index] = 0;
           wait_seq_no_ = -1;
+          ++total_lock_success_;
           local_manager_->NotifyLockRequestResult(
               request->seq_no,
               request->user_id,
@@ -409,6 +412,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           //pthread_cond_signal(&wait_cond_);
           pthread_mutex_unlock(&wait_mutex_);
 
+          ++total_lock_contention_;
           local_manager_->NotifyLockRequestResult(
               request->seq_no,
               request->user_id,

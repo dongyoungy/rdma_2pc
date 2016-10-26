@@ -34,7 +34,7 @@ int main(int argc, char** argv) {
   }
 
   int num_managers = 1;
-  int rank = 6;
+  int rank = 0;
 
   if (1 == htons(1)) {
     cout << "The current machine uses BIG ENDIAN" << endl;

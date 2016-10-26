@@ -19,6 +19,13 @@ Client::Client(const string& work_dir, LockManager* local_manager,
   total_shared_lock_remote_time_    = 0;
   total_send_message_time_          = 0;
   total_receive_message_time_       = 0;
+  total_rdma_atomic_time_           = 0;
+  total_rdma_read_time_             = 0;
+  total_lock_success_               = 0;
+  total_lock_success_with_poll_     = 0;
+  total_lock_contention_            = 0;
+  sum_poll_when_success_            = 0;
+
   num_exclusive_lock_               = 0;
   num_shared_lock_                  = 0;
   num_send_message_                 = 0;
@@ -530,6 +537,35 @@ uint64_t Client::GetRDMAWriteCount() const {
 
 uint64_t Client::GetRDMAAtomicCount() const {
   return num_rdma_atomic_;
+}
+
+uint64_t Client::GetNumLockContention() const {
+  return total_lock_contention_;
+}
+
+uint64_t Client::GetNumLockSuccess() const {
+  return total_lock_success_;
+}
+
+uint64_t Client::GetNumLockSuccessWithPoll() const {
+  return total_lock_success_with_poll_;
+}
+
+uint64_t Client::GetSumPollWhenSuccess() const {
+  return sum_poll_when_success_;
+}
+
+double Client::GetAverageRDMAReadTime() const {
+  return total_rdma_read_time_ / (double)num_rdma_read_;
+}
+
+double Client::GetAverageRDMAAtomicTime() const {
+  return total_rdma_atomic_time_ / (double)num_rdma_atomic_;
+}
+
+double Client::GetAveragePollWhenSuccess() const {
+  return total_lock_success_with_poll_ == 0 ? 0 :
+    (double)sum_poll_when_success_ / (double)total_lock_success_with_poll_;
 }
 
 

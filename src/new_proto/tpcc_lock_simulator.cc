@@ -8,38 +8,42 @@ TPCCLockSimulator::TPCCLockSimulator(LockManager* manager, uint32_t id, uint32_t
     bool transaction_delay, double transaction_delay_min,
     double transaction_delay_max, int min_backoff_time,
     int max_backoff_time, int sleep_time, int think_time) {
-  manager_                  = manager;
-  id_                       = id;
-  home_id_                  = home_id;
-  num_manager_              = num_manager;
-  num_tx_                   = num_tx;
-  seed_                     = seed;
-  verbose_                  = verbose;
-  measure_lock_time_        = measure_lock_time;
-  lock_mode_                = lock_mode;
-  transaction_delay_        = transaction_delay;
-  transaction_delay_min_    = transaction_delay_min;
-  transaction_delay_max_    = transaction_delay_max;
-  default_backoff_time_     = min_backoff_time;
-  current_backoff_time_     = default_backoff_time_;
-  max_backoff_time_         = max_backoff_time;
-  local_manager_id_         = manager_->GetID();
-  max_request_size_         = 128;
-  is_tx_failed_             = false;
-  total_num_locks_          = 0;
-  total_num_unlocks_        = 0;
-  total_num_lock_success_   = 0;
-  total_num_lock_failure_   = 0;
-  total_num_timeouts_       = 0;
-  total_time_taken_to_lock_ = 0;
-  count_                    = 0;
-  last_count_               = 0;
-  last_seq_no_              = 0;
-  seq_count_                = 0;
-  is_backing_off_           = false;
-  sleep_time_               = sleep_time;
-  think_time_               = think_time;
-  workload_type_            = workload_type;
+  manager_                           = manager;
+  id_                                = id;
+  home_id_                           = home_id;
+  num_manager_                       = num_manager;
+  num_tx_                            = num_tx;
+  seed_                              = seed;
+  verbose_                           = verbose;
+  measure_lock_time_                 = measure_lock_time;
+  lock_mode_                         = lock_mode;
+  transaction_delay_                 = transaction_delay;
+  transaction_delay_min_             = transaction_delay_min;
+  transaction_delay_max_             = transaction_delay_max;
+  default_backoff_time_              = min_backoff_time;
+  current_backoff_time_              = default_backoff_time_;
+  max_backoff_time_                  = max_backoff_time;
+  local_manager_id_                  = manager_->GetID();
+  max_request_size_                  = 128;
+  is_tx_failed_                      = false;
+  total_num_locks_                   = 0;
+  total_num_unlocks_                 = 0;
+  total_num_lock_success_            = 0;
+  total_num_lock_failure_            = 0;
+  total_num_timeouts_                = 0;
+  total_num_lock_contention_         = 0;
+  total_num_lock_success_with_retry_ = 0;
+  sum_retry_when_success_            = 0;
+  sum_index_when_timeout_            = 0;
+  total_time_taken_to_lock_          = 0;
+  count_                             = 0;
+  last_count_                        = 0;
+  last_seq_no_                       = 0;
+  seq_count_                         = 0;
+  is_backing_off_                    = false;
+  sleep_time_                        = sleep_time;
+  think_time_                        = think_time;
+  workload_type_                     = workload_type;
 }
 
 void TPCCLockSimulator::Run() {
@@ -139,6 +143,7 @@ void TPCCLockSimulator::CreateLockRequests() {
     }
 
     ++total_num_timeouts_;
+    sum_index_when_timeout_ += num_lock_acquired_till_timeout_;
   }
 
   last_request_idx_ = 0;

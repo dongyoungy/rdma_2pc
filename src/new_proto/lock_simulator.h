@@ -55,9 +55,14 @@ class LockSimulator {
     uint64_t GetTotalNumLocks() const;
     uint64_t GetTotalNumUnlocks() const;
     uint64_t GetTotalNumLockSuccess() const;
+    uint64_t GetTotalNumLockSuccessWithRetry() const;
     uint64_t GetTotalNumLockFailure() const;
     uint64_t GetTotalNumTimeout() const;
+    uint64_t GetSumRetryWhenSuccess() const;
+    uint64_t GetSumIndexWhenTimeout() const;
     double GetAverageTimeTakenToLock() const;
+    double GetAverageRetryCountOnSuccess() const;
+    double GetAverageIndexOnTimeout() const;
     double GetTimeTaken() const;
     double Get99PercentileLockTime();
     double Get95PercentileLockTime();
@@ -111,6 +116,7 @@ class LockSimulator {
     uint32_t id_;
     int lock_mode_;
     int seq_count_;
+    int num_lock_acquired_till_timeout_;
     int last_request_idx_;
     int current_request_idx_;
     int max_backoff_time_;
@@ -132,8 +138,12 @@ class LockSimulator {
     uint64_t total_num_locks_;
     uint64_t total_num_unlocks_;
     uint64_t total_num_lock_success_;
+    uint64_t total_num_lock_success_with_retry_;
     uint64_t total_num_lock_failure_;
+    uint64_t total_num_lock_contention_;
     uint64_t total_num_timeouts_;
+    uint64_t sum_retry_when_success_;
+    uint64_t sum_index_when_timeout_;
     vector<LockRequest*> requests_;
     pthread_mutex_t mutex_;
     pthread_mutex_t time_mutex_;

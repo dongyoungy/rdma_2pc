@@ -62,7 +62,7 @@ class TPCCLockGen {
     int workload_type_;
     int num_warehouse_;
     int* mix_;
-    int* stocks_;
+    int* items_;
     unsigned int seed_;
     int tx_type_;
 
