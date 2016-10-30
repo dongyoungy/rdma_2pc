@@ -56,6 +56,8 @@ class Client {
     double GetAveragePollWhenSuccess() const;
     double GetAverageRDMAReadTime() const;
     double GetAverageRDMAAtomicTime() const;
+    double GetTotalRDMAReadTime() const;
+    double GetTotalRDMAAtomicTime() const;
 
   protected:
     Context* BuildContext(struct rdma_cm_id* id);

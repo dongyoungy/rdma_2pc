@@ -77,12 +77,12 @@ int CommunicationClient::HandleWorkCompletion(struct ibv_wc* wc) {
   }
 
   if (wc->opcode == IBV_WC_RECV) {
+    pthread_mutex_lock(&communication_mutex_);
     Context* context = (Context *)wc->wr_id;
     Message* message = context->receive_message_buffer->GetMessage();
     context->receive_message_buffer->Rotate();
     // post receive first.
     ReceiveMessage(context);
-    pthread_mutex_lock(&communication_mutex_);
     if (message->type == Message::GRANT_LOCK_ACK) {
       //pthread_mutex_lock(&PRINT_MUTEX);
       //cout << "Grant ACK: " << message->seq_no << "," << message->user_id << "," <<

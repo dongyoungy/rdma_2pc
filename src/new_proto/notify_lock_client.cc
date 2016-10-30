@@ -349,8 +349,10 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       if (request->lock_type == EXCLUSIVE) {
         if (exclusive == 0 && shared == 0) {
           // exclusive lock acquisition successful
+          pthread_mutex_lock(&wait_mutex_);
           wait_after_me_[request->obj_index] = 0;
           wait_seq_no_ = -1;
+          pthread_mutex_unlock(&wait_mutex_);
           ++total_lock_success_;
           local_manager_->NotifyLockRequestResult(
               request->seq_no,
@@ -380,8 +382,10 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       } else if (request->lock_type == SHARED) {
         if (exclusive == 0) {
           // shared lock acquisition successful
+          pthread_mutex_lock(&wait_mutex_);
           wait_after_me_[request->obj_index] = 0;
           wait_seq_no_ = -1;
+          pthread_mutex_unlock(&wait_mutex_);
           ++total_lock_success_;
           local_manager_->NotifyLockRequestResult(
               request->seq_no,
@@ -439,7 +443,10 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           prev_value = ((uint64_t)exclusive) << 32 | (shared - request->user_id);
         }
         pthread_mutex_lock(&wait_mutex_);
-        wait_after_me_[request->obj_index] = prev_value;
+        wait_after_me_[request->obj_index]  = prev_value;
+        wait_before_me_[request->obj_index] = 0;
+        wait_seq_no_                        = -1;
+        wait_obj_index_                     = -1;
         pthread_mutex_unlock(&wait_mutex_);
 
         int ret = NotifyWaitingNodes(request, prev_value);
@@ -456,15 +463,18 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     LockRequest* request = (LockRequest *)work_completion->wr_id;
     uint64_t value = *request->read_buffer2;
     uint64_t prev_value;
+    uint32_t exclusive, shared;
+    exclusive = (uint32_t)((value)>>32);
+    shared = (uint32_t)value;
     if (request->task == TASK_READ) {
       // Read for retrying lock
       if (wait_seq_no_ == -1) {
         return 0;
       }
-      if ((wait_before_me_[wait_obj_index_] & value) == 0) {
-        pthread_mutex_lock(&wait_mutex_);
+      pthread_mutex_lock(&wait_mutex_);
+      if (((wait_before_me_[wait_obj_index_] & value) == 0) ||
+          (wait_lock_type_ == SHARED && exclusive == 0)) {
         wait_before_me_[wait_obj_index_] = 0;
-        pthread_mutex_unlock(&wait_mutex_);
 
         local_manager_->NotifyLockRequestResult(
             wait_seq_no_,
@@ -473,6 +483,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             wait_obj_index_,
             RESULT_SUCCESS_FROM_QUEUED);
       }
+      pthread_mutex_unlock(&wait_mutex_);
     } else if (request->task == TASK_READ_UNLOCK) {
        // Read for unlocking
       uint32_t exclusive, shared;
@@ -555,10 +566,6 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
         prev_value = ((uint64_t)(exclusive - request->user_id)) << 32 | shared;
       } else {
         prev_value = ((uint64_t)exclusive) << 32 | (shared - request->user_id);
-      }
-      if ((prev_value & request->user_id) != 0) {
-         cout <<"WRONG" << endl;
-         sleep(100000);
       }
       int ret = NotifyWaitingNodes(request, prev_value);
       local_manager_->NotifyUnlockRequestResult(

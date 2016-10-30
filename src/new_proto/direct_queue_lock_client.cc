@@ -76,13 +76,12 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
 
     LockRequest* request = (LockRequest *)work_completion->wr_id;
     // get time
-    clock_gettime(CLOCK_MONOTONIC, &end_remote_shared_lock_);
-    double time_taken = ((double)end_remote_shared_lock_.tv_sec * 1e+9 +
-        (double)end_remote_shared_lock_.tv_nsec) -
-      ((double)start_remote_shared_lock_.tv_sec * 1e+9 +
-          (double)start_remote_shared_lock_.tv_nsec);
-    total_shared_lock_remote_time_ += time_taken;
-    ++num_shared_lock_;
+    clock_gettime(CLOCK_MONOTONIC, &end_rdma_atomic_);
+    double time_taken = ((double)end_rdma_atomic_.tv_sec * 1e+9 +
+        (double)end_rdma_atomic_.tv_nsec) -
+      ((double)start_rdma_atomic_.tv_sec * 1e+9 +
+          (double)start_rdma_atomic_.tv_nsec);
+    total_rdma_atomic_time_ += time_taken;
 
     uint64_t prev_value = *request->original_value;
 #if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -158,6 +157,14 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
       }
     }
   } else if (work_completion->opcode == IBV_WC_RDMA_READ) {
+
+    // get time
+    clock_gettime(CLOCK_MONOTONIC, &end_rdma_read_);
+    double time_taken = ((double)end_rdma_read_.tv_sec * 1e+9 +
+        (double)end_rdma_read_.tv_nsec) -
+      ((double)start_rdma_read_.tv_sec * 1e+9 +
+          (double)start_rdma_read_.tv_nsec);
+    total_rdma_read_time_ += time_taken;
 
     uint64_t all_value;
     uint32_t value, exclusive, shared;

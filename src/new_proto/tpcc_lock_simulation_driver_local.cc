@@ -25,11 +25,11 @@ struct CPUUsage {
 
 int main(int argc, char** argv) {
 
-  if (argc != 11) {
+  if (argc != 13) {
     cout << "USAGE: " << argv[0] << " <work_dir>" <<
       " <num_tx> <num_users> <lock_mode> <shared_exclusive_rule> " <<
       "<exclusive_shared_rule> <exclusive_exclusive_rule> "<<
-      "<min_backoff_time> <max_backoff_time> <rand_seed>" << endl;
+      "<min_backoff_time> <max_backoff_time> <sleep_time> <think_time> <rand_seed>" << endl;
     exit(1);
   }
 
@@ -50,7 +50,9 @@ int main(int argc, char** argv) {
   int exclusive_exclusive_rule = atoi(argv[7]);
   int min_backoff_time         = atoi(argv[8]);
   int max_backoff_time         = atoi(argv[9]);
-  long seed                    = atol(argv[10]);
+  int sleep_time               = atoi(argv[10]);
+  int think_time               = atoi(argv[11]);
+  long seed                    = atol(argv[12]);
 
   string workload_type_str, shared_lock_ratio_str;
   workload_type_str = "TPCC";
@@ -155,7 +157,9 @@ int main(int argc, char** argv) {
         lock_mode,
         0,0,0,
         min_backoff_time,
-        max_backoff_time
+        max_backoff_time,
+        sleep_time,
+        think_time
         );
     lock_manager->RegisterUser((uint32_t)pow(2.0, rank*num_users+i), simulator);
     users.push_back(simulator);
@@ -199,8 +203,8 @@ int main(int argc, char** argv) {
     LockSimulator* simulator = users[i];
     while (simulator->GetState() != LockSimulator::STATE_DONE) {
        sleep(1);
-       cout << count << " : " << users[0]->GetCount() <<
-         "," << users[0]->GetCurrentBackoff() << endl;
+       cout << users[i]->GetID() << "," << count << " : " << users[i]->GetCount() <<
+         "," << users[i]->GetCurrentBackoff() << endl;
        ++count;
        //if (count == 3) {
          //lock_manager->SwitchToLocal();

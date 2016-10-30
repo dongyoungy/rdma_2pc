@@ -84,6 +84,9 @@ class LockManager {
     uint64_t GetTotalRDMAWriteCount() const;
     uint64_t GetTotalRDMAAtomicCount() const;
 
+    double GetTotalRDMAReadTime() const;
+    double GetTotalRDMAAtomicTime() const;
+
     uint64_t GetTotalLockContention() const;
     uint64_t GetTotalLockSuccessWithPoll() const;
     uint64_t GetTotalSumPollWhenSuccess() const;

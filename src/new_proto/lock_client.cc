@@ -735,6 +735,8 @@ int LockClient::LockRemotely(Context* context, int seq_no, uint32_t user_id, int
   send_work_request.wr.atomic.rkey        =
     context->lock_table_mr->rkey;
 
+  clock_gettime(CLOCK_MONOTONIC, &start_rdma_atomic_);
+
   int ret = 0;
   if ((ret = ibv_exp_post_send(context->queue_pair, &send_work_request,
           &bad_work_request))) {

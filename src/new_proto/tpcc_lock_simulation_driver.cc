@@ -36,9 +36,11 @@ int main(int argc, char** argv) {
     exit(1);
   }
 
-  int num_managers, rank;
+  int num_nodes, rank;
+  int num_servers, num_clients;
+  int server_start_idx, client_start_idx;
 
-  MPI_Comm_size(MPI_COMM_WORLD, &num_managers);
+  MPI_Comm_size(MPI_COMM_WORLD, &num_nodes);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
   if (rank == 0) {
@@ -72,9 +74,29 @@ int main(int argc, char** argv) {
      //cerr << "# of users must be 1." << endl;
      //exit(-1);
   //}
-  if (num_managers * num_users > 32) {
+  if (num_users > 32) {
      cerr << "# of node/clients must be less than 33" << endl;
      exit(-1);
+  }
+
+  // 1 node = server/client on the same node
+  // 2 node = 1 server, 1 client
+  // n nodes = n-2 servers, 2 clients
+  if (num_nodes == 1) {
+    num_servers = 1;
+    num_clients = 1;
+    server_start_idx = 0;
+    client_start_idx = 0;
+  } else if (num_nodes == 2) {
+    num_servers = 1;
+    num_clients = 1;
+    server_start_idx = 0;
+    client_start_idx = 1;
+  } else {
+    num_servers = num_nodes - 2;
+    num_clients = 2;
+    server_start_idx = 0;
+    client_start_idx = num_nodes - 2;
   }
 
   bool transaction_delay = (transaction_delay_num == 0) ? false : true;
@@ -155,12 +177,17 @@ int main(int argc, char** argv) {
     workload_type_str = "TPC-C/HOTSPOT";
   }
 
+  int num_users_per_client = num_users /  num_clients;
   if (rank == 0) {
     cout << "Type of Workload = " << workload_type_str << endl;
     cout << "SHARED -> EXCLUSIVE = " << shared_exclusive_rule_str << endl;
     cout << "EXCLUSIVE -> SHARED = " << exclusive_shared_rule_str << endl;
     cout << "EXCLUSIVE -> EXCLUSIVE = " << exclusive_exclusive_rule_str << endl;
     cout << "Num Tx = " << num_tx << endl;
+    cout << "Num Servers = " << num_servers << endl;
+    cout << "Num Clients = " << num_clients << endl;
+    cout << "Num Users = " << num_users << endl;
+    cout << "Num Users Per Client = " << num_users_per_client << endl;
   }
 
   LockManager::SetSharedExclusiveRule(shared_exclusive_rule);
@@ -169,7 +196,7 @@ int main(int argc, char** argv) {
   LockManager::SetFailRetry(fail_retry);
   LockManager::SetPollRetry(poll_retry);
 
-  LockManager* lock_manager = new LockManager(argv[1], rank, num_managers,
+  LockManager* lock_manager = new LockManager(argv[1], rank, num_nodes,
       700000, lock_mode);
 
   if (lock_manager->Initialize()) {
@@ -185,29 +212,32 @@ int main(int argc, char** argv) {
   }
 
   vector<LockSimulator*> users;
-  for (int i=0;i<num_users;++i) {
-    uint32_t id = (uint32_t)pow(2.0, rank*num_users+i);
-    bool verbose = false;
-    TPCCLockSimulator* simulator = new TPCCLockSimulator(lock_manager,
-        id, // id
-        rank, // home id
-        workload_type,
-        num_managers,
-        num_tx,
-        seed,
-        verbose, // verbose
-        true, // measure lock time
-        lock_mode,
-        transaction_delay,
-        transaction_delay_min,
-        transaction_delay_max,
-        min_backoff_time,
-        max_backoff_time,
-        sleep_time,
-        think_time
-        );
-    lock_manager->RegisterUser(id, simulator);
-    users.push_back(simulator);
+  if (rank >= client_start_idx) {
+    for (int i=0;i<num_users_per_client;++i) {
+      uint32_t seq = (rank-client_start_idx)*num_users_per_client+i;
+      uint32_t id = (uint32_t)pow(2.0, seq);
+      bool verbose = false;
+      TPCCLockSimulator* simulator = new TPCCLockSimulator(lock_manager,
+          id, // id
+          seq % num_servers, // home id
+          workload_type,
+          num_servers,
+          num_tx,
+          seed,
+          verbose, // verbose
+          true, // measure lock time
+          lock_mode,
+          transaction_delay,
+          transaction_delay_min,
+          transaction_delay_max,
+          min_backoff_time,
+          max_backoff_time,
+          sleep_time,
+          think_time
+          );
+      lock_manager->RegisterUser(id, simulator);
+      users.push_back(simulator);
+    }
   }
 
   MPI_Barrier(MPI_COMM_WORLD);
@@ -226,12 +256,14 @@ int main(int argc, char** argv) {
 
   time(&start_time);
 
-  for (int i=0;i<num_users;++i) {
-    pthread_t lock_simulator_thread;
-    if (pthread_create(&lock_simulator_thread, NULL, &RunLockSimulator,
-          (void*)users[i])) {
-      cerr << "pthread_create() error." << endl;
-      exit(-1);
+  if (rank >= client_start_idx) {
+    for (int i=0;i<users.size();++i) {
+      pthread_t lock_simulator_thread;
+      if (pthread_create(&lock_simulator_thread, NULL, &RunLockSimulator,
+            (void*)users[i])) {
+        cerr << "pthread_create() error." << endl;
+        exit(-1);
+      }
     }
   }
 
@@ -240,8 +272,8 @@ int main(int argc, char** argv) {
   CPUUsage usage;
   if (pthread_create(&cpu_measure_thread, NULL, &MeasureCPUUsage,
         (void*)&usage)) {
-     cerr << "pthread_create() error." << endl;
-     exit(-1);
+    cerr << "pthread_create() error." << endl;
+    exit(-1);
   }
 
   int min_time_taken = 0;
@@ -253,7 +285,7 @@ int main(int argc, char** argv) {
   memset(locks_done, 0x00, sizeof(uint64_t)*64000);
 
   bool simulator_done = false;
-  while (true) {
+  while (rank >= client_start_idx) {
     for (int i=0;i<users.size();++i) {
       tx_done[time_taken2] += users[i]->GetCount();
       locks_done[time_taken2] += users[i]->GetTotalNumLockSuccess();
@@ -262,10 +294,8 @@ int main(int argc, char** argv) {
       }
     }
     ++time_taken2;
-    if (rank == 0) {
-      cout << rank << "," << time_taken2 << " : " << users[0]->GetCount() <<
-        "," << users[0]->GetCurrentBackoff() << endl;
-    }
+    cout << rank << "," << users[0]->GetID() << "," << time_taken2 << " : " << users[0]->GetCount() <<
+      "," << users[0]->GetCurrentBackoff() << endl;
     if (simulator_done) break;
     sleep(1);
   }
@@ -275,10 +305,10 @@ int main(int argc, char** argv) {
     LockSimulator* simulator = users[i];
     while (simulator->GetState() != LockSimulator::STATE_DONE) {
       ++time_taken2;
-      if (rank == 0) {
-        cout << rank << "," << time_taken2 << " : " << users[0]->GetCount() <<
-          "," << users[0]->GetCurrentBackoff() << endl;
-      }
+      //if (rank == 0) {
+        cout << rank << "," << users[i]->GetID() << "," << time_taken2 << " : " << users[i]->GetCount() <<
+          "," << users[i]->GetCurrentBackoff() << endl;
+      //}
       sleep(1);
     }
   }
@@ -334,6 +364,11 @@ int main(int argc, char** argv) {
   double global_avg_rdma_read_count = 0;
   double local_avg_rdma_atomic_count = 0;
   double global_avg_rdma_atomic_count = 0;
+
+  double local_rdma_read_time = 0;
+  double global_rdma_read_time = 0;
+  double local_rdma_atomic_time = 0;
+  double global_rdma_atomic_time = 0;
 
   long local_rdma_read_count = 0;
   long local_rdma_send_count = 0;
@@ -407,33 +442,28 @@ int main(int argc, char** argv) {
     }
   }
 
-  for (int i=0;i<num_managers;++i) {
-    if (rank==i) {
-      //cout << "Node = " << rank << endl;
-      for (int j=0;j<users.size();++j) {
-        LockSimulator* simulator = users[j];
-        local_sum += simulator->GetTotalNumLocks();
-        local_unlock_sum += simulator->GetTotalNumUnlocks();
-        local_lock_success += simulator->GetTotalNumLockSuccess();
-        local_lock_success_with_retry += simulator->GetTotalNumLockSuccessWithRetry();
-        local_sum_retry_when_success += simulator->GetSumRetryWhenSuccess();
-        local_sum_index_when_timeout += simulator->GetSumIndexWhenTimeout();
-        local_lock_failure += simulator->GetTotalNumLockFailure();
-        local_timeout += simulator->GetTotalNumTimeout();
-        if (simulator->IsLockTimeMeasured()) {
-          local_lock_time += simulator->GetAverageTimeTakenToLock();
-          local_99_lock_time += simulator->Get99PercentileLockTime();
-          local_95_lock_time += simulator->Get95PercentileLockTime();
-        }
+  if (rank >= client_start_idx) {
+    for (int j=0;j<users.size();++j) {
+      LockSimulator* simulator = users[j];
+      local_sum += simulator->GetTotalNumLocks();
+      local_unlock_sum += simulator->GetTotalNumUnlocks();
+      local_lock_success += simulator->GetTotalNumLockSuccess();
+      local_lock_success_with_retry += simulator->GetTotalNumLockSuccessWithRetry();
+      local_sum_retry_when_success += simulator->GetSumRetryWhenSuccess();
+      local_sum_index_when_timeout += simulator->GetSumIndexWhenTimeout();
+      local_lock_failure += simulator->GetTotalNumLockFailure();
+      local_timeout += simulator->GetTotalNumTimeout();
+      if (simulator->IsLockTimeMeasured()) {
+        local_lock_time += simulator->GetAverageTimeTakenToLock();
+        local_99_lock_time += simulator->Get99PercentileLockTime();
+        local_95_lock_time += simulator->Get95PercentileLockTime();
       }
-      //MPI_Barrier(MPI_COMM_WORLD);
+    }
+    for (int j=0;j<users.size();++j) {
+      LockSimulator* simulator = users[j];
+      local_time_taken_sum += simulator->GetTimeTaken();
     }
   }
-  for (int j=0;j<users.size();++j) {
-    LockSimulator* simulator = users[j];
-    local_time_taken_sum += simulator->GetTimeTaken();
-  }
-
   local_lock_contention = lock_manager->GetTotalLockContention();
   local_lock_success_with_poll = lock_manager->GetTotalLockSuccessWithPoll();
   local_sum_poll_when_success = lock_manager->GetTotalSumPollWhenSuccess();
@@ -457,9 +487,16 @@ int main(int argc, char** argv) {
   local_rdma_write_count = lock_manager->GetTotalRDMAWriteCount();
   local_rdma_atomic_count = lock_manager->GetTotalRDMAAtomicCount();
 
+  local_rdma_read_time = lock_manager->GetTotalRDMAReadTime();
+  local_rdma_atomic_time = lock_manager->GetTotalRDMAAtomicTime();
+
+  MPI_Barrier(MPI_COMM_WORLD);
   usage.terminate = true;
   pthread_join(cpu_measure_thread, NULL);
-  local_cpu_usage = usage.total_cpu / usage.num_sample;
+  double local_cpu_usage_local = usage.total_cpu / usage.num_sample;
+  if (rank < client_start_idx) {
+    local_cpu_usage = local_cpu_usage_local;
+  }
   MPI_Barrier(MPI_COMM_WORLD);
 
   MPI_Reduce(&local_sum, &global_sum, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
@@ -504,6 +541,13 @@ int main(int argc, char** argv) {
       &global_avg_rdma_atomic_count,
       1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 
+  MPI_Reduce(&local_rdma_read_time,
+      &global_rdma_read_time,
+      1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_rdma_atomic_time,
+      &global_rdma_atomic_time,
+      1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+
   MPI_Reduce(&local_rdma_atomic_count,
       &global_rdma_atomic_count,
       1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
@@ -533,100 +577,127 @@ int main(int argc, char** argv) {
   MPI_Reduce(&local_sum_index_when_timeout, &global_sum_index_when_timeout, 1, MPI_LONG,
       MPI_SUM, 0, MPI_COMM_WORLD);
 
-    cout << "Local Avg CPU Usage = " << local_cpu_usage << "% "
-      "(" << "ID = " << rank <<  " ,# nodes: " << num_managers <<
+    cout << "Local Avg CPU Usage = " << local_cpu_usage_local << "% "
+      "(" << "ID = " << rank <<  " ,# nodes: " << num_servers <<
       ", mode: " << lock_mode_str << ")" << endl;
   MPI_Barrier(MPI_COMM_WORLD);
 
   // Get standard deviation for cpu usage
-  global_cpu_usage_avg = global_cpu_usage / (double)num_managers;
-  local_cpu_diff = (global_cpu_usage_avg - local_cpu_usage) *
-    (global_cpu_usage_avg - local_cpu_usage);
+  if (rank < client_start_idx) {
+    global_cpu_usage_avg = global_cpu_usage / (double)num_servers;
+  }
+  if (rank < client_start_idx) {
+    local_cpu_diff = (global_cpu_usage_avg - local_cpu_usage) *
+      (global_cpu_usage_avg - local_cpu_usage);
+  }
   MPI_Reduce(&local_cpu_diff, &global_cpu_diff, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-  global_cpu_usage_std = sqrt(global_cpu_diff / num_managers);
+  global_cpu_usage_std = sqrt(global_cpu_diff / (double)num_servers);
 
   // Get standard deviation for time taken
   MPI_Allreduce(&local_time_taken_sum, &global_time_taken_sum, 1, MPI_DOUBLE, MPI_SUM,
       MPI_COMM_WORLD);
-  global_time_taken_avg = global_time_taken_sum / (double)(num_managers * users.size());
-  for (int j=0;j<users.size();++j) {
-    double time = users[j]->GetTimeTaken();
-    local_time_taken_diff += (time - global_time_taken_avg) * (time - global_time_taken_avg);
+  global_time_taken_avg = global_time_taken_sum / (double)num_users;
+  if (rank >= client_start_idx) {
+    for (int j=0;j<users.size();++j) {
+      double time = users[j]->GetTimeTaken();
+      local_time_taken_diff += (time - global_time_taken_avg) * (time - global_time_taken_avg);
+    }
   }
   MPI_Reduce(&local_time_taken_diff, &global_time_taken_diff, 1, MPI_DOUBLE, MPI_SUM, 0,
       MPI_COMM_WORLD);
-  global_time_taken_std = sqrt(global_time_taken_diff / (num_managers * users.size()));
+  global_time_taken_std = sqrt(global_time_taken_diff / (double)num_users);
 
   double global_99_lock_time_diff;
-  double global_99_lock_time_avg = global_99_lock_time / (double)num_managers;
-  double local_99_lock_time_diff = (global_99_lock_time_avg - local_99_lock_time) *
-    (global_99_lock_time_avg - local_99_lock_time);
+  double global_99_lock_time_avg = global_99_lock_time / (double)(num_users);
+  double global_lock_time_avg = global_lock_time / (double)(num_users);
+  double global_95_lock_time_avg = global_95_lock_time / (double)(num_users);
+  double local_99_lock_time_diff = 0;
+  if (rank >= client_start_idx) {
+    local_99_lock_time_diff = (global_99_lock_time_avg - local_99_lock_time) *
+      (global_99_lock_time_avg - local_99_lock_time);
+  }
   MPI_Reduce(&local_99_lock_time_diff, &global_99_lock_time_diff, 1, MPI_DOUBLE, MPI_SUM,
       0, MPI_COMM_WORLD);
-  double global_99_lock_time_std = sqrt(global_99_lock_time_diff / num_managers);
+  double global_99_lock_time_std = sqrt(global_99_lock_time_diff / (double)num_users);
 
   if (rank==0) {
     cout << endl;
     cout << "Global Total Lock # = " << global_sum << "(# nodes: " <<
-      num_managers <<
+      num_servers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Total Unlock # = " << global_unlock_sum << "(# nodes: " <<
-      num_managers <<
+      num_servers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Total Lock Success # = " << global_lock_success <<
-      "(# nodes: " << num_managers <<
+      "(# nodes: " << num_servers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Total Lock Failure # = " << global_lock_failure <<
-      "(# nodes: " << num_managers <<
+      "(# nodes: " << num_servers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Total Timeout # = " << global_timeout <<
-      "(# nodes: " << num_managers <<
+      "(# nodes: " << num_servers <<
       ", mode: " << lock_mode_str << ")" << endl;
-    cout << "Global Average Lock Time = " << global_lock_time / num_managers <<
-      " ns " << "(# nodes: " << num_managers <<
+    cout << "Global Average Lock Time = " << global_lock_time / num_servers <<
+      " ns " << "(# nodes: " << num_servers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average Remote Shared Lock Time = " <<
-      global_remote_shared_lock_time / num_managers <<
-      " ns " << "(# nodes: " << num_managers <<
+      global_remote_shared_lock_time / num_servers <<
+      " ns " << "(# nodes: " << num_servers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average Remote Exclusive Lock Time = " <<
-      global_remote_exclusive_lock_time / num_managers <<
-      " ns " << "(# nodes: " << num_managers <<
+      global_remote_exclusive_lock_time / num_servers <<
+      " ns " << "(# nodes: " << num_servers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average Local Shared Lock Time = " <<
-      global_local_shared_lock_time / num_managers <<
-      " ns " << "(# nodes: " << num_managers <<
+      global_local_shared_lock_time / num_servers <<
+      " ns " << "(# nodes: " << num_servers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average Local Exclusive Lock Time = " <<
-      global_local_exclusive_lock_time / num_managers <<
-      " ns " << "(# nodes: " << num_managers <<
+      global_local_exclusive_lock_time / num_servers <<
+      " ns " << "(# nodes: " << num_servers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average Send Message Time = " <<
-      global_send_message_time / num_managers <<
-      " ns " << "(# nodes: " << num_managers <<
+      global_send_message_time / num_servers <<
+      " ns " << "(# nodes: " << num_servers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average Receive Message Time = " <<
-      global_receive_message_time / num_managers <<
-      " ns " << "(# nodes: " << num_managers <<
+      global_receive_message_time / num_servers <<
+      " ns " << "(# nodes: " << num_servers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average RDMA Read Count = " <<
-      global_avg_rdma_read_count / num_managers <<
-      "" << "(# nodes: " << num_managers <<
+      global_avg_rdma_read_count / num_servers <<
+      "" << "(# nodes: " << num_servers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Average RDMA Atomic Count = " <<
-      global_avg_rdma_atomic_count / num_managers <<
-      "" << "(# nodes: " << num_managers <<
+      global_avg_rdma_atomic_count / num_servers <<
+      "" << "(# nodes: " << num_servers <<
+      ", mode: " << lock_mode_str << ")" << endl;
+    cout << "Global Average RDMA Read Time = " <<
+      global_rdma_read_time / (double)global_rdma_read_count <<
+      " " << "(# nodes: " << num_servers <<
+      ", mode: " << lock_mode_str << ")" << endl;
+    cout << "Global Total RDMA Atomic Time = " <<
+      global_rdma_atomic_time <<
+      " " << "(# nodes: " << num_servers <<
+      ", mode: " << lock_mode_str << ")" << endl;
+    cout << "Global Total RDMA Atomic Count = " <<
+      global_rdma_atomic_count <<
+      " " << "(# nodes: " << num_servers <<
+      ", mode: " << lock_mode_str << ")" << endl;
+    cout << "Global Average RDMA Atomic Time = " <<
+      global_rdma_atomic_time / (double)global_rdma_atomic_count <<
+      " " << "(# nodes: " << num_servers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Overall Avg CPU Usage = " <<
-      global_cpu_usage / num_managers << "% "
-      "(# nodes: " << num_managers <<
+      global_cpu_usage / num_servers << "% "
+      "(# nodes: " << num_servers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Local Time Taken Sum = " << local_time_taken_sum << endl;
 
     cerr << lock_mode_str << "," << workload_type_str <<
       "," << shared_exclusive_rule_str << "," << exclusive_shared_rule_str << "," <<
       exclusive_exclusive_rule_str << "," << fail_retry << "," << poll_retry << "," <<
-      sleep_time << "," << think_time << "," << num_managers <<
+      sleep_time << "," << think_time << "," << num_servers << "," << num_users <<
       "," << "N/A" << "," << num_tx << "," << "N/A" << "," <<
       local_workload_ratio_str << "," << shared_lock_ratio_str << "," <<
       min_backoff_time << "," <<
@@ -641,9 +712,12 @@ int main(int argc, char** argv) {
       (double)global_sum_poll_when_success / (double)global_lock_success_with_poll;
     double avg_retry_when_success = (global_lock_success_with_retry == 0) ? 0.0 :
       (double)global_sum_retry_when_success / (double)global_lock_success_with_retry;
-    cerr << global_lock_time / num_managers <<
-      "," << global_99_lock_time << "," << global_95_lock_time << "," <<
-      (long)((double)global_sum / (double)time_taken) << "," <<
+    double avg_index_when_timeout = (global_timeout == 0) ? 0.0 :
+      (double)global_sum_index_when_timeout / (double)global_timeout;
+
+    cerr << global_lock_time_avg <<
+      "," << global_99_lock_time_avg << "," << global_95_lock_time_avg << "," <<
+      (long)((double)global_sum / (double)global_time_taken_avg) << "," <<
       global_sum << "," << global_lock_success << "," <<
       global_lock_success_with_retry << "," <<
       avg_retry_when_success << "," <<
@@ -652,7 +726,7 @@ int main(int argc, char** argv) {
       global_lock_failure << "," <<
       global_lock_contention << "," <<
       global_timeout << "," <<
-      (double)global_sum_index_when_timeout / (double)global_timeout << "," <<
+      avg_index_when_timeout << "," <<
       global_cpu_usage_avg << "," << global_cpu_usage_std <<
       "," << global_time_taken_avg / (double)(1000*1000*1000) << "," <<
       global_time_taken_std / (double)(1000*1000*1000) << "," <<

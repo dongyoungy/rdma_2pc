@@ -76,6 +76,13 @@ int TPCCLockGen::GenerateNewOrder(vector<LockRequest*>& requests) {
   int req_idx = 0;
   int w_id = home_warehouse_id_;
 
+  // "getWarehouseTaxRate": "SELECT W_TAX FROM WAREHOUSE WHERE W_ID = ?"
+  requests[req_idx]->lm_id     = w_id;
+  requests[req_idx]->lock_type = SHARED;
+  requests[req_idx]->obj_index = WAREHOUSE_START_IDX;
+  requests[req_idx]->task      = TASK_LOCK;
+  ++req_idx;
+
   // "getDistrict": "SELECT D_TAX, D_NEXT_O_ID FROM DISTRICT WHERE D_ID = ? AND D_W_ID = ?"
   // "incrementNextOrderId": "UPDATE DISTRICT SET D_NEXT_O_ID = ? WHERE D_ID = ? AND D_W_ID = ?"
   int d_id = rand_r(&seed_) % NUM_ROW_DISTRICT;
@@ -157,13 +164,6 @@ int TPCCLockGen::GenerateNewOrder(vector<LockRequest*>& requests) {
     ++req_idx;
   }
 
-  // "getWarehouseTaxRate": "SELECT W_TAX FROM WAREHOUSE WHERE W_ID = ?"
-  requests[req_idx]->lm_id     = w_id;
-  requests[req_idx]->lock_type = SHARED;
-  requests[req_idx]->obj_index = WAREHOUSE_START_IDX;
-  requests[req_idx]->task      = TASK_LOCK;
-  ++req_idx;
-
   return req_idx;
 }
 
@@ -197,6 +197,7 @@ int TPCCLockGen::GeneratePayment(vector<LockRequest*>& requests) {
   requests[req_idx]->task      = TASK_LOCK;
   ++req_idx;
 
+
   // "getDistrict": "SELECT D_NAME, D_STREET_1, D_STREET_2, D_CITY, D_STATE, D_ZIP FROM DISTRICT
   // WHERE D_W_ID = ? AND D_ID = ?"
   // "updateDistrictBalance": "UPDATE DISTRICT SET D_YTD = D_YTD + ?
@@ -206,6 +207,7 @@ int TPCCLockGen::GeneratePayment(vector<LockRequest*>& requests) {
   requests[req_idx]->obj_index = DISTRICT_START_IDX + d_id;
   requests[req_idx]->task      = TASK_LOCK;
   ++req_idx;
+
   int c_id1 = rand_r(&seed_) % NUM_ROW_CUSTOMER;
 
   if (y <= 60) {

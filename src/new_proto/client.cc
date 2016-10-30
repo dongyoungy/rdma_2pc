@@ -555,6 +555,14 @@ uint64_t Client::GetSumPollWhenSuccess() const {
   return sum_poll_when_success_;
 }
 
+double Client::GetTotalRDMAReadTime() const {
+  return total_rdma_read_time_;
+}
+
+double Client::GetTotalRDMAAtomicTime() const {
+  return total_rdma_atomic_time_;
+}
+
 double Client::GetAverageRDMAReadTime() const {
   return total_rdma_read_time_ / (double)num_rdma_read_;
 }

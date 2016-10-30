@@ -1741,6 +1741,24 @@ uint64_t LockManager::GetTotalRDMAAtomicCount() const {
   return total_count;
 }
 
+double LockManager::GetTotalRDMAReadTime() const {
+  double total_time = 0.0;
+  map<uint64_t, LockClient*>::const_iterator it;
+  for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
+    total_time += it->second->GetTotalRDMAReadTime();
+  }
+  return total_time;
+}
+
+double LockManager::GetTotalRDMAAtomicTime() const {
+  double total_time = 0.0;
+  map<uint64_t, LockClient*>::const_iterator it;
+  for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
+    total_time += it->second->GetTotalRDMAAtomicTime();
+  }
+  return total_time;
+}
+
 // Polls work completion from completion queue
 void* LockManager::PollCompletionQueue(void* arg) {
   struct ibv_cq* cq;
