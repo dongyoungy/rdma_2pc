@@ -1,0 +1,18 @@
+#!/bin/bash
+#
+#BSUB -a openmpi                       # parallel environment to use
+#BSUB -W 2                            # time requested in minutes
+#BSUB -n 20                               # number of tasks in job
+#BSUB -m "cn003 cn004 cn005 cn006 cn008 cn009 cn010 cn011 cn012 cn013 cn014 cn015 cn016 cn017 cn018 cn019 cn020 cn021 cn022 cn023 cn024 cn025 cn026 cn027 cn028 cn029 cn030 cn031 cn032 cn033 cn034 cn035 cn036 cn037 cn038 cn039 cn040 cn041 cn042 cn043"
+#BSUB -R "span[ptile=1]"
+#BSUB -R rusage[mem=1024]     # memory in MB request
+#BSUB -J rdma_test_client                        # Job name
+#BSUB -e /gpfs/gpfs0/groups/mozafari/dyoon/work/lsf_log/rdma_dist_lock_local/%J.e                     # error file name in which %J is replaced by the job ID
+#BSUB -o /gpfs/gpfs0/groups/mozafari/dyoon/work/lsf_log/rdma_dist_lock_local/%J.o                    # output file name in which %J is replaced by the job ID
+#BSUB -q normal                         # use the normal queue
+
+# mpirun.lsf --mca pml ob1 --mca btl self,sm,openib /gpfs/gpfs0/groups/mozafari/dyoon/work/rdma_2pc/bin/lock_simulation /gpfs/gpfs0/groups/mozafari/dyoon/work/temp 1 1 1 30
+mpirun.lsf --mca btl self,sm,openib /gpfs/gpfs0/groups/mozafari/dyoon/work/rdma_2pc_dev/bin/fs_lock_simulation /gpfs/gpfs0/groups/mozafari/dyoon/work/temp $@
+
+# end of bsub
+

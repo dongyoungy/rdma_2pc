@@ -1,6 +1,7 @@
 #include "lock_manager.h"
 #include "notify_lock_client.h"
 #include "direct_queue_lock_client.h"
+#include "direct_queue_lock_client_two.h"
 #include "lock_client.h"
 #include "communication_client.h"
 
@@ -14,10 +15,12 @@ int LockManager::fail_retry_               = 10;
 
 // constructor
 LockManager::LockManager(const string& work_dir, uint32_t rank,
-    int num_manager, int num_lock_object, int lock_mode) {
+    int num_manager, int num_lock_object, int lock_mode, int num_total_user, int num_client) {
   work_dir_                        = work_dir;
   rank_                            = rank;
   num_manager_                     = num_manager;
+  num_client_                      = num_client;
+  num_total_user_                  = num_total_user;
   num_lock_object_                 = num_lock_object;
   lock_table_                      = new uint64_t[num_lock_object_];
   last_lock_table_                 = new uint64_t[num_lock_object_];
@@ -34,6 +37,8 @@ LockManager::LockManager(const string& work_dir, uint32_t rank,
   num_local_shared_lock_           = 0;
   num_local_lock_                  = 0;
   num_remote_lock_                 = 0;
+  num_rdma_send_                   = 0;
+  num_rdma_recv_                   = 0;
 
   if (lock_mode_ == LOCK_ADAPTIVE) {
     current_lock_mode_ = LOCK_REMOTE_POLL;
@@ -1289,6 +1294,7 @@ int LockManager::TryLock(Context* context, Message* message) {
   NotifyLockClient* notify_client = dynamic_cast<NotifyLockClient*>(client);
   if (notify_client == NULL) {
     cerr << "NotifyLockClient cast fail:" << rank_ << "," << home_id << "," << user_id <<endl;
+    exit(-1);
     return -1;
   }
 
@@ -1388,6 +1394,7 @@ int LockManager::SendMessage(Context* context) {
     return -1;
   }
 
+  ++num_rdma_send_;
   context->send_message_buffer->Rotate();
   //cout << "SendMessage(): message sent." << endl;
 
@@ -1407,9 +1414,6 @@ int LockManager::ReceiveMessage(Context* context) {
   receive_work_request.sg_list = &sge;
   receive_work_request.num_sge = 1;
 
-
-  pthread_mutex_lock(&msg_mutex_);
-
   context->receive_message_buffer->Rotate();
   Message* msg = context->receive_message_buffer->GetMessage();
   struct ibv_mr* mr = context->receive_message_buffer->GetMR();
@@ -1426,10 +1430,9 @@ int LockManager::ReceiveMessage(Context* context) {
   if ((ret = ibv_post_recv(context->queue_pair, &receive_work_request,
           &bad_work_request))) {
     cerr << "ibv_post_recv failed: " << strerror(ret) << endl;
-    pthread_mutex_unlock(&msg_mutex_);
     return -1;
   }
-  pthread_mutex_unlock(&msg_mutex_);
+  ++num_rdma_recv_;
 
   return 0;
 }
@@ -1699,6 +1702,7 @@ uint64_t LockManager::GetTotalRDMARecvCount() const {
   for (it2=communication_clients_.begin(); it2 != communication_clients_.end();++it2) {
     total_count += it2->second->GetRDMARecvCount();
   }
+  total_count += num_rdma_recv_;
   return total_count;
 }
 
@@ -1712,6 +1716,7 @@ uint64_t LockManager::GetTotalRDMASendCount() const {
   for (it2=communication_clients_.begin(); it2 != communication_clients_.end();++it2) {
     total_count += it2->second->GetRDMASendCount();
   }
+  total_count += num_rdma_send_;
   return total_count;
 }
 

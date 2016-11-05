@@ -225,7 +225,10 @@ int NotifyLockClient::NotifyWaitingNodes(LockRequest* request, uint64_t value) {
 
   int nodes[64];
   int sz;
-  int num_user = local_manager_->GetNumUser();
+  int num_user = local_manager_->GetNumTotalUser();
+  int num_client = local_manager_->GetNumClient();
+  int start_idx = local_manager_->GetNumManager() - num_client;
+  int num_user_per_client = num_user / num_client;
   if (request->lock_type == SHARED) {
     // notify nodes for exclusive lock.
     memset(nodes, 0x00, sizeof(int)*64);
@@ -233,7 +236,8 @@ int NotifyLockClient::NotifyWaitingNodes(LockRequest* request, uint64_t value) {
     for (int i = 0; i < sz; ++i) {
       uint32_t node_id = (uint32_t)pow(2.0, nodes[i]);
       local_manager_->GrantLock(request->seq_no,
-          node_id, remote_lm_id_, nodes[i]/num_user, EXCLUSIVE, request->obj_index);
+          node_id, remote_lm_id_, nodes[i]/num_user_per_client + start_idx,
+          EXCLUSIVE, request->obj_index);
     }
   } else {
     // notify nodes for shared lock.
@@ -242,7 +246,8 @@ int NotifyLockClient::NotifyWaitingNodes(LockRequest* request, uint64_t value) {
     for (int i = 0; i < sz; ++i) {
       uint32_t node_id = (uint32_t)pow(2.0, nodes[i]);
       local_manager_->GrantLock(request->seq_no,
-          node_id, remote_lm_id_, nodes[i]/num_user, SHARED, request->obj_index);
+          node_id, remote_lm_id_, nodes[i]/num_user_per_client + start_idx,
+          SHARED, request->obj_index);
     }
 
     // notify nodes for exclusive lock.
@@ -251,7 +256,8 @@ int NotifyLockClient::NotifyWaitingNodes(LockRequest* request, uint64_t value) {
     for (int i = 0; i < sz; ++i) {
       uint32_t node_id = (uint32_t)pow(2.0, nodes[i]);
       local_manager_->GrantLock(request->seq_no,
-          node_id, remote_lm_id_, nodes[i]/num_user, EXCLUSIVE, request->obj_index);
+          node_id, remote_lm_id_, nodes[i]/num_user_per_client + start_idx,
+          EXCLUSIVE, request->obj_index);
     }
   }
 

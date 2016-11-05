@@ -35,7 +35,7 @@ class LockManager {
 
   public:
     LockManager(const string& work_dir, uint32_t rank, int num_manager,
-        int num_lock_object, int lock_mode);
+        int num_lock_object, int lock_mode, int num_total_user = 0, int num_client = 1);
     ~LockManager();
     int Initialize();
     int InitializeLockClients();
@@ -61,6 +61,12 @@ class LockManager {
     }
     inline int GetNumUser() const {
       return num_user_;
+    }
+    inline int GetNumTotalUser() const {
+      return num_total_user_;
+    }
+    inline int GetNumClient() const {
+      return num_client_;
     }
     inline int GetCurrentLockMode() const {
       return current_lock_mode_;
@@ -214,6 +220,8 @@ class LockManager {
     pthread_t local_work_poller_;
 
     string work_dir_;
+    uint64_t num_rdma_send_;
+    uint64_t num_rdma_recv_;
     uint64_t* last_lock_table_;
     uint64_t* fail_count_;
     int* lock_mode_table_;
@@ -222,7 +230,9 @@ class LockManager {
     int current_lock_mode_;
     int proxy_fail_rule_;
     int num_manager_;
+    int num_client_;
     int num_user_;
+    int num_total_user_;
     int num_lock_object_;
     int num_local_lock_;
     int num_remote_lock_;

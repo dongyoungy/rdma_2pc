@@ -165,11 +165,6 @@ class LockSimulator {
     double total_time_taken_to_lock_;
     int local_manager_id_;
     int workload_type_;
-  private:
-    void SubmitLockRequestLocal();
-    void SubmitUnlockRequestLocal();
-    void InitializeCDF();
-
     bool is_all_local_;
     double* cdf_;
     double local_percentage_;
@@ -178,6 +173,12 @@ class LockSimulator {
     int local_lock_count_;
     int local_unlock_count_;
     uint64_t count_limit_;
+    int num_tx_;
+  private:
+    void SubmitLockRequestLocal();
+    void SubmitUnlockRequestLocal();
+    void InitializeCDF();
+
 };
 
 }}

@@ -2,6 +2,7 @@
 #include <vector>
 #include <cmath>
 #include <arpa/inet.h>
+#include <limits.h>
 #include <pthread.h>
 #include <infiniband/verbs.h>
 #include <sys/times.h>
@@ -93,10 +94,10 @@ int main(int argc, char** argv) {
     server_start_idx = 0;
     client_start_idx = 1;
   } else {
-    num_servers = num_nodes - 2;
-    num_clients = 2;
+    num_servers = num_nodes - 4;
+    num_clients = 4;
     server_start_idx = 0;
-    client_start_idx = num_nodes - 2;
+    client_start_idx = num_nodes - 4;
   }
 
   bool transaction_delay = (transaction_delay_num == 0) ? false : true;
@@ -197,7 +198,7 @@ int main(int argc, char** argv) {
   LockManager::SetPollRetry(poll_retry);
 
   LockManager* lock_manager = new LockManager(argv[1], rank, num_nodes,
-      700000, lock_mode);
+      700000, lock_mode, num_users, num_clients);
 
   if (lock_manager->Initialize()) {
     cerr << "LockManager initialization failure." << endl;
@@ -394,6 +395,10 @@ int main(int argc, char** argv) {
   double global_time_taken_diff = 0;
 
   MPI_Barrier(MPI_COMM_WORLD);
+
+  if (time_taken3 == 0) {
+    time_taken3 = INT_MAX;
+  }
 
   // calculate max throughput
   MPI_Allreduce(&time_taken3, &min_time_taken, 1, MPI_INT, MPI_MIN,
@@ -716,7 +721,7 @@ int main(int argc, char** argv) {
       (double)global_sum_index_when_timeout / (double)global_timeout;
 
     cerr << global_lock_time_avg <<
-      "," << global_99_lock_time_avg << "," << global_95_lock_time_avg << "," <<
+      "," << global_99_lock_time << "," << global_95_lock_time << "," <<
       (long)((double)global_sum / (double)global_time_taken_avg) << "," <<
       global_sum << "," << global_lock_success << "," <<
       global_lock_success_with_retry << "," <<

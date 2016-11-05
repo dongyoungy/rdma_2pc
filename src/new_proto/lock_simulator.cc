@@ -90,6 +90,7 @@ LockSimulator::LockSimulator(LockManager* manager, uint32_t id, int num_manager,
   transaction_delay_max_             = transaction_delay_max;
   local_manager_id_                  = manager_->GetID();
   count_limit_                       = num_tx;
+  num_tx_                            = num_tx;
   count_                             = 0;
   last_count_                        = 0;
   max_request_size_                  = num_request_per_tx;
@@ -947,7 +948,7 @@ double LockSimulator::GetAverageIndexOnTimeout() const {
 }
 
 double LockSimulator::GetAverageTimeTakenToLock() const {
-  return total_time_taken_to_lock_ / (double)total_num_locks_;
+  return total_time_taken_to_lock_ / (double)count_;
 }
 
 double LockSimulator::GetTimeTaken() const {
