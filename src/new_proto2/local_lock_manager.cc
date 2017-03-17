@@ -53,14 +53,16 @@ int LocalLockManager::CheckLock(int seq_no, int owner_thread_id, int target_node
       } else if (elem.lock_type == SHARED && lock_type == SHARED) {
         new_element.status = LOCAL_LOCK_WAITING;
         ret = LOCAL_LOCK_WAIT;
+        wait_queue_[target_node_id][target_obj_index].push(new_element);
       } else {
         return LOCAL_LOCK_FAIL;
       }
     } else {
       new_element.status = GLOBAL_LOCK_WAITING;
-      ret = LOCAL_LOCK_WAIT;
+      ret = LOCAL_LOCK_RETRY;
+      wait_queue_[target_node_id][target_obj_index].push(new_element);
     }
-    wait_queue_[target_node_id][target_obj_index].push(new_element);
+    //if (ret == LOCAL_LOCK_RETRY)
     return ret;
   }
 }

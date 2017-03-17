@@ -52,6 +52,7 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
           message->seq_no,
           message->user_id,
           message->lock_type,
+          remote_lm_id_,
           message->obj_index,
           message->lock_result);
     } else if (message->type == Message::UNLOCK_REQUEST_RESULT) {
@@ -60,6 +61,7 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
           message->seq_no,
           message->user_id,
           message->lock_type,
+          remote_lm_id_,
           message->obj_index,
           message->lock_result);
     }
@@ -104,6 +106,7 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
               request->seq_no,
               request->user_id,
               request->lock_type,
+              remote_lm_id_,
               request->obj_index,
               LockManager::RESULT_SUCCESS);
         //} else if ((wait_after_me_[request->obj_index] & value) != 0) {
@@ -123,6 +126,7 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
               request->seq_no,
               request->user_id,
               request->lock_type,
+              remote_lm_id_,
               request->obj_index,
               LockManager::RESULT_SUCCESS);
         //} else if ((wait_after_me_[request->obj_index] & value) != 0) {
@@ -144,6 +148,7 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
             request->seq_no,
             request->user_id,
             request->lock_type,
+            remote_lm_id_,
             request->obj_index,
             result);
       } else {
@@ -152,6 +157,7 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
             request->seq_no,
             request->user_id,
             request->lock_type,
+            remote_lm_id_,
             request->obj_index,
             LockManager::RESULT_SUCCESS);
       }
@@ -237,6 +243,7 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
             request->seq_no,
             request->user_id,
             request->lock_type,
+            remote_lm_id_,
             request->obj_index,
             LockManager::RESULT_SUCCESS);
       } else {
@@ -252,6 +259,7 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
             request->seq_no,
             request->user_id,
             request->lock_type,
+            remote_lm_id_,
             request->obj_index,
             LockManager::RESULT_SUCCESS);
       } else {

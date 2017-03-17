@@ -48,10 +48,10 @@ namespace rdma { namespace proto {
   static const int FUNC_FAIL = -1;
   static const int FUNC_SUCCESS = 0;
 
-  static const int LOCAL_LOCK_PASS = 0;
-  static const int LOCAL_LOCK_FAIL = 1;
-  static const int LOCAL_LOCK_RETRY = 2;
-  static const int LOCAL_LOCK_WAIT = 3;
+  static const int LOCAL_LOCK_PASS = 1;
+  static const int LOCAL_LOCK_FAIL = 2;
+  static const int LOCAL_LOCK_RETRY = 3;
+  static const int LOCAL_LOCK_WAIT = 4;
 
   static const int LOCAL_LOCK_EXIST = 0;
   static const int LOCAL_LOCK_NOT_EXIST = 1;

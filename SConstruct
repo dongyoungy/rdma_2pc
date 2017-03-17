@@ -3,6 +3,7 @@ env = Environment(ENV = os.environ, CC = 'mpicc', CXX = 'mpic++')
 SetOption('num_jobs', 8)
 print "running with -j", 8
 debug = ARGUMENTS.get('debug', 0)
+env.Append(CCFLAGS='-std=c++11')
 if int(debug):
     env.Append(CCFLAGS='-g')
 else:

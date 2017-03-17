@@ -144,8 +144,8 @@ class LockManager {
     }
 
 
-    static const int EXCLUSIVE = 0;
-    static const int SHARED = 1;
+    static const int EXCLUSIVE = 1;
+    static const int SHARED = 2;
 
     static const int LOCK_LOCAL = 0;
     static const int LOCK_REMOTE = 1;
@@ -164,7 +164,7 @@ class LockManager {
 
     static const int MAX_USER = 65536;
     static const int NUM_LOCK_HISTORY = 10000;
-    static const double ADAPT_THRESHOLD = 0.8;
+    static constexpr double ADAPT_THRESHOLD = 0.8;
     static map<uint32_t, uint32_t> user_to_node_map_;
     uint64_t* lock_table_;
 

@@ -648,26 +648,29 @@ int LockManager::Lock(int seq_no, uint32_t user_id, uint32_t manager_id, int loc
     //}
   //}
 
+  int ret = 0;
   pthread_mutex_lock(&mutex_);
-  int ret = llm_->CheckLock(seq_no, user_id, manager_id, obj_index, lock_type);
+  ret = llm_->CheckLock(seq_no, user_id, manager_id, obj_index, lock_type);
   if (ret == LOCAL_LOCK_WAIT) {
-    pthread_mutex_unlock(&mutex_);
-    return 0;
+    ret = 0;
   } else if (ret == LOCAL_LOCK_RETRY) {
     LockClient* lock_client = lock_clients_[manager_id*MAX_USER+user_id];
     ret = lock_client->RequestLock(seq_no, user_id, lock_type, obj_index,
         lock_mode_table_[manager_id]);
-    pthread_mutex_unlock(&mutex_);
-    return 0;
   } else if (ret == LOCAL_LOCK_PASS) {
-    LockSimulator* user = user_map[user_id];
-    user->NotifyResult(seq_no, LockManager::TASK_LOCK, lock_type, obj_index,
-        LockManager::RESULT_SUCCESS);
+    llm_->Lock(manager_id, obj_index, lock_type);
+    ret = LOCAL_LOCK_PASS;
+    //LockSimulator* user = user_map[user_id];
+    //user->NotifyResult(seq_no, LockManager::TASK_LOCK, lock_type, obj_index,
+        //LockManager::RESULT_SUCCESS);
   } else if (ret == LOCAL_LOCK_FAIL) {
-    LockSimulator* user = user_map[user_id];
-    user->NotifyResult(seq_no, LockManager::TASK_LOCK, lock_type, obj_index,
-        LockManager::RESULT_SUCCESS);
+    ret = LOCAL_LOCK_FAIL;
+    //LockSimulator* user = user_map[user_id];
+    //user->NotifyResult(seq_no, LockManager::TASK_LOCK, lock_type, obj_index,
+        //LockManager::RESULT_SUCCESS);
   }
+  pthread_mutex_unlock(&mutex_);
+  return ret;
 }
 
 int LockManager::SwitchToLocal() {
@@ -690,22 +693,22 @@ int LockManager::Unlock(int seq_no, uint32_t user_id, uint32_t manager_id, int l
     int obj_index) {
   pthread_mutex_lock(&mutex_);
   int count = llm_->GetCount(manager_id, obj_index, lock_type);
-  int ret = llm_->Unlock(manager_id, obj_index, lock_type);
+  int ret = 0;
 
   if (count > 1) {
     llm_->Unlock(manager_id, obj_index, lock_type);
-    return 0;
+    ret = LOCAL_LOCK_PASS;
   } else if (count == 1) {
     llm_->SetStatus(manager_id, obj_index, LOCK_STATUS_UNLOCKING);
     LockClient* lock_client = lock_clients_[manager_id*MAX_USER+user_id];
     ret = lock_client->RequestUnlock(seq_no, user_id, lock_type, obj_index,
         lock_mode_table_[manager_id]);
-    pthread_mutex_unlock(&mutex_);
-    return ret;
   } else {
     cerr << "LockManager::Unlock(): something is wrong" << endl;
-    return -1;
+    ret = -1;
   }
+  pthread_mutex_unlock(&mutex_);
+  return ret;
 }
 
 int LockManager::GrantLock(int seq_no, uint32_t user_id, uint32_t home_id, uint32_t waiting_id,
@@ -800,6 +803,7 @@ int LockManager::LockLocallyWithRetry(Context* context, Message* message) {
         seq_no,
         user_id,
         lock_type,
+        rank_,
         obj_index,
         lock_result
         );
@@ -912,6 +916,7 @@ int LockManager::LockLocallyWithQueue(Context* context, Message* message) {
           seq_no,
           user_id,
           lock_type,
+          rank_, // id_?
           obj_index,
           lock_result
           );
@@ -1096,6 +1101,7 @@ int LockManager::UnlockLocallyWithRetry(Context* context, Message* message) {
         seq_no,
         user_id,
         lock_type,
+        rank_,
         obj_index,
         lock_result
         );
@@ -1228,6 +1234,7 @@ int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
         seq_no,
         user_id,
         lock_type,
+        rank_,
         obj_index,
         lock_result
         );
@@ -1365,16 +1372,18 @@ int LockManager::NotifyLockRequestResult(int seq_no, uint32_t user_id, int lock_
     LocalLockWaitElement wait_element = q.front();
     if (wait_element.status == GLOBAL_LOCK_WAITING) {
       // let it have the local lock + remove it from the queue
-      llm_->Lock(target_node_id, target_obj_index, lock_type);
+      llm_->Lock(target_node_id, obj_index, lock_type);
       q.pop();
+      int size = q.size();
+      LocalLockWaitElement elem;
       // if shared locks are waiting, let them get the lock as well.
-      while (!q.empty()) {
-        LocalLockWaitElement elem = q.front();
+      while (q.size() > 0) {
+        elem = q.front();
         if (elem.lock_type == lock_type && lock_type == SHARED) {
           LockSimulator* user = user_map[elem.owner_thread_id];
           user->NotifyResult(elem.seq_no,
               LockManager::TASK_LOCK, lock_type, obj_index, result);
-          llm_->Lock(target_node_id, target_obj_index, lock_type);
+          llm_->Lock(target_node_id, obj_index, lock_type);
           q.pop();
         } else {
           break;
@@ -1592,6 +1601,7 @@ int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
             message->seq_no,
             message->user_id,
             message->lock_type,
+            message->home_id,
             message->obj_index,
             RESULT_SUCCESS
             );

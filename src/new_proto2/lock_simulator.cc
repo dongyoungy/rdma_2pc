@@ -345,9 +345,9 @@ void LockSimulator::CreateLockRequests() {
       }
       requests_[i]->obj_index = rand_r(&seed_) % num_lock_object_;
       if (drand48() < shared_lock_ratio_) {
-        requests_[i]->lock_type = LockManager::SHARED;
+        requests_[i]->lock_type = SHARED;
       } else {
-        requests_[i]->lock_type = LockManager::EXCLUSIVE;
+        requests_[i]->lock_type = EXCLUSIVE;
       }
       requests_[i]->task = LockManager::TASK_LOCK;
 
@@ -497,6 +497,7 @@ void LockSimulator::SubmitLockRequest() {
     //return;
   //}
 
+  int ret = 0;
   pthread_mutex_lock(&lock_mutex_);
   if (current_request_idx_ < request_size_) {
     if (verbose_) {
@@ -516,7 +517,7 @@ void LockSimulator::SubmitLockRequest() {
     ++seq_count_;
     last_request_idx_ = current_request_idx_;
     ++current_request_idx_;
-    manager_->Lock(
+    ret = manager_->Lock(
         requests_[last_request_idx_]->seq_no,
         id_,
         requests_[last_request_idx_]->lm_id,
@@ -530,6 +531,23 @@ void LockSimulator::SubmitLockRequest() {
     //SubmitUnlockRequest();
   }
   pthread_mutex_unlock(&lock_mutex_);
+  if (ret == LOCAL_LOCK_PASS) {
+    this->NotifyResult(
+        requests_[last_request_idx_]->seq_no,
+        LockManager::TASK_LOCK,
+        requests_[last_request_idx_]->lock_type,
+        requests_[last_request_idx_]->obj_index,
+        LockManager::RESULT_SUCCESS
+        );
+  } else if (ret == LOCAL_LOCK_FAIL) {
+    this->NotifyResult(
+        requests_[last_request_idx_]->seq_no,
+        LockManager::TASK_LOCK,
+        requests_[last_request_idx_]->lock_type,
+        requests_[last_request_idx_]->obj_index,
+        LockManager::RESULT_FAILURE
+        );
+  }
 }
 
 void LockSimulator::SubmitUnlockRequest() {
@@ -566,6 +584,7 @@ void LockSimulator::SubmitUnlockRequest() {
     //}
   //}
 
+  int ret = 0;
   pthread_mutex_lock(&lock_mutex_);
   if (current_request_idx_ >= 0) {
     if (verbose_) {
@@ -588,7 +607,7 @@ void LockSimulator::SubmitUnlockRequest() {
     ++seq_count_;
     last_request_idx_ = current_request_idx_;
     --current_request_idx_;
-    manager_->Unlock(
+    ret = manager_->Unlock(
         requests_[last_request_idx_]->seq_no,
         id_,
         requests_[last_request_idx_]->lm_id,
@@ -612,6 +631,15 @@ void LockSimulator::SubmitUnlockRequest() {
     //return;
   //}
   pthread_mutex_unlock(&lock_mutex_);
+  if (ret == LOCAL_LOCK_PASS) {
+    this->NotifyResult(
+        requests_[last_request_idx_]->seq_no,
+        LockManager::TASK_UNLOCK,
+        requests_[last_request_idx_]->lock_type,
+        requests_[last_request_idx_]->obj_index,
+        LockManager::RESULT_SUCCESS
+        );
+  }
 }
 
 void LockSimulator::SubmitLockRequestLocal() {

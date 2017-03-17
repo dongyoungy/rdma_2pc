@@ -306,6 +306,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           message->seq_no,
           message->user_id,
           message->lock_type,
+          remote_lm_id_,
           message->obj_index,
           message->lock_result);
     } else if (message->type == Message::UNLOCK_REQUEST_RESULT) {
@@ -314,6 +315,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           message->seq_no,
           message->user_id,
           message->lock_type,
+          remote_lm_id_,
           message->obj_index,
           message->lock_result);
     }
@@ -367,6 +369,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               request->seq_no,
               request->user_id,
               request->lock_type,
+              remote_lm_id_,
               request->obj_index,
               RESULT_SUCCESS);
         } else {
@@ -385,6 +388,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               request->seq_no,
               request->user_id,
               request->lock_type,
+              remote_lm_id_,
               request->obj_index,
               RESULT_QUEUED);
         }
@@ -400,6 +404,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               request->seq_no,
               request->user_id,
               request->lock_type,
+              remote_lm_id_,
               request->obj_index,
               LockManager::RESULT_SUCCESS);
         //} else if ((wait_after_me_[request->obj_index] & value) != 0){
@@ -430,6 +435,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               request->seq_no,
               request->user_id,
               request->lock_type,
+              remote_lm_id_,
               request->obj_index,
               RESULT_QUEUED);
         }
@@ -464,6 +470,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             request->seq_no,
             request->user_id,
             request->lock_type,
+            remote_lm_id_,
             request->obj_index,
             RESULT_SUCCESS);
       }
@@ -489,6 +496,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             wait_seq_no_,
             wait_user_id_,
             wait_lock_type_,
+            remote_lm_id_,
             wait_obj_index_,
             RESULT_SUCCESS_FROM_QUEUED);
       }
@@ -522,6 +530,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               request->seq_no,
               request->user_id,
               request->lock_type,
+              remote_lm_id_,
               request->obj_index,
               RESULT_SUCCESS);
         }
@@ -547,6 +556,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               request->seq_no,
               request->user_id,
               request->lock_type,
+              remote_lm_id_,
               request->obj_index,
               RESULT_SUCCESS);
         }
@@ -581,6 +591,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           request->seq_no,
           request->user_id,
           request->lock_type,
+          remote_lm_id_,
           request->obj_index,
           RESULT_SUCCESS);
     } else {
@@ -611,6 +622,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               request->seq_no,
               request->user_id,
               request->lock_type,
+              remote_lm_id_,
               request->obj_index,
               RESULT_SUCCESS);
         }
@@ -635,6 +647,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               request->seq_no,
               request->user_id,
               request->lock_type,
+              remote_lm_id_,
               request->obj_index,
               RESULT_SUCCESS);
         }
