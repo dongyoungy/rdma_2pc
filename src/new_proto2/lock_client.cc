@@ -89,6 +89,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           message->seq_no,
           message->user_id,
           message->lock_type,
+          remote_lm_id_,
           message->obj_index,
           message->lock_result);
     } else if (message->type == Message::UNLOCK_REQUEST_RESULT) {
@@ -97,6 +98,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           message->seq_no,
           message->user_id,
           message->lock_type,
+          remote_lm_id_,
           message->obj_index,
           message->lock_result);
     }
@@ -137,6 +139,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             request->seq_no,
             request->user_id,
             request->lock_type,
+            remote_lm_id_,
             request->obj_index,
             LockManager::RESULT_SUCCESS);
       } else {
@@ -144,6 +147,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             request->seq_no,
             request->user_id,
             request->lock_type,
+            remote_lm_id_,
             request->obj_index,
             LockManager::RESULT_FAILURE);
       }
@@ -153,6 +157,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             request->seq_no,
             request->user_id,
             request->lock_type,
+            remote_lm_id_,
             request->obj_index,
             LockManager::RESULT_SUCCESS);
       } else if (exclusive == request->user_id && shared != 0) {
@@ -160,6 +165,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             request->seq_no,
             request->user_id,
             request->lock_type,
+            remote_lm_id_,
             request->obj_index,
             LockManager::RESULT_RETRY);
       } else {
@@ -167,6 +173,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             request->seq_no,
             request->user_id,
             request->lock_type,
+            remote_lm_id_,
             request->obj_index,
             LockManager::RESULT_FAILURE);
       }
@@ -203,6 +210,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               request->seq_no,
               request->user_id,
               request->lock_type,
+              remote_lm_id_,
               request->obj_index,
               LockManager::RESULT_SUCCESS);
         } else if (exclusive == 0 && shared != 0) {
@@ -227,6 +235,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               request->seq_no,
               request->user_id,
               request->lock_type,
+              remote_lm_id_,
               request->obj_index,
               LockManager::RESULT_SUCCESS);
         } else if (exclusive != 0 && shared == 0){
@@ -250,6 +259,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
                 request->seq_no,
                 request->user_id,
                 request->lock_type,
+                remote_lm_id_,
                 request->obj_index,
                 RESULT_FAILURE);
           } else {
@@ -257,6 +267,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
                 request->seq_no,
                 request->user_id,
                 request->lock_type,
+                remote_lm_id_,
                 request->obj_index,
                 RESULT_RETRY);
           }
@@ -271,6 +282,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             request->seq_no,
             request->user_id,
             request->lock_type,
+            remote_lm_id_,
             request->obj_index,
             LockManager::RESULT_SUCCESS);
         // notify other nodes
@@ -312,6 +324,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             request->seq_no,
             request->user_id,
             request->lock_type,
+            remote_lm_id_,
             request->obj_index,
             LockManager::RESULT_SUCCESS);
       } else {
@@ -326,6 +339,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               request->seq_no,
               request->user_id,
               request->lock_type,
+              remote_lm_id_,
               request->obj_index,
               RESULT_FAILURE);
         } else {
@@ -517,6 +531,7 @@ int LockClient::PollExclusiveToShared(LockRequest* request) {
             request->seq_no,
             request->user_id,
             request->lock_type,
+            remote_lm_id_,
             request->obj_index,
             LockManager::RESULT_SUCCESS);
       } else {
@@ -534,6 +549,7 @@ int LockClient::PollExclusiveToShared(LockRequest* request) {
             request->seq_no,
             request->user_id,
             request->lock_type,
+            remote_lm_id_,
             request->obj_index,
             RESULT_SUCCESS);
       } else {
@@ -587,6 +603,7 @@ int LockClient::PollExclusiveToExclusive(LockRequest* request) {
             request->seq_no,
             request->user_id,
             request->lock_type,
+            remote_lm_id_,
             request->obj_index,
             RESULT_SUCCESS);
       } else {

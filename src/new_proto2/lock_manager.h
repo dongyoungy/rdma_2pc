@@ -17,6 +17,7 @@
 #include <map>
 #include <set>
 
+#include "local_lock_manager.h"
 #include "local_work_queue.h"
 #include "lock_wait_queue.h"
 #include "lock_simulator.h"
@@ -50,9 +51,11 @@ class LockManager {
     int RejectLock(int seq_no, uint32_t user_id, uint32_t manager_id,
         int lock_type, int obj_index);
     int UpdateLockModeTable(int manager_id, int mode);
-    int NotifyLockRequestResult(int seq_no, uint32_t user_id, int lock_type, int obj_index,
+    int NotifyLockRequestResult(int seq_no, uint32_t user_id, int lock_type,
+        int target_node_id, int obj_index,
         int result);
-    int NotifyUnlockRequestResult(int seq_no, uint32_t user_id, int lock_type, int obj_index,
+    int NotifyUnlockRequestResult(int seq_no, uint32_t user_id, int lock_type,
+        int target_node_id, int obj_index,
         int result);
     int GetID() const;
     int GetLockMode() const;
@@ -228,6 +231,9 @@ class LockManager {
     LocalWorkQueue<Message>* local_work_queue_;
     pthread_t local_work_poller_;
 
+    // local lock manager
+    LocalLockManager* llm_;
+
     string work_dir_;
     uint64_t num_rdma_send_;
     uint64_t num_rdma_recv_;
@@ -235,6 +241,7 @@ class LockManager {
     uint64_t* fail_count_;
     int* lock_mode_table_;
     uint32_t rank_;
+    uint32_t id_;
     int lock_mode_;
     int current_lock_mode_;
     int proxy_fail_rule_;
@@ -257,6 +264,7 @@ class LockManager {
     double num_local_shared_lock_;
     uint16_t port_;
     size_t data_size_;
+    pthread_mutex_t mutex_;
     pthread_mutex_t** lock_mutex_;
     pthread_mutex_t msg_mutex_;
     pthread_mutex_t poll_mutex_;

@@ -160,7 +160,8 @@ int main(int argc, char** argv) {
   vector<LockSimulator*> users;
   for (int i=0;i<num_users;++i) {
     LockSimulator* simulator = new LockSimulator(lock_manager,
-        (uint32_t)pow(2.0, i), // id
+        //(uint32_t)pow(2.0, i), // id
+        i, // id
         num_managers,
         num_lock_object,
         num_tx, // num lock requests

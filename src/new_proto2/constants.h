@@ -5,9 +5,10 @@
 
 namespace rdma { namespace proto {
 
-  static const int EXCLUSIVE = 0;
-  static const int SHARED = 1;
-  static const int ALL = 2;
+  static const int NONE = 0;
+  static const int EXCLUSIVE = 1;
+  static const int SHARED = 2;
+  static const int ALL = 3;
 
   static const int WORKLOAD_UNIFORM = 0;
   static const int WORKLOAD_HOTSPOT = 1;
@@ -43,6 +44,24 @@ namespace rdma { namespace proto {
   static const int MAX_LOCK_REQUESTS = 64;
 
   static const int ERR_MORE_THAN_ONE_NODE = 1;
+
+  static const int FUNC_FAIL = -1;
+  static const int FUNC_SUCCESS = 0;
+
+  static const int LOCAL_LOCK_PASS = 0;
+  static const int LOCAL_LOCK_FAIL = 1;
+  static const int LOCAL_LOCK_RETRY = 2;
+  static const int LOCAL_LOCK_WAIT = 3;
+
+  static const int LOCAL_LOCK_EXIST = 0;
+  static const int LOCAL_LOCK_NOT_EXIST = 1;
+
+  static const int GLOBAL_LOCK_WAITING = 1;
+  static const int LOCAL_LOCK_WAITING = 2;
+
+  static const int LOCK_STATUS_IDLE = 0;
+  static const int LOCK_STATUS_LOCKING = 1;
+  static const int LOCK_STATUS_UNLOCKING = 2;
 
   // purpose of remote reading
   static const int READ_POLLING = 1;

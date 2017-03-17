@@ -19,6 +19,7 @@ LockManager::LockManager(const string& work_dir, uint32_t rank,
     int num_manager, int num_lock_object, int lock_mode, int num_total_user, int num_client) {
   work_dir_                        = work_dir;
   rank_                            = rank;
+  id_                              = (uint32_t)pow(2.0, rank_);
   num_manager_                     = num_manager;
   num_client_                      = num_client;
   num_total_user_                  = num_total_user;
@@ -40,6 +41,7 @@ LockManager::LockManager(const string& work_dir, uint32_t rank,
   num_remote_lock_                 = 0;
   num_rdma_send_                   = 0;
   num_rdma_recv_                   = 0;
+  llm_                             = new LocalLockManager(rank_);
 
   if (lock_mode_ == LOCK_ADAPTIVE) {
     current_lock_mode_ = LOCK_REMOTE_POLL;
@@ -71,6 +73,7 @@ LockManager::LockManager(const string& work_dir, uint32_t rank,
   pthread_mutex_init(&msg_mutex_, NULL);
   pthread_mutex_init(&poll_mutex_, NULL);
   pthread_mutex_init(&seq_mutex_, NULL);
+  pthread_mutex_init(&mutex_, NULL);
 }
 
 // destructor
@@ -613,55 +616,58 @@ int LockManager::NotifyLockMode(Context* context) {
 
 int LockManager::Lock(int seq_no, uint32_t user_id, uint32_t manager_id, int lock_type,
     int obj_index) {
-  LockClient* lock_client = lock_clients_[manager_id*MAX_USER+user_id];
-  if (lock_mode_ == LockManager::LOCK_ADAPTIVE) {
-    if (manager_id == this->GetID()) {
-      ++num_local_lock_;
-      if (num_local_lock_ + num_remote_lock_ > NUM_LOCK_HISTORY) {
-        if (num_local_lock_ > NUM_LOCK_HISTORY) {
-          num_local_lock_ = NUM_LOCK_HISTORY;
-        } else {
-          --num_remote_lock_;
-        }
-      }
-    } else {
-      ++num_remote_lock_;
-      if (num_local_lock_ + num_remote_lock_ > NUM_LOCK_HISTORY) {
-        if (num_remote_lock_ > NUM_LOCK_HISTORY) {
-          num_remote_lock_ = NUM_LOCK_HISTORY;
-        } else {
-          --num_local_lock_;
-        }
-      }
-    }
 
-    if ((double)num_local_lock_ / (double)(num_local_lock_ + num_remote_lock_) >=
-        ADAPT_THRESHOLD && current_lock_mode_ == LockManager::LOCK_REMOTE) {
-      SwitchToLocal();
-    } else if ((double)num_local_lock_ / (double)(num_local_lock_ + num_remote_lock_) <
-        ADAPT_THRESHOLD && current_lock_mode_ == LockManager::LOCK_LOCAL) {
-      SwitchToRemote();
-    }
-  }
+  // this was experimental for adaptive algorithm...
+  //if (lock_mode_ == LockManager::LOCK_ADAPTIVE) {
+    //if (manager_id == this->GetID()) {
+      //++num_local_lock_;
+      //if (num_local_lock_ + num_remote_lock_ > NUM_LOCK_HISTORY) {
+        //if (num_local_lock_ > NUM_LOCK_HISTORY) {
+          //num_local_lock_ = NUM_LOCK_HISTORY;
+        //} else {
+          //--num_remote_lock_;
+        //}
+      //}
+    //} else {
+      //++num_remote_lock_;
+      //if (num_local_lock_ + num_remote_lock_ > NUM_LOCK_HISTORY) {
+        //if (num_remote_lock_ > NUM_LOCK_HISTORY) {
+          //num_remote_lock_ = NUM_LOCK_HISTORY;
+        //} else {
+          //--num_local_lock_;
+        //}
+      //}
+    //}
 
-  //if ((current_lock_mode_ == LOCK_PROXY_QUEUE || current_lock_mode_ == LOCK_PROXY_RETRY) &&
-      //manager_id == rank_) {
-    //Message new_work;
-    //new_work.seq_no    = seq_no;
-    //new_work.home_id   = manager_id;
-    //new_work.user_id   = user_id;
-    //new_work.lock_type = lock_type;
-    //new_work.obj_index = obj_index;
-    //new_work.task      = TASK_LOCK;
-
-    //local_work_queue_->Insert(new_work);
-    //return 0;
-  //} else {
-    //return lock_client->RequestLock(seq_no, user_id, lock_type, obj_index,
-        //lock_mode_table_[manager_id]);
+    //if ((double)num_local_lock_ / (double)(num_local_lock_ + num_remote_lock_) >=
+        //ADAPT_THRESHOLD && current_lock_mode_ == LockManager::LOCK_REMOTE) {
+      //SwitchToLocal();
+    //} else if ((double)num_local_lock_ / (double)(num_local_lock_ + num_remote_lock_) <
+        //ADAPT_THRESHOLD && current_lock_mode_ == LockManager::LOCK_LOCAL) {
+      //SwitchToRemote();
+    //}
   //}
-  return lock_client->RequestLock(seq_no, user_id, lock_type, obj_index,
-      lock_mode_table_[manager_id]);
+
+  pthread_mutex_lock(&mutex_);
+  int ret = llm_->CheckLock(seq_no, user_id, manager_id, obj_index, lock_type);
+  if (ret == LOCAL_LOCK_WAIT) {
+    pthread_mutex_unlock(&mutex_);
+    return 0;
+  } else if (ret == LOCAL_LOCK_RETRY) {
+    LockClient* lock_client = lock_clients_[manager_id*MAX_USER+user_id];
+    ret = lock_client->RequestLock(seq_no, user_id, lock_type, obj_index,
+        lock_mode_table_[manager_id]);
+    pthread_mutex_unlock(&mutex_);
+    return 0;
+  } else if (ret == LOCAL_LOCK_PASS) {
+    LockSimulator* user = user_map[user_id];
+    user->NotifyResult(seq_no, LockManager::TASK_LOCK, lock_type, obj_index,
+        LockManager::RESULT_SUCCESS);
+  } else if (ret == LOCAL_LOCK_FAIL) {
+    LockSimulator* user = user_map[user_id];
+    user->NotifyResult(seq_no, LockManager::TASK_LOCK, lock_type, obj_index,
+        LockManager::RESULT_SUCCESS);
+  }
 }
 
 int LockManager::SwitchToLocal() {
@@ -682,26 +688,24 @@ int LockManager::SwitchToRemote() {
 
 int LockManager::Unlock(int seq_no, uint32_t user_id, uint32_t manager_id, int lock_type,
     int obj_index) {
-  //if ((current_lock_mode_ == LOCK_PROXY_QUEUE || current_lock_mode_ == LOCK_PROXY_RETRY) &&
-      //manager_id == rank_) {
-    //Message new_work;
-    //new_work.seq_no    = seq_no;
-    //new_work.home_id   = manager_id;
-    //new_work.user_id   = user_id;
-    //new_work.lock_type = lock_type;
-    //new_work.obj_index = obj_index;
-    //new_work.task      = TASK_UNLOCK;
+  pthread_mutex_lock(&mutex_);
+  int count = llm_->GetCount(manager_id, obj_index, lock_type);
+  int ret = llm_->Unlock(manager_id, obj_index, lock_type);
 
-    //local_work_queue_->Insert(new_work);
-    //return 0;
-  //} else {
-    //LockClient* lock_client = lock_clients_[manager_id*MAX_USER+user_id];
-    //return lock_client->RequestUnlock(seq_no, user_id, lock_type, obj_index,
-        //lock_mode_table_[manager_id]);
-  //}
-  LockClient* lock_client = lock_clients_[manager_id*MAX_USER+user_id];
-  return lock_client->RequestUnlock(seq_no, user_id, lock_type, obj_index,
-      lock_mode_table_[manager_id]);
+  if (count > 1) {
+    llm_->Unlock(manager_id, obj_index, lock_type);
+    return 0;
+  } else if (count == 1) {
+    llm_->SetStatus(manager_id, obj_index, LOCK_STATUS_UNLOCKING);
+    LockClient* lock_client = lock_clients_[manager_id*MAX_USER+user_id];
+    ret = lock_client->RequestUnlock(seq_no, user_id, lock_type, obj_index,
+        lock_mode_table_[manager_id]);
+    pthread_mutex_unlock(&mutex_);
+    return ret;
+  } else {
+    cerr << "LockManager::Unlock(): something is wrong" << endl;
+    return -1;
+  }
 }
 
 int LockManager::GrantLock(int seq_no, uint32_t user_id, uint32_t home_id, uint32_t waiting_id,
@@ -1353,19 +1357,44 @@ int LockManager::UpdateLockTableRemote(Context* context) {
 }
 
 int LockManager::NotifyLockRequestResult(int seq_no, uint32_t user_id, int lock_type,
-    int obj_index, int result) {
+    int target_node_id, int obj_index, int result) {
+  pthread_mutex_lock(&mutex_);
+  if (result == RESULT_SUCCESS) {
+    queue<LocalLockWaitElement>& q = llm_->GetQueue(target_node_id, obj_index);
+    // must have been first global lock acquisition
+    LocalLockWaitElement wait_element = q.front();
+    if (wait_element.status == GLOBAL_LOCK_WAITING) {
+      // let it have the local lock + remove it from the queue
+      llm_->Lock(target_node_id, target_obj_index, lock_type);
+      q.pop();
+      // if shared locks are waiting, let them get the lock as well.
+      while (!q.empty()) {
+        LocalLockWaitElement elem = q.front();
+        if (elem.lock_type == lock_type && lock_type == SHARED) {
+          LockSimulator* user = user_map[elem.owner_thread_id];
+          user->NotifyResult(elem.seq_no,
+              LockManager::TASK_LOCK, lock_type, obj_index, result);
+          llm_->Lock(target_node_id, target_obj_index, lock_type);
+          q.pop();
+        } else {
+          break;
+        }
+      }
+    }
+  }
   LockSimulator* user = user_map[user_id];
-  //pthread_mutex_lock(user_mutex_map[user_id]);
   user->NotifyResult(seq_no, LockManager::TASK_LOCK, lock_type, obj_index, result);
-  //pthread_mutex_unlock(user_mutex_map[user_id]);
+  pthread_mutex_unlock(&mutex_);
 }
 
 int LockManager::NotifyUnlockRequestResult(int seq_no, uint32_t user_id, int lock_type,
-    int obj_index, int result) {
+    int target_node_id, int obj_index, int result) {
+  pthread_mutex_lock(&mutex_);
+  llm_->Unlock(target_node_id, obj_index, lock_type);
+  llm_->SetStatus(target_node_id, obj_index, LOCK_STATUS_IDLE);
   LockSimulator* user = user_map[user_id];
-  //pthread_mutex_lock(user_mutex_map[user_id]);
   user->NotifyResult(seq_no, LockManager::TASK_UNLOCK, lock_type, obj_index, result);
-  //pthread_mutex_unlock(user_mutex_map[user_id]);
+  pthread_mutex_unlock(&mutex_);
 }
 
 int LockManager::SendMessage(Context* context) {
