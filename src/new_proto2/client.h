@@ -87,7 +87,7 @@ class Client {
     LockManager* local_manager_;
     LockSimulator* local_user_;
     Context* context_;
-    uint32_t local_manager_id_;
+    uint32_t local_owner_id_;
     uint32_t remote_lm_id_;
     int test_duration_;
     int lock_request_idx_;

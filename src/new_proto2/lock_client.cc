@@ -717,13 +717,14 @@ int LockClient::LockRemotely(Context* context, int seq_no, uint32_t user_id, int
   //context->last_lock_task = LockManager::TASK_LOCK;
 
   pthread_mutex_lock(&lock_mutex_);
-  LockRequest* request = lock_requests_[lock_request_idx_];
-  request->seq_no      = seq_no;
-  request->user_id     = user_id;
-  request->lock_type   = lock_type;
-  request->obj_index   = obj_index;
-  request->task        = TASK_LOCK;
-  lock_request_idx_    = (lock_request_idx_ + 1) % 16;
+  LockRequest* request   = lock_requests_[lock_request_idx_];
+  request->seq_no        = seq_no;
+  request->owner_node_id = local_owner_id_;
+  request->user_id       = user_id;
+  request->lock_type     = lock_type;
+  request->obj_index     = obj_index;
+  request->task          = TASK_LOCK;
+  lock_request_idx_      = (lock_request_idx_ + 1) % 16;
 
   sge.addr   = (uint64_t)request->original_value;
   sge.length = sizeof(uint64_t);
@@ -737,11 +738,11 @@ int LockClient::LockRemotely(Context* context, int seq_no, uint32_t user_id, int
 
   if (lock_type == LockManager::SHARED) {
     exclusive = 0;
-    shared = user_id;
+    shared = local_owner_id_;
     uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
     send_work_request.wr.atomic.compare_add = new_value;
   } else if (lock_type == LockManager::EXCLUSIVE) {
-    exclusive = user_id;
+    exclusive = local_owner_id_;
     shared = 0;
     uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
     send_work_request.wr.atomic.compare_add = new_value;
@@ -784,14 +785,15 @@ int LockClient::ReadRemotely(Context* context, int seq_no, uint32_t user_id, int
   //context->read_purpose     = READ_POLLING;
 
   pthread_mutex_lock(&lock_mutex_);
-  LockRequest* request = lock_requests_[lock_request_idx_];
-  request->seq_no      = seq_no;
-  request->user_id     = user_id;
-  request->read_target = read_target;
-  request->obj_index   = obj_index;
-  request->lock_type   = lock_type;
-  request->task        = TASK_READ;
-  lock_request_idx_    = (lock_request_idx_ + 1) % 16;
+  LockRequest* request   = lock_requests_[lock_request_idx_];
+  request->seq_no        = seq_no;
+  request->owner_node_id = local_owner_id_;
+  request->user_id       = user_id;
+  request->read_target   = read_target;
+  request->obj_index     = obj_index;
+  request->lock_type     = lock_type;
+  request->task          = TASK_READ;
+  lock_request_idx_      = (lock_request_idx_ + 1) % 16;
 
   sge.addr   = (uint64_t)request->read_buffer;
   sge.length = sizeof(uint32_t);
@@ -925,14 +927,14 @@ int LockClient::UnlockRemotely(Context* context, int seq_no, uint32_t user_id, i
 
   if (lock_type == LockManager::SHARED) {
     exclusive = 0;
-    shared = user_id;
+    shared = local_owner_id_;
     uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
     new_value = (-1) * new_value; // need to subtract for unlock
     send_work_request.wr.atomic.compare_add = new_value;
   } else if (lock_type == LockManager::EXCLUSIVE) {
     exclusive = 0;
     shared = 0;
-    uint64_t new_value = ((uint64_t)user_id) << 32 | shared;
+    uint64_t new_value = ((uint64_t)local_owner_id_) << 32 | shared;
     new_value = (-1) * new_value; // need to subtract for unlock
     send_work_request.wr.atomic.compare_add = new_value;
   }
@@ -992,7 +994,7 @@ int LockClient::SendLockRequest(Context* context, int seq_no,
   pthread_mutex_lock(&lock_mutex_);
   msg->type      = Message::LOCK_REQUEST;
   msg->seq_no    = seq_no;
-  msg->home_id   = local_manager_id_;
+  msg->home_id   = local_owner_id_;
   msg->lock_type = lock_type;
   msg->obj_index = obj_index;
   msg->user_id   = user_id;
@@ -1016,7 +1018,7 @@ int LockClient::SendUnlockRequest(Context* context, int seq_no,
   pthread_mutex_lock(&lock_mutex_);
   msg->type      = Message::UNLOCK_REQUEST;
   msg->seq_no    = seq_no;
-  msg->home_id   = local_manager_id_;
+  msg->home_id   = local_owner_id_;
   msg->lock_type = lock_type;
   msg->obj_index = obj_index;
   msg->user_id   = user_id;

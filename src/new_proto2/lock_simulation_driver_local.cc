@@ -25,16 +25,15 @@ struct CPUUsage {
 
 int main(int argc, char** argv) {
 
-  if (argc != 16) {
-    cout << "USAGE: " << argv[0] << " <work_dir> <num_lock_object>" <<
+  if (argc != 17) {
+    cout << "USAGE: " << argv[0] << " <work_dir> <num_lock_manager> <num_lock_object>" <<
       " <num_tx> <num_request_per_tx> <num_users> <lock_mode> <shared_exclusive_rule> " <<
       "<exclusive_shared_rule> <exclusive_exclusive_rule> <workload_type> <local_workload_ratio> "<<
       "<shared_lock_ratio> <min_backoff_time> <max_backoff_time> <rand_seed>" << endl;
     exit(1);
   }
 
-  int num_managers = 1;
-  int rank = 0;
+  int rank = 1;
 
   if (1 == htons(1)) {
     cout << "The current machine uses BIG ENDIAN" << endl;
@@ -42,20 +41,21 @@ int main(int argc, char** argv) {
     cout << "The current machine uses LITTLE ENDIAN" << endl;
   }
 
-  int num_lock_object          = atoi(argv[2]);
-  long num_tx                  = atol(argv[3]);
-  int num_request_per_tx       = atoi(argv[4]);
-  int num_users                = atoi(argv[5]);
-  int lock_mode                = atoi(argv[6]);
-  int shared_exclusive_rule    = atoi(argv[7]);
-  int exclusive_shared_rule    = atoi(argv[8]);
-  int exclusive_exclusive_rule = atoi(argv[9]);
-  int workload_type            = atoi(argv[10]);
-  double local_workload_ratio  = atof(argv[11]);
-  double shared_lock_ratio     = atof(argv[12]);
-  int min_backoff_time         = atoi(argv[13]);
-  int max_backoff_time         = atoi(argv[14]);
-  long seed                    = atol(argv[15]);
+  int num_managers = atoi(argv[2]);
+  int num_lock_object          = atoi(argv[3]);
+  long num_tx                  = atol(argv[4]);
+  int num_request_per_tx       = atoi(argv[5]);
+  int num_users                = atoi(argv[6]);
+  int lock_mode                = atoi(argv[7]);
+  int shared_exclusive_rule    = atoi(argv[8]);
+  int exclusive_shared_rule    = atoi(argv[9]);
+  int exclusive_exclusive_rule = atoi(argv[10]);
+  int workload_type            = atoi(argv[11]);
+  double local_workload_ratio  = atof(argv[12]);
+  double shared_lock_ratio     = atof(argv[13]);
+  int min_backoff_time         = atoi(argv[14]);
+  int max_backoff_time         = atoi(argv[15]);
+  long seed                    = atol(argv[16]);
 
   string workload_type_str, shared_lock_ratio_str;
   if (workload_type == LockSimulator::WORKLOAD_UNIFORM) {
@@ -129,76 +129,83 @@ int main(int argc, char** argv) {
       exit(-1);
   }
 
-  if (rank == 0) {
-    cout << "Lock Method = " << lock_method_str << endl;
-    cout << "Type of Workload = " << workload_type_str << endl;
-    cout << shared_lock_ratio_str << endl;
-    cout << "SHARED -> EXCLUSIVE = " << shared_exclusive_rule_str << endl;
-    cout << "EXCLUSIVE -> SHARED = " << exclusive_shared_rule_str << endl;
-    cout << "EXCLUSIVE -> EXCLUSIVE = " << exclusive_exclusive_rule_str << endl;
-    cout << "Num Tx = " << num_tx << endl;
-    cout << "Num Requests per Tx = " << num_request_per_tx << endl;
-  }
+  cout << "Lock Method = " << lock_method_str << endl;
+  cout << "Type of Workload = " << workload_type_str << endl;
+  cout << shared_lock_ratio_str << endl;
+  cout << "SHARED -> EXCLUSIVE = " << shared_exclusive_rule_str << endl;
+  cout << "EXCLUSIVE -> SHARED = " << exclusive_shared_rule_str << endl;
+  cout << "EXCLUSIVE -> EXCLUSIVE = " << exclusive_exclusive_rule_str << endl;
+  cout << "Num Tx = " << num_tx << endl;
+  cout << "Num Requests per Tx = " << num_request_per_tx << endl;
 
   LockManager::SetSharedExclusiveRule(shared_exclusive_rule);
   LockManager::SetExclusiveSharedRule(exclusive_shared_rule);
   LockManager::SetExclusiveExclusiveRule(exclusive_exclusive_rule);
 
-  LockManager* lock_manager = new LockManager(argv[1], rank, num_managers,
-      num_lock_object, lock_mode);
-
-  if (lock_manager->Initialize()) {
-    cerr << "LockManager initialization failure." << endl;
-    exit(-1);
-  }
-
-  pthread_t lock_manager_thread;
-  if (pthread_create(&lock_manager_thread, NULL, RunLockManager,
-        (void*)lock_manager)) {
-     cerr << "pthread_create() error." << endl;
-     exit(-1);
-  }
-
   vector<LockSimulator*> users;
-  for (int i=0;i<num_users;++i) {
-    LockSimulator* simulator = new LockSimulator(lock_manager,
-        //(uint32_t)pow(2.0, i), // id
-        i, // id
-        num_managers,
-        num_lock_object,
-        num_tx, // num lock requests
-        num_request_per_tx,
-        seed,
-        true, // verbose
-        true, // measure lock
-        workload_type,
-        lock_mode,
-        local_workload_ratio,
-        shared_lock_ratio,
-        0,0,0, // tx delays
-        min_backoff_time,
-        max_backoff_time
-        );
-    //lock_manager->RegisterUser((uint32_t)pow(2.0, i), simulator);
-    lock_manager->RegisterUser(i, simulator);
-    users.push_back(simulator);
+  vector<LockManager*> managers;
+  for (int i = 0; i < num_managers; ++i) {
+    LockManager* lock_manager = new LockManager(argv[1], i, num_managers,
+        num_lock_object, lock_mode);
+
+    if (lock_manager->Initialize()) {
+      cerr << "LockManager initialization failure." << endl;
+      exit(-1);
+    }
+
+    managers.push_back(lock_manager);
+
+    pthread_t lock_manager_thread;
+    if (pthread_create(&lock_manager_thread, NULL, RunLockManager,
+          (void*)lock_manager)) {
+      cerr << "pthread_create() error." << endl;
+      exit(-1);
+    }
   }
+  sleep (1);
 
-  sleep(3);
+  for (int i = 0; i < num_managers; ++i) {
+    for (int j=0;j<num_users;++j) {
+      LockSimulator* simulator = new LockSimulator(managers[i],
+          //(uint32_t)pow(2.0, i), // id
+          j, // id
+          num_managers,
+          num_lock_object,
+          num_tx, // num lock requests
+          num_request_per_tx,
+          seed,
+          false, // verbose
+          true, // measure lock
+          workload_type,
+          lock_mode,
+          local_workload_ratio,
+          shared_lock_ratio,
+          0,0,0, // tx delays
+          min_backoff_time,
+          max_backoff_time
+          );
+      //lock_manager->RegisterUser((uint32_t)pow(2.0, i), simulator);
+      managers[i]->RegisterUser(j, simulator);
+      users.push_back(simulator);
+    }
 
-  if (lock_manager->InitializeLockClients()) {
-     cerr << "InitializeLockClients() failed." << endl;
-     exit(-1);
+    sleep(1);
+
+    if (managers[i]->InitializeLockClients()) {
+      cerr << "InitializeLockClients() failed." << endl;
+      exit(-1);
+    }
+
+    sleep(1);
+
   }
-
-  sleep(1);
 
   time_t start_time;
   time_t end_time;
 
   time(&start_time);
 
-  for (int i=0;i<num_users;++i) {
+  for (int i=0;i<users.size();++i) {
     //users[i]->Run();
     pthread_t lock_simulator_thread;
     if (pthread_create(&lock_simulator_thread, NULL, &RunLockSimulator,

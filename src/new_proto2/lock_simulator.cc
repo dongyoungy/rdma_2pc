@@ -502,7 +502,8 @@ void LockSimulator::SubmitLockRequest() {
   if (current_request_idx_ < request_size_) {
     if (verbose_) {
       pthread_mutex_lock(&PRINT_MUTEX);
-      cout << "(REMOTE) Simulator " << id_ << ": " << "Sending lock request #" <<
+      cout << "(REMOTE) Simulator " << local_manager_id_ << "@" <<
+        id_ << ": " << "Sending lock request #" <<
         current_request_idx_ <<
         " at LM " <<
         requests_[current_request_idx_]->lm_id <<
@@ -589,7 +590,8 @@ void LockSimulator::SubmitUnlockRequest() {
   if (current_request_idx_ >= 0) {
     if (verbose_) {
       pthread_mutex_lock(&PRINT_MUTEX);
-      cout << "(REMOTE) Simulator " << id_ << ": " << "Sending unlock request #" <<
+      cout << "(REMOTE) Simulator " << local_manager_id_ << "@" <<
+        id_ << ": " << "Sending unlock request #" <<
         current_request_idx_ <<
         " at LM " <<
         requests_[current_request_idx_]->lm_id <<

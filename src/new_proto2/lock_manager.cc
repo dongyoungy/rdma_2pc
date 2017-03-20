@@ -41,7 +41,7 @@ LockManager::LockManager(const string& work_dir, uint32_t rank,
   num_remote_lock_                 = 0;
   num_rdma_send_                   = 0;
   num_rdma_recv_                   = 0;
-  llm_                             = new LocalLockManager(rank_);
+  llm_                             = new LocalLockManager(rank_, num_manager_, num_lock_object_);
 
   if (lock_mode_ == LOCK_ADAPTIVE) {
     current_lock_mode_ = LOCK_REMOTE_POLL;
@@ -91,7 +91,7 @@ LockManager::~LockManager() {
 }
 
 int LockManager::GetID() const {
-  return rank_;
+  return id_;
 }
 
 int LockManager::Initialize() {
@@ -649,7 +649,7 @@ int LockManager::Lock(int seq_no, uint32_t user_id, uint32_t manager_id, int loc
   //}
 
   int ret = 0;
-  pthread_mutex_lock(&mutex_);
+  pthread_mutex_lock(lock_mutex_[obj_index]);
   ret = llm_->CheckLock(seq_no, user_id, manager_id, obj_index, lock_type);
   if (ret == LOCAL_LOCK_WAIT) {
     ret = 0;
@@ -669,7 +669,7 @@ int LockManager::Lock(int seq_no, uint32_t user_id, uint32_t manager_id, int loc
     //user->NotifyResult(seq_no, LockManager::TASK_LOCK, lock_type, obj_index,
         //LockManager::RESULT_SUCCESS);
   }
-  pthread_mutex_unlock(&mutex_);
+  pthread_mutex_unlock(lock_mutex_[obj_index]);
   return ret;
 }
 
@@ -691,7 +691,8 @@ int LockManager::SwitchToRemote() {
 
 int LockManager::Unlock(int seq_no, uint32_t user_id, uint32_t manager_id, int lock_type,
     int obj_index) {
-  pthread_mutex_lock(&mutex_);
+  //pthread_mutex_lock(&mutex_);
+  pthread_mutex_lock(lock_mutex_[obj_index]);
   int count = llm_->GetCount(manager_id, obj_index, lock_type);
   int ret = 0;
 
@@ -707,7 +708,8 @@ int LockManager::Unlock(int seq_no, uint32_t user_id, uint32_t manager_id, int l
     cerr << "LockManager::Unlock(): something is wrong" << endl;
     ret = -1;
   }
-  pthread_mutex_unlock(&mutex_);
+  //pthread_mutex_unlock(&mutex_);
+  pthread_mutex_unlock(lock_mutex_[obj_index]);
   return ret;
 }
 
@@ -1373,6 +1375,9 @@ int LockManager::NotifyLockRequestResult(int seq_no, uint32_t user_id, int lock_
     if (wait_element.status == GLOBAL_LOCK_WAITING) {
       // let it have the local lock + remove it from the queue
       llm_->Lock(target_node_id, obj_index, lock_type);
+      LockSimulator* user = user_map[wait_element.owner_thread_id];
+      user->NotifyResult(wait_element.seq_no,
+          LockManager::TASK_LOCK, lock_type, obj_index, result);
       q.pop();
       int size = q.size();
       LocalLockWaitElement elem;
@@ -1380,19 +1385,25 @@ int LockManager::NotifyLockRequestResult(int seq_no, uint32_t user_id, int lock_
       while (q.size() > 0) {
         elem = q.front();
         if (elem.lock_type == lock_type && lock_type == SHARED) {
+          llm_->Lock(target_node_id, obj_index, lock_type);
           LockSimulator* user = user_map[elem.owner_thread_id];
           user->NotifyResult(elem.seq_no,
               LockManager::TASK_LOCK, lock_type, obj_index, result);
-          llm_->Lock(target_node_id, obj_index, lock_type);
           q.pop();
         } else {
           break;
         }
       }
     }
+  } else {
+    queue<LocalLockWaitElement>& q = llm_->GetQueue(target_node_id, obj_index);
+    LocalLockWaitElement wait_element = q.front();
+    LockSimulator* user = user_map[wait_element.owner_thread_id];
+    user->NotifyResult(wait_element.seq_no,
+        LockManager::TASK_LOCK, lock_type, obj_index, result);
   }
-  LockSimulator* user = user_map[user_id];
-  user->NotifyResult(seq_no, LockManager::TASK_LOCK, lock_type, obj_index, result);
+  //LockSimulator* user = user_map[user_id];
+  //user->NotifyResult(seq_no, LockManager::TASK_LOCK, lock_type, obj_index, result);
   pthread_mutex_unlock(&mutex_);
 }
 

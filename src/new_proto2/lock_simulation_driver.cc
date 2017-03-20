@@ -71,10 +71,10 @@ int main(int argc, char** argv) {
   int max_backoff_time         = atoi(argv[k++]);
   long seed                    = atol(argv[k++]);
 
-  if (num_users != 1) {
-     cerr << "# of users must be 1." << endl;
-     exit(-1);
-  }
+  //if (num_users != 1) {
+     //cerr << "# of users must be 1." << endl;
+     //exit(-1);
+  //}
   if (num_managers > 32) {
      cerr << "# of nodes must be less than 33" << endl;
      exit(-1);
@@ -91,6 +91,8 @@ int main(int argc, char** argv) {
     lock_mode_str = "CLIENT-BASED/DIRECT/POLL";
   } else if (lock_mode == LOCK_REMOTE_NOTIFY) {
     lock_mode_str = "CLIENT-BASED/DIRECT/NOTIFY";
+  } else if (lock_mode == LOCK_REMOTE_QUEUE) {
+    lock_mode_str = "CLIENT-BASED/DIRECT/QUEUE";
   }
 
   string workload_type_str, shared_lock_ratio_str;
@@ -204,7 +206,8 @@ int main(int argc, char** argv) {
   vector<LockSimulator*> users;
   for (int i=0;i<num_users;++i) {
     LockSimulator* simulator = new LockSimulator(lock_manager,
-        (int)pow(2.0, rank), // id
+        //(int)pow(2.0, rank), // id
+        i, // id
         num_managers,
         num_lock_object,
         num_tx,
@@ -222,7 +225,7 @@ int main(int argc, char** argv) {
         min_backoff_time,
         max_backoff_time
         );
-    lock_manager->RegisterUser((int)pow(2.0, rank), simulator);
+    lock_manager->RegisterUser(i, simulator);
     users.push_back(simulator);
   }
 
