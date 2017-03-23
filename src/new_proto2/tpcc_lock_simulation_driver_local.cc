@@ -25,15 +25,14 @@ struct CPUUsage {
 
 int main(int argc, char** argv) {
 
-  if (argc != 13) {
+  if (argc != 14) {
     cout << "USAGE: " << argv[0] << " <work_dir>" <<
-      " <num_tx> <num_users> <lock_mode> <shared_exclusive_rule> " <<
+      "<num_lock_manager> <num_tx> <num_users> <lock_mode> <shared_exclusive_rule> " <<
       "<exclusive_shared_rule> <exclusive_exclusive_rule> "<<
       "<min_backoff_time> <max_backoff_time> <sleep_time> <think_time> <rand_seed>" << endl;
     exit(1);
   }
 
-  int num_managers = 1;
   int rank = 0;
 
   if (1 == htons(1)) {
@@ -42,17 +41,19 @@ int main(int argc, char** argv) {
     cout << "The current machine uses LITTLE ENDIAN" << endl;
   }
 
-  long num_tx                  = atol(argv[2]);
-  int num_users                = atoi(argv[3]);
-  int lock_mode                = atoi(argv[4]);
-  int shared_exclusive_rule    = atoi(argv[5]);
-  int exclusive_shared_rule    = atoi(argv[6]);
-  int exclusive_exclusive_rule = atoi(argv[7]);
-  int min_backoff_time         = atoi(argv[8]);
-  int max_backoff_time         = atoi(argv[9]);
-  int sleep_time               = atoi(argv[10]);
-  int think_time               = atoi(argv[11]);
-  long seed                    = atol(argv[12]);
+  int k = 2;
+  int num_managers             = atoi(argv[k++]);
+  long num_tx                  = atol(argv[k++]);
+  int num_users                = atoi(argv[k++]);
+  int lock_mode                = atoi(argv[k++]);
+  int shared_exclusive_rule    = atoi(argv[k++]);
+  int exclusive_shared_rule    = atoi(argv[k++]);
+  int exclusive_exclusive_rule = atoi(argv[k++]);
+  int min_backoff_time         = atoi(argv[k++]);
+  int max_backoff_time         = atoi(argv[k++]);
+  int sleep_time               = atoi(argv[k++]);
+  int think_time               = atoi(argv[k++]);
+  long seed                    = atol(argv[k++]);
 
   string workload_type_str, shared_lock_ratio_str;
   workload_type_str = "TPCC";
@@ -128,64 +129,69 @@ int main(int argc, char** argv) {
   LockManager::SetExclusiveSharedRule(exclusive_shared_rule);
   LockManager::SetExclusiveExclusiveRule(exclusive_exclusive_rule);
 
-  LockManager* lock_manager = new LockManager(argv[1], rank, num_managers,
-      700000, lock_mode);
+  vector<LockManager*> managers;
+  for (int i = 0; i < num_managers; ++i) {
+    LockManager* lock_manager = new LockManager(argv[1], i, num_managers,
+        700000, lock_mode);
 
-  if (lock_manager->Initialize()) {
-    cerr << "LockManager initialization failure." << endl;
-    exit(-1);
-  }
+    if (lock_manager->Initialize()) {
+      cerr << "LockManager initialization failure." << endl;
+      exit(-1);
+    }
+    managers.push_back(lock_manager);
 
-  pthread_t lock_manager_thread;
-  if (pthread_create(&lock_manager_thread, NULL, RunLockManager,
-        (void*)lock_manager)) {
-     cerr << "pthread_create() error." << endl;
-     exit(-1);
+    pthread_t lock_manager_thread;
+    if (pthread_create(&lock_manager_thread, NULL, RunLockManager,
+          (void*)lock_manager)) {
+      cerr << "pthread_create() error." << endl;
+      exit(-1);
+    }
   }
 
   vector<LockSimulator*> users;
-  for (int i=0;i<num_users;++i) {
-    bool verbose = false;
-    if (i==0) verbose = true;
-    TPCCLockSimulator* simulator = new TPCCLockSimulator(lock_manager,
-        (uint32_t)pow(2.0, rank*num_users+i), // id
-        rank,
-        WORKLOAD_UNIFORM,
-        num_managers,
-        num_tx,
-        seed,
-        verbose, // verbose
-        true, // measure lock time
-        lock_mode,
-        0,0,0,
-        min_backoff_time,
-        max_backoff_time,
-        sleep_time,
-        think_time
-        );
-    lock_manager->RegisterUser((uint32_t)pow(2.0, rank*num_users+i), simulator);
-    users.push_back(simulator);
+  for (int i = 0; i < num_managers; ++i) {
+    for (int j=0;j<num_users;++j) {
+      bool verbose = false;
+      TPCCLockSimulator* simulator = new TPCCLockSimulator(managers[i],
+          //(uint32_t)pow(2.0, rank*num_users+i), // id
+          j,
+          i,
+          WORKLOAD_UNIFORM,
+          num_managers,
+          num_tx,
+          seed,
+          verbose, // verbose
+          true, // measure lock time
+          lock_mode,
+          0,0,0,
+          min_backoff_time,
+          max_backoff_time,
+          sleep_time,
+          think_time
+          );
+      //managers[i]->RegisterUser((uint32_t)pow(2.0, rank*num_users+i), simulator);
+      managers[i]->RegisterUser(j, simulator);
+      users.push_back(simulator);
+    }
+    if (managers[i]->InitializeLockClients()) {
+      cerr << "InitializeLockClients() failed." << endl;
+      exit(-1);
+    }
+    while (!managers[i]->IsClientsInitialized()) {
+      usleep(250000);
+    }
   }
 
   for (int i=0;i<num_users;++i) {
     LockManager::user_to_node_map_[i] = 0;
   }
 
-  sleep(3);
-
-  if (lock_manager->InitializeLockClients()) {
-     cerr << "InitializeLockClients() failed." << endl;
-     exit(-1);
-  }
-
-  sleep(1);
-
   time_t start_time;
   time_t end_time;
 
   time(&start_time);
 
-  for (int i=0;i<num_users;++i) {
+  for (int i=0;i<users.size();++i) {
     pthread_t lock_simulator_thread;
     if (pthread_create(&lock_simulator_thread, NULL, &RunLockSimulator,
           (void*)users[i])) {

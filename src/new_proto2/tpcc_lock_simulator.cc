@@ -163,6 +163,7 @@ void TPCCLockSimulator::SubmitLockRequest() {
   // enforce think time
   usleep(think_time_);
 
+  int ret = 0;
   pthread_mutex_lock(&lock_mutex_);
   if (current_request_idx_ < request_size_) {
     if (verbose_) {
@@ -183,7 +184,7 @@ void TPCCLockSimulator::SubmitLockRequest() {
     ++seq_count_;
     last_request_idx_ = current_request_idx_;
     ++current_request_idx_;
-    manager_->Lock(
+    ret = manager_->Lock(
         requests_[last_request_idx_]->seq_no,
         id_,
         requests_[last_request_idx_]->lm_id,
@@ -195,6 +196,23 @@ void TPCCLockSimulator::SubmitLockRequest() {
     SimulateTransactionDelay();
   }
   pthread_mutex_unlock(&lock_mutex_);
+  if (ret == LOCAL_LOCK_PASS) {
+    this->NotifyResult(
+        requests_[last_request_idx_]->seq_no,
+        LockManager::TASK_LOCK,
+        requests_[last_request_idx_]->lock_type,
+        requests_[last_request_idx_]->obj_index,
+        LockManager::RESULT_SUCCESS
+        );
+  } else if (ret == LOCAL_LOCK_FAIL) {
+    this->NotifyResult(
+        requests_[last_request_idx_]->seq_no,
+        LockManager::TASK_LOCK,
+        requests_[last_request_idx_]->lock_type,
+        requests_[last_request_idx_]->obj_index,
+        LockManager::RESULT_FAILURE
+        );
+  }
 }
 
 void TPCCLockSimulator::SubmitUnlockRequest() {
@@ -204,6 +222,7 @@ void TPCCLockSimulator::SubmitUnlockRequest() {
 
   restart_ = false;
 
+  int ret = 0;
   pthread_mutex_lock(&lock_mutex_);
   if (current_request_idx_ >= 0) {
     if (verbose_) {
@@ -225,7 +244,7 @@ void TPCCLockSimulator::SubmitUnlockRequest() {
     ++seq_count_;
     last_request_idx_ = current_request_idx_;
     --current_request_idx_;
-    manager_->Unlock(
+    ret = manager_->Unlock(
         requests_[last_request_idx_]->seq_no,
         id_,
         requests_[last_request_idx_]->lm_id,
@@ -235,6 +254,15 @@ void TPCCLockSimulator::SubmitUnlockRequest() {
     ChangeState(STATE_IDLE);
   }
   pthread_mutex_unlock(&lock_mutex_);
+  if (ret == LOCAL_LOCK_PASS) {
+    this->NotifyResult(
+        requests_[last_request_idx_]->seq_no,
+        LockManager::TASK_UNLOCK,
+        requests_[last_request_idx_]->lock_type,
+        requests_[last_request_idx_]->obj_index,
+        LockManager::RESULT_SUCCESS
+        );
+  }
 }
 
 }}

@@ -75,14 +75,14 @@ int main(int argc, char** argv) {
      //cerr << "# of users must be 1." << endl;
      //exit(-1);
   //}
-  if (num_users > 32) {
-     cerr << "# of node/clients must be less than 33" << endl;
-     exit(-1);
-  }
+  //if (num_users > 32) {
+     //cerr << "# of node/clients must be less than 33" << endl;
+     //exit(-1);
+  //}
 
   // 1 node = server/client on the same node
   // 2 node = 1 server, 1 client
-  // n nodes = n-2 servers, 2 clients
+  // n nodes = n/2 servers, n/2 clients
   if (num_nodes == 1) {
     num_servers = 1;
     num_clients = 1;
@@ -99,12 +99,13 @@ int main(int argc, char** argv) {
     //server_start_idx = 0;
     //client_start_idx = 3;
   } else {
-    num_servers = num_nodes - 2;
-    num_clients = 2;
+    num_servers = num_nodes;
+    num_clients = num_nodes;
     server_start_idx = 0;
-    client_start_idx = num_nodes - 2;
+    client_start_idx = 0;
   }
 
+  int num_warehouses_per_server = 1;
   bool transaction_delay = (transaction_delay_num == 0) ? false : true;
 
   string lock_mode_str;
@@ -183,7 +184,7 @@ int main(int argc, char** argv) {
     workload_type_str = "TPC-C/HOTSPOT";
   }
 
-  int num_users_per_client = num_users /  num_clients;
+  int num_users_per_client = num_users;
   if (rank == 0) {
     cout << "Type of Workload = " << workload_type_str << endl;
     cout << "SHARED -> EXCLUSIVE = " << shared_exclusive_rule_str << endl;
@@ -192,7 +193,6 @@ int main(int argc, char** argv) {
     cout << "Num Tx = " << num_tx << endl;
     cout << "Num Servers = " << num_servers << endl;
     cout << "Num Clients = " << num_clients << endl;
-    cout << "Num Users = " << num_users << endl;
     cout << "Num Users Per Client = " << num_users_per_client << endl;
   }
 
@@ -202,34 +202,40 @@ int main(int argc, char** argv) {
   LockManager::SetFailRetry(fail_retry);
   LockManager::SetPollRetry(poll_retry);
 
-  LockManager* lock_manager = new LockManager(argv[1], rank, num_nodes,
-      700000, lock_mode, num_users, num_clients);
-
-  if (lock_manager->Initialize()) {
-    cerr << "LockManager initialization failure." << endl;
-    exit(-1);
-  }
-
-  pthread_t lock_manager_thread;
-  if (pthread_create(&lock_manager_thread, NULL, RunLockManager,
-        (void*)lock_manager)) {
-     cerr << "pthread_create() error." << endl;
-     exit(-1);
-  }
-
+  vector<LockManager*> managers;
   vector<LockSimulator*> users;
+  for (int i = 0; i < num_warehouses_per_server; ++i) {
+    LockManager* lock_manager = new LockManager(argv[1], rank*num_warehouses_per_server+i,
+        num_nodes*num_warehouses_per_server,
+        700000, lock_mode, num_users, num_clients);
+    managers.push_back(lock_manager);
+
+    if (lock_manager->Initialize()) {
+      cerr << "LockManager initialization failure." << endl;
+      exit(-1);
+    }
+
+    pthread_t lock_manager_thread;
+    if (pthread_create(&lock_manager_thread, NULL, RunLockManager,
+          (void*)lock_manager)) {
+      cerr << "pthread_create() error." << endl;
+      exit(-1);
+    }
+  }
+
   if (rank >= client_start_idx) {
     for (int i=0;i<num_users_per_client;++i) {
       uint32_t seq = (rank-client_start_idx)*num_users_per_client+i;
-      uint32_t id = (uint32_t)pow(2.0, seq);
+      //uint32_t id = (uint32_t)pow(2.0, seq);
+      uint32_t id = i;
       bool verbose = false;
-      TPCCLockSimulator* simulator = new TPCCLockSimulator(lock_manager,
+      TPCCLockSimulator* simulator = new TPCCLockSimulator(managers[i%num_warehouses_per_server],
           id, // id
-          seq % num_servers, // home id
+          seq % (num_servers*num_warehouses_per_server), // home id
           workload_type,
-          num_servers,
+          num_servers*num_warehouses_per_server,
           num_tx,
-          seed,
+          seed+i+(rank*num_users_per_client),
           verbose, // verbose
           true, // measure lock time
           lock_mode,
@@ -241,7 +247,8 @@ int main(int argc, char** argv) {
           sleep_time,
           think_time
           );
-      lock_manager->RegisterUser(id, simulator);
+      //lock_manager->RegisterUser(id, simulator);
+      managers[i % num_warehouses_per_server]->RegisterUser(id, simulator);
       users.push_back(simulator);
     }
   }
@@ -256,10 +263,16 @@ int main(int argc, char** argv) {
   MPI_Barrier(MPI_COMM_WORLD);
   sleep(1);
 
-  if (lock_manager->InitializeLockClients()) {
-     cerr << "InitializeLockClients() failed." << endl;
-     exit(-1);
+  for (int i = 0; i < managers.size(); ++i) {
+    if (managers[i]->InitializeLockClients()) {
+      cerr << "InitializeLockClients() failed." << endl;
+      exit(-1);
+    }
+    while (!managers[i]->IsClientsInitialized()) {
+      usleep(250000);
+    }
   }
+
 
   MPI_Barrier(MPI_COMM_WORLD);
   sleep(1);
@@ -494,32 +507,35 @@ int main(int argc, char** argv) {
       local_time_taken_sum += simulator->GetTimeTaken();
     }
   }
-  local_lock_contention = lock_manager->GetTotalLockContention();
-  local_lock_success_with_poll = lock_manager->GetTotalLockSuccessWithPoll();
-  local_sum_poll_when_success = lock_manager->GetTotalSumPollWhenSuccess();
 
-  local_remote_shared_lock_time =
-    lock_manager->GetAverageRemoteSharedLockTime();
-  local_remote_exclusive_lock_time =
-    lock_manager->GetAverageRemoteExclusiveLockTime();
-  local_local_shared_lock_time =
-    lock_manager->GetAverageLocalSharedLockTime();
-  local_local_exclusive_lock_time =
-    lock_manager->GetAverageLocalExclusiveLockTime();
-  local_send_message_time = lock_manager->GetAverageSendMessageTime();
-  local_receive_message_time = lock_manager->GetAverageReceiveMessageTime();
-  local_avg_rdma_read_count = lock_manager->GetAverageRDMAReadCount();
-  local_avg_rdma_atomic_count = lock_manager->GetAverageRDMAAtomicCount();
+  for (int i = 0; i < num_warehouses_per_server; ++i) {
+    LockManager* lock_manager = managers[i];
+    local_lock_contention += lock_manager->GetTotalLockContention();
+    local_lock_success_with_poll += lock_manager->GetTotalLockSuccessWithPoll();
+    local_sum_poll_when_success += lock_manager->GetTotalSumPollWhenSuccess();
 
-  local_rdma_read_count = lock_manager->GetTotalRDMAReadCount();
-  local_rdma_recv_count = lock_manager->GetTotalRDMARecvCount();
-  local_rdma_send_count = lock_manager->GetTotalRDMASendCount();
-  local_rdma_write_count = lock_manager->GetTotalRDMAWriteCount();
-  local_rdma_atomic_count = lock_manager->GetTotalRDMAAtomicCount();
+    local_remote_shared_lock_time +=
+      lock_manager->GetAverageRemoteSharedLockTime();
+    local_remote_exclusive_lock_time +=
+      lock_manager->GetAverageRemoteExclusiveLockTime();
+    local_local_shared_lock_time +=
+      lock_manager->GetAverageLocalSharedLockTime();
+    local_local_exclusive_lock_time +=
+      lock_manager->GetAverageLocalExclusiveLockTime();
+    local_send_message_time += lock_manager->GetAverageSendMessageTime();
+    local_receive_message_time += lock_manager->GetAverageReceiveMessageTime();
+    local_avg_rdma_read_count += lock_manager->GetAverageRDMAReadCount();
+    local_avg_rdma_atomic_count += lock_manager->GetAverageRDMAAtomicCount();
 
-  local_rdma_read_time = lock_manager->GetTotalRDMAReadTime();
-  local_rdma_atomic_time = lock_manager->GetTotalRDMAAtomicTime();
+    local_rdma_read_count += lock_manager->GetTotalRDMAReadCount();
+    local_rdma_recv_count += lock_manager->GetTotalRDMARecvCount();
+    local_rdma_send_count += lock_manager->GetTotalRDMASendCount();
+    local_rdma_write_count += lock_manager->GetTotalRDMAWriteCount();
+    local_rdma_atomic_count += lock_manager->GetTotalRDMAAtomicCount();
 
+    local_rdma_read_time += lock_manager->GetTotalRDMAReadTime();
+    local_rdma_atomic_time += lock_manager->GetTotalRDMAAtomicTime();
+  }
   MPI_Barrier(MPI_COMM_WORLD);
   usage.terminate = true;
   pthread_join(cpu_measure_thread, NULL);

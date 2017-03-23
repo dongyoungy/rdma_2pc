@@ -1,6 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <cmath>
+#include <limits.h>
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <infiniband/verbs.h>
@@ -236,7 +237,12 @@ int main(int argc, char** argv) {
      exit(-1);
   }
 
-  sleep(1);
+  // wait till all clients are initialized
+  while (!lock_manager->IsClientsInitialized()) {
+    usleep(250000);
+  }
+
+  MPI_Barrier(MPI_COMM_WORLD);
 
   time_t start_time;
   time_t end_time;
@@ -263,15 +269,46 @@ int main(int argc, char** argv) {
   }
 
   int time_taken2 = 0;
+  int time_taken3 = 0;
+  int min_time_taken = 0;
+  bool simulator_done = false;
+  uint64_t* tx_done = new uint64_t[64000];
+  uint64_t* locks_done = new uint64_t[64000];
+  memset(tx_done, 0x00, sizeof(uint64_t)*64000);
+  memset(locks_done, 0x00, sizeof(uint64_t)*64000);
+  //for (int i=0;i<users.size();++i) {
+    //LockSimulator* simulator = users[i];
+    //while (simulator->GetState() != LockSimulator::STATE_DONE) {
+      //++time_taken2;
+      //if (rank == 0) {
+        //cout << time_taken2 << " : " << users[0]->GetCount() <<
+          //"," << users[0]->GetCurrentBackoff() << endl;
+      //}
+       //sleep(1);
+    //}
+  //}
+  while (true) {
+    for (int i=0;i<users.size();++i) {
+      tx_done[time_taken2] += users[i]->GetCount();
+      locks_done[time_taken2] += users[i]->GetTotalNumLockSuccess();
+      if (users[i]->GetState() == LockSimulator::STATE_DONE) {
+        simulator_done = true;
+      }
+    }
+    cout << rank << "," << time_taken2 << ":" << tx_done[time_taken2] << endl;
+    ++time_taken2;
+    if (simulator_done) break;
+    sleep(1);
+  }
+  time_taken3 = time_taken2;
+
   for (int i=0;i<users.size();++i) {
     LockSimulator* simulator = users[i];
     while (simulator->GetState() != LockSimulator::STATE_DONE) {
       ++time_taken2;
-      if (rank == 0) {
-        cout << time_taken2 << " : " << users[0]->GetCount() <<
-          "," << users[0]->GetCurrentBackoff() << endl;
-      }
-       sleep(1);
+      cout << rank << "," << users[i]->GetID() << "," << time_taken2 << " : " << users[i]->GetCount() <<
+        "," << users[i]->GetCurrentBackoff() << endl;
+      sleep(1);
     }
   }
 
@@ -323,6 +360,57 @@ int main(int argc, char** argv) {
   double global_time_taken_diff = 0;
 
   MPI_Barrier(MPI_COMM_WORLD);
+
+  if (time_taken3 == 0) {
+    time_taken3 = INT_MAX;
+  }
+
+  // calculate max throughput
+  MPI_Allreduce(&time_taken3, &min_time_taken, 1, MPI_INT, MPI_MIN,
+      MPI_COMM_WORLD);
+
+  uint64_t* local_tx_throughput = new uint64_t[min_time_taken];
+  uint64_t* global_tx_throughput = new uint64_t[min_time_taken];
+  uint64_t* local_lock_throughput = new uint64_t[min_time_taken];
+  uint64_t* global_lock_throughput = new uint64_t[min_time_taken];
+
+  for (int i = 0; i < min_time_taken; ++i) {
+    if (i == 0) {
+      local_tx_throughput[i] = tx_done[i];
+      local_lock_throughput[i] = locks_done[i];
+    } else {
+      local_tx_throughput[i] = tx_done[i] - tx_done[i-1];
+      local_lock_throughput[i] = locks_done[i] - locks_done[i-1];
+    }
+  }
+
+  MPI_Barrier(MPI_COMM_WORLD);
+  for (int i = 0; i < min_time_taken; ++i) {
+    uint64_t local = local_tx_throughput[i];
+    uint64_t global;
+    MPI_Reduce(&local, &global, 1, MPI_LONG_LONG_INT, MPI_SUM, 0,
+        MPI_COMM_WORLD);
+    global_tx_throughput[i] = global;
+    MPI_Barrier(MPI_COMM_WORLD);
+    local = local_lock_throughput[i];
+    MPI_Reduce(&local, &global, 1, MPI_LONG_LONG_INT, MPI_SUM, 0,
+        MPI_COMM_WORLD);
+    global_lock_throughput[i] = global;
+    MPI_Barrier(MPI_COMM_WORLD);
+  }
+
+  uint64_t max_tx_throughput = 0;
+  uint64_t max_lock_throughput = 0;
+
+  if (rank == 0) {
+    for (int i = 0; i < min_time_taken; ++i) {
+      if (max_tx_throughput < global_tx_throughput[i])
+        max_tx_throughput = global_tx_throughput[i];
+
+      if (max_lock_throughput < global_lock_throughput[i])
+        max_lock_throughput = global_lock_throughput[i];
+    }
+  }
 
   for (int i=0;i<num_managers;++i) {
     if (rank==i) {
@@ -501,7 +589,8 @@ int main(int argc, char** argv) {
       global_sum << "," << global_lock_success << "," << global_lock_failure << "," <<
       global_cpu_usage_avg << "," << global_cpu_usage_std <<
       "," << global_time_taken_avg / (double)(1000*1000*1000) << "," <<
-      global_time_taken_std / (double)(1000*1000*1000) << endl;
+      global_time_taken_std / (double)(1000*1000*1000) << "," <<
+      max_tx_throughput << "," << max_lock_throughput << endl;
   }
 
   MPI_Finalize();

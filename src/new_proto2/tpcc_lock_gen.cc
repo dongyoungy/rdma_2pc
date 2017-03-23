@@ -175,14 +175,15 @@ int TPCCLockGen::GeneratePayment(vector<LockRequest*>& requests) {
   int w_id = home_warehouse_id_;
 
   int d_id = rand_r(&seed_) % NUM_ROW_DISTRICT;
-  int d_w_id = d_id;
-  int c_d_id, c_w_id;
+  //int d_w_id = d_id;
+  //int c_d_id;
+  int c_w_id;
 
   if (x <= 85 || num_warehouse_ == 1) {
-    c_d_id = d_id;
+    //c_d_id = d_id;
     c_w_id = w_id;
   } else {
-    c_d_id = rand_r(&seed_) % NUM_ROW_DISTRICT;
+    //c_d_id = rand_r(&seed_) % NUM_ROW_DISTRICT;
     c_w_id = rand_r(&seed_) % num_warehouse_;
     while (c_w_id == w_id) {
       c_w_id = rand_r(&seed_) % num_warehouse_;
@@ -447,7 +448,7 @@ int TPCCLockGen::GenerateStockLevel(vector<LockRequest*>& requests) {
   //    AND S_QUANTITY < ?
   //   """
   int o_id = rand_r(&seed_) % NUM_ROW_ORDER;
-  int s_id = rand_r(&seed_) % NUM_ROW_STOCK;
+  //int s_id = rand_r(&seed_) % NUM_ROW_STOCK;
   int cnt = 0;
   while (cnt < NUM_ORDER_LINE_PER_ORDER) {
     items_[cnt] = rand_r(&seed_) % NUM_ORDER_LINE_PER_ORDER;

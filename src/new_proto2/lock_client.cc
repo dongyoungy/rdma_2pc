@@ -78,6 +78,11 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       memcpy(context->lock_table_mr,
           &message->lock_table_mr,
           sizeof(*context->lock_table_mr));
+      if (context->lock_table_mr == NULL) {
+        cerr << "lock table MR NULL" << endl;
+        return -1;
+      }
+      initialized_ = true;
     } else if (message->type == Message::LOCK_MODE) {
       local_manager_->UpdateLockModeTable(
           message->manager_id,
@@ -724,7 +729,7 @@ int LockClient::LockRemotely(Context* context, int seq_no, uint32_t user_id, int
   request->lock_type     = lock_type;
   request->obj_index     = obj_index;
   request->task          = TASK_LOCK;
-  lock_request_idx_      = (lock_request_idx_ + 1) % 16;
+  lock_request_idx_      = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
   sge.addr   = (uint64_t)request->original_value;
   sge.length = sizeof(uint64_t);
@@ -793,7 +798,7 @@ int LockClient::ReadRemotely(Context* context, int seq_no, uint32_t user_id, int
   request->obj_index     = obj_index;
   request->lock_type     = lock_type;
   request->task          = TASK_READ;
-  lock_request_idx_      = (lock_request_idx_ + 1) % 16;
+  lock_request_idx_      = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
   sge.addr   = (uint64_t)request->read_buffer;
   sge.length = sizeof(uint32_t);
@@ -850,7 +855,7 @@ int LockClient::ReadRemotely(Context* context, int seq_no, uint32_t user_id, int
   request->obj_index   = obj_index;
   request->read_target = ALL;
   request->task        = TASK_READ;
-  lock_request_idx_    = (lock_request_idx_ + 1) % 16;
+  lock_request_idx_    = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
   sge.addr   = (uint64_t)request->read_buffer2;
   sge.length = sizeof(uint64_t);
@@ -913,7 +918,7 @@ int LockClient::UnlockRemotely(Context* context, int seq_no, uint32_t user_id, i
   request->is_undo     = is_undo;
   request->is_retry    = retry;
   request->task        = TASK_UNLOCK;
-  lock_request_idx_    = (lock_request_idx_ + 1) % 16;
+  lock_request_idx_    = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
   sge.addr   = (uint64_t)request->original_value;
   sge.length = sizeof(uint64_t);

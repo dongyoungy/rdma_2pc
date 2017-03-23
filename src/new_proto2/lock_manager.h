@@ -78,6 +78,7 @@ class LockManager {
       return local_work_queue_;
     }
     void Stop();
+    bool IsClientsInitialized() const;
     double GetAverageLocalExclusiveLockTime() const;
     double GetAverageLocalSharedLockTime() const;
     double GetAverageRemoteExclusiveLockTime() const;

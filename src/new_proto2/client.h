@@ -35,6 +35,7 @@ class Client {
     ~Client();
     int Run();
     void Stop();
+    bool IsInitialized() const;
     Context* GetContext();
     //int RequestLock(uint32_t user_id, int lock_type, int obj_index, int lock_mode);
     //int RequestUnlock(uint32_t user_id, int lock_type, int obj_index, int lock_mode);
@@ -83,6 +84,7 @@ class Client {
     uint64_t num_rdma_read_;
     uint64_t num_rdma_write_;
 
+    bool initialized_;
     LockRequest** lock_requests_;
     LockManager* local_manager_;
     LockSimulator* local_user_;
@@ -131,6 +133,7 @@ class Client {
     size_t data_size_;
     time_t test_start_;
     time_t test_end_;
+    pthread_mutex_t mutex_;
     pthread_mutex_t lock_mutex_;
     pthread_mutex_t msg_mutex_;
 };

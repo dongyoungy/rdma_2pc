@@ -326,7 +326,7 @@ int main(int argc, char** argv) {
   time(&start_time);
 
   if (rank >= group1_start_idx) {
-    for (int i=0;i<users.size();++i) {
+    for (unsigned int i=0;i<users.size();++i) {
       pthread_t lock_simulator_thread;
       if (pthread_create(&lock_simulator_thread, NULL, &RunLockSimulator,
             (void*)users[i])) {
@@ -355,7 +355,7 @@ int main(int argc, char** argv) {
 
   bool simulator_done = false;
   while (rank >= group1_start_idx) {
-    for (int i=0;i<users.size();++i) {
+    for (unsigned int i=0;i<users.size();++i) {
       tx_done[time_taken2] += users[i]->GetCount();
       locks_done[time_taken2] += users[i]->GetTotalNumLockSuccess();
       if (users[i]->GetState() == LockSimulator::STATE_DONE) {
@@ -373,7 +373,7 @@ int main(int argc, char** argv) {
   }
   time_taken3 = time_taken2;
 
-  for (int i=0;i<users.size();++i) {
+  for (unsigned int i=0;i<users.size();++i) {
     LockSimulator* simulator = users[i];
     while (simulator->GetState() != LockSimulator::STATE_DONE) {
       ++time_taken2;
@@ -386,8 +386,7 @@ int main(int argc, char** argv) {
   }
 
   time(&end_time);
-  double time_taken = difftime(end_time, start_time);
-
+  //double time_taken = difftime(end_time, start_time);
 
   // group1
   long group1_local_sum                           = 0;
@@ -526,7 +525,7 @@ int main(int argc, char** argv) {
   }
 
   if (rank >= group1_start_idx && rank < group2_start_idx) {
-    for (int j=0;j<users.size();++j) {
+    for (unsigned int j=0;j<users.size();++j) {
       LockSimulator* simulator = users[j];
       group1_local_sum += simulator->GetTotalNumLocks();
       group1_local_unlock_sum += simulator->GetTotalNumUnlocks();
@@ -544,7 +543,7 @@ int main(int argc, char** argv) {
           group1_local_95_lock_time = simulator->Get95PercentileLockTime();
       }
     }
-    for (int j=0;j<users.size();++j) {
+    for (unsigned int j=0;j<users.size();++j) {
       LockSimulator* simulator = users[j];
       group1_local_time_taken_sum += simulator->GetTimeTaken();
     }
@@ -665,7 +664,7 @@ int main(int argc, char** argv) {
       MPI_COMM_WORLD);
   group1_global_time_taken_avg = group1_global_time_taken_sum / (double)group1_size;
   if (rank >= group1_start_idx && rank < group2_start_idx) {
-    for (int j=0;j<users.size();++j) {
+    for (unsigned int j=0;j<users.size();++j) {
       double time = users[j]->GetTimeTaken();
       group1_local_time_taken_diff += (time - group1_global_time_taken_avg) * (time - group1_global_time_taken_avg);
     }
@@ -942,7 +941,7 @@ int main(int argc, char** argv) {
   }
 
   if (rank >= group2_start_idx) {
-    for (int j=0;j<users.size();++j) {
+    for (unsigned int j=0;j<users.size();++j) {
       LockSimulator* simulator = users[j];
       group2_local_sum += simulator->GetTotalNumLocks();
       group2_local_unlock_sum += simulator->GetTotalNumUnlocks();
@@ -960,7 +959,7 @@ int main(int argc, char** argv) {
           group2_local_95_lock_time = simulator->Get95PercentileLockTime();
       }
     }
-    for (int j=0;j<users.size();++j) {
+    for (unsigned int j=0;j<users.size();++j) {
       LockSimulator* simulator = users[j];
       group2_local_time_taken_sum += simulator->GetTimeTaken();
     }
@@ -1355,7 +1354,7 @@ int main(int argc, char** argv) {
   }
 
   if (rank >= group1_start_idx) {
-    for (int j=0;j<users.size();++j) {
+    for (unsigned int j=0;j<users.size();++j) {
       LockSimulator* simulator = users[j];
       local_sum += simulator->GetTotalNumLocks();
       local_unlock_sum += simulator->GetTotalNumUnlocks();
@@ -1373,7 +1372,7 @@ int main(int argc, char** argv) {
           local_95_lock_time = simulator->Get95PercentileLockTime();
       }
     }
-    for (int j=0;j<users.size();++j) {
+    for (unsigned int j=0;j<users.size();++j) {
       LockSimulator* simulator = users[j];
       local_time_taken_sum += simulator->GetTimeTaken();
     }
@@ -1513,7 +1512,7 @@ int main(int argc, char** argv) {
       MPI_COMM_WORLD);
   global_time_taken_avg = global_time_taken_sum / (double)num_users;
   if (rank >= group1_start_idx) {
-    for (int j=0;j<users.size();++j) {
+    for (unsigned int j=0;j<users.size();++j) {
       double time = users[j]->GetTimeTaken();
       local_time_taken_diff += (time - global_time_taken_avg) * (time - global_time_taken_avg);
     }

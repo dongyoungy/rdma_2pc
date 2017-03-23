@@ -15,6 +15,7 @@ Client::Client(const string& work_dir, LockManager* local_manager,
   local_manager_                    = local_manager;
   local_user_                       = local_user;
   remote_lm_id_                     = remote_lm_id;
+  initialized_                      = false;
   total_exclusive_lock_remote_time_ = 0;
   total_shared_lock_remote_time_    = 0;
   total_send_message_time_          = 0;
@@ -41,9 +42,10 @@ Client::Client(const string& work_dir, LockManager* local_manager,
   // initialize local lock mutex
   pthread_mutex_init(&lock_mutex_, NULL);
   pthread_mutex_init(&msg_mutex_, NULL);
+  pthread_mutex_init(&mutex_, NULL);
 
-  lock_requests_ = new LockRequest*[16];
-  for (int i = 0; i < 16; ++i) {
+  lock_requests_ = new LockRequest*[MAX_LOCAL_THREADS];
+  for (int i = 0; i < MAX_LOCAL_THREADS; ++i) {
     lock_requests_[i] = new LockRequest;
   }
   lock_request_idx_ = 0;
@@ -160,6 +162,7 @@ int Client::ReadServerAddress() {
 
 int Client::HandleEvent(struct rdma_cm_event* event) {
   int ret = 0;
+  pthread_mutex_lock(&mutex_);
   if (event->event == RDMA_CM_EVENT_ADDR_RESOLVED) {
     ret = HandleAddressResolved(event->id);
   } else if (event->event == RDMA_CM_EVENT_ROUTE_RESOLVED) {
@@ -172,7 +175,7 @@ int Client::HandleEvent(struct rdma_cm_event* event) {
     cerr << "Unknown event: " << event->event << endl;
     Stop();
   }
-
+  pthread_mutex_unlock(&mutex_);
   return ret;
 }
 
@@ -391,7 +394,7 @@ int Client::RegisterMemoryRegion(Context* context) {
     cerr << "ibv_reg_mr() failed for original_value_mr." << endl;
     return -1;
   }
-  for (int i = 0; i < 16; ++i) {
+  for (int i = 0; i < MAX_LOCAL_THREADS; ++i) {
     LockRequest* request = lock_requests_[i];
     request->original_value = new uint64_t;
     request->original_value_mr = ibv_reg_mr(context->protection_domain,
@@ -507,6 +510,10 @@ Context* Client::BuildContext(struct rdma_cm_id* id) {
   }
 
   return new_context;
+}
+
+bool Client::IsInitialized() const {
+  return initialized_;
 }
 
 double Client::GetAverageSendMessageTime() const {

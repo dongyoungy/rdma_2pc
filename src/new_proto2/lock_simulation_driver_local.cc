@@ -162,7 +162,7 @@ int main(int argc, char** argv) {
       exit(-1);
     }
   }
-  sleep (1);
+  sleep(1);
 
   for (int i = 0; i < num_managers; ++i) {
     for (int j=0;j<num_users;++j) {
@@ -196,8 +196,9 @@ int main(int argc, char** argv) {
       exit(-1);
     }
 
-    sleep(1);
-
+    while (!managers[i]->IsClientsInitialized()) {
+      usleep(250000);
+    }
   }
 
   time_t start_time;

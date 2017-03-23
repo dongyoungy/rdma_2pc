@@ -6,14 +6,11 @@ namespace rdma { namespace proto {
 // constructor
 LocalLockManager::LocalLockManager(int node_id, int num_nodes, int num_objects) {
   owner_node_id_ = node_id;
+  num_objects_ = num_objects;
   shared_counter_ = new int[num_nodes * num_objects];
   exclusive_counter_ = new int[num_nodes * num_objects];
   lock_status_ = new int[num_nodes * num_objects];
-  memset(shared_counter_, 0x00, sizeof(int) * num_nodes * num_objects);
-  memset(exclusive_counter_, 0x00, sizeof(int) * num_nodes * num_objects);
-  memset(lock_status_, 0x00, sizeof(int) * num_nodes * num_objects);
   wait_queue_ = new queue<LocalLockWaitElement>[num_nodes * num_objects];
-  num_objects_ = num_objects;
 }
 
 // destructor

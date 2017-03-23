@@ -159,7 +159,8 @@ int LockManager::RegisterUser(uint32_t user_id, LockSimulator* user) {
 int LockManager::InitializeLockClients() {
   int ret = 0;
   for (int i = 0; i < num_manager_; ++i) {
-    for (int j = 0; j < users.size(); ++j) {
+    for (int j = 0; j < 1; ++j) {
+    //for (int j = 0; j < users.size(); ++j) {
       LockSimulator* user      = users[j];
       pthread_t* client_thread = new pthread_t;
       LockClient* client;
@@ -178,7 +179,8 @@ int LockManager::InitializeLockClients() {
         return -1;
       }
 
-      lock_clients_[MAX_USER*i+user->GetID()] = client;
+      //lock_clients_[MAX_USER*i+user->GetID()] = client;
+      lock_clients_[i] = client;
       lock_client_threads_.push_back(client_thread);
 
       if (ret) {
@@ -649,12 +651,14 @@ int LockManager::Lock(int seq_no, uint32_t user_id, uint32_t manager_id, int loc
   //}
 
   int ret = 0;
+  //pthread_mutex_lock(&mutex_);
   pthread_mutex_lock(lock_mutex_[obj_index]);
   ret = llm_->CheckLock(seq_no, user_id, manager_id, obj_index, lock_type);
   if (ret == LOCAL_LOCK_WAIT) {
     ret = 0;
   } else if (ret == LOCAL_LOCK_RETRY) {
-    LockClient* lock_client = lock_clients_[manager_id*MAX_USER+user_id];
+    //LockClient* lock_client = lock_clients_[manager_id*MAX_USER+user_id];
+    LockClient* lock_client = lock_clients_[manager_id];
     ret = lock_client->RequestLock(seq_no, user_id, lock_type, obj_index,
         lock_mode_table_[manager_id]);
   } else if (ret == LOCAL_LOCK_PASS) {
@@ -670,6 +674,7 @@ int LockManager::Lock(int seq_no, uint32_t user_id, uint32_t manager_id, int loc
         //LockManager::RESULT_SUCCESS);
   }
   pthread_mutex_unlock(lock_mutex_[obj_index]);
+  //pthread_mutex_unlock(&mutex_);
   return ret;
 }
 
@@ -701,7 +706,8 @@ int LockManager::Unlock(int seq_no, uint32_t user_id, uint32_t manager_id, int l
     ret = LOCAL_LOCK_PASS;
   } else if (count == 1) {
     llm_->SetStatus(manager_id, obj_index, LOCK_STATUS_UNLOCKING);
-    LockClient* lock_client = lock_clients_[manager_id*MAX_USER+user_id];
+    //LockClient* lock_client = lock_clients_[manager_id*MAX_USER+user_id];
+    LockClient* lock_client = lock_clients_[manager_id];
     ret = lock_client->RequestUnlock(seq_no, user_id, lock_type, obj_index,
         lock_mode_table_[manager_id]);
   } else {
@@ -1304,7 +1310,8 @@ int LockManager::TryLock(Context* context, Message* message) {
   int lock_type    = message->lock_type;
   int obj_index    = message->obj_index;
   uint32_t user_id = message->user_id;
-  LockClient* client = lock_clients_[MAX_USER*home_id+user_id];
+  //LockClient* client = lock_clients_[MAX_USER*home_id+user_id];
+  LockClient* client = lock_clients_[home_id];
   NotifyLockClient* notify_client = dynamic_cast<NotifyLockClient*>(client);
   if (notify_client == NULL) {
     cerr << "NotifyLockClient cast fail:" << rank_ << "," << home_id << "," << user_id <<endl;
@@ -1367,7 +1374,8 @@ int LockManager::UpdateLockTableRemote(Context* context) {
 
 int LockManager::NotifyLockRequestResult(int seq_no, uint32_t user_id, int lock_type,
     int target_node_id, int obj_index, int result) {
-  pthread_mutex_lock(&mutex_);
+  //pthread_mutex_lock(&mutex_);
+  pthread_mutex_lock(lock_mutex_[obj_index]);
   if (result == RESULT_SUCCESS) {
     queue<LocalLockWaitElement>& q = llm_->GetQueue(target_node_id, obj_index);
     // must have been first global lock acquisition
@@ -1404,17 +1412,20 @@ int LockManager::NotifyLockRequestResult(int seq_no, uint32_t user_id, int lock_
   }
   //LockSimulator* user = user_map[user_id];
   //user->NotifyResult(seq_no, LockManager::TASK_LOCK, lock_type, obj_index, result);
-  pthread_mutex_unlock(&mutex_);
+  pthread_mutex_unlock(lock_mutex_[obj_index]);
+  //pthread_mutex_unlock(&mutex_);
 }
 
 int LockManager::NotifyUnlockRequestResult(int seq_no, uint32_t user_id, int lock_type,
     int target_node_id, int obj_index, int result) {
-  pthread_mutex_lock(&mutex_);
+  //pthread_mutex_lock(&mutex_);
+  pthread_mutex_lock(lock_mutex_[obj_index]);
   llm_->Unlock(target_node_id, obj_index, lock_type);
   llm_->SetStatus(target_node_id, obj_index, LOCK_STATUS_IDLE);
   LockSimulator* user = user_map[user_id];
   user->NotifyResult(seq_no, LockManager::TASK_UNLOCK, lock_type, obj_index, result);
-  pthread_mutex_unlock(&mutex_);
+  pthread_mutex_unlock(lock_mutex_[obj_index]);
+  //pthread_mutex_unlock(&mutex_);
 }
 
 int LockManager::SendMessage(Context* context) {
@@ -1813,6 +1824,16 @@ double LockManager::GetTotalRDMAAtomicTime() const {
     total_time += it->second->GetTotalRDMAAtomicTime();
   }
   return total_time;
+}
+
+bool LockManager::IsClientsInitialized() const {
+  map<uint64_t, LockClient*>::const_iterator it;
+  for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
+    if(!it->second->IsInitialized()) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // Polls work completion from completion queue

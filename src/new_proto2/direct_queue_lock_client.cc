@@ -41,6 +41,11 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
       memcpy(context->lock_table_mr,
           &message->lock_table_mr,
           sizeof(*context->lock_table_mr));
+      if (context->lock_table_mr == NULL) {
+        cerr << "lock table MR NULL" << endl;
+        return -1;
+      }
+      initialized_ = true;
     } else if (message->type == Message::LOCK_MODE) {
       local_manager_->UpdateLockModeTable(
           message->manager_id,
