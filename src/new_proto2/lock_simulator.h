@@ -34,7 +34,7 @@ class LockSimulator {
         bool transaction_delay = false, double transaction_delay_min = 10,
         double transaction_delay_max = 100, int min_backoff_time = 5000,
         int max_backoff_time = 100000,
-        int sleep_time = 1000,
+        int sleep_time = 100000,
         double* custom_cdf = NULL);
     ~LockSimulator();
     virtual void Run();
@@ -108,6 +108,7 @@ class LockSimulator {
     bool verbose_;
     bool transaction_delay_;
     bool is_tx_failed_;
+    bool is_tx_timed_out_;
     volatile bool is_backing_off_;
     double* lock_times_; // time taken to get all locks requred by a tx
     double* single_lock_times_; // average time taken to get a single lock in a tx
@@ -126,7 +127,7 @@ class LockSimulator {
     int default_backoff_time_;
     int current_backoff_time_;
     int retry_;
-    int state_;
+    volatile int state_;
     int last_seq_no_;
     int last_task_;
     int think_time_;

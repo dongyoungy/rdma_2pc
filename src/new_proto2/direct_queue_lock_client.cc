@@ -55,7 +55,7 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
       //cout << "received lock request result." << endl;
       local_manager_->NotifyLockRequestResult(
           message->seq_no,
-          message->user_id,
+          message->owner_user_id,
           message->lock_type,
           remote_lm_id_,
           message->obj_index,
@@ -64,7 +64,7 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
       //cout << "received unlock request result" << endl;
       local_manager_->NotifyUnlockRequestResult(
           message->seq_no,
-          message->user_id,
+          message->owner_user_id,
           message->lock_type,
           remote_lm_id_,
           message->obj_index,

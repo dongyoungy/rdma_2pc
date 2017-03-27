@@ -58,6 +58,7 @@ class LockManager {
         int target_node_id, int obj_index,
         int result);
     int GetID() const;
+    int GetRank() const;
     int GetLockMode() const;
     inline int GetNumManager() const {
       return num_manager_;
@@ -158,6 +159,7 @@ class LockManager {
     static const int RESULT_SUCCESS = 0;
     static const int RESULT_FAILURE = 1;
     static const int RESULT_RETRY = 2;
+    static const int RESULT_QUEUED = 3;
 
     static const int RULE_FAIL = 0;
     static const int RULE_POLL = 1;
@@ -224,7 +226,7 @@ class LockManager {
     vector<LockSimulator*> users;
     map<int, LockSimulator*> user_map;
     map<int, pthread_mutex_t*> user_mutex_map;
-    map<uint32_t, int> last_seq_no_map_;
+    map<uint32_t, map<uint32_t, int> > last_seq_no_map_;
     map<uint64_t, uint64_t> user_to_home_map_;
 
     // queue for lock waits

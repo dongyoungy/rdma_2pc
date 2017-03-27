@@ -7,7 +7,7 @@
 #include <infiniband/verbs.h>
 #include "mpi.h"
 #include "constants.h"
-#include "lock_simulator.h"
+#include "microbench_lock_simulator.h"
 #include "lock_manager.h"
 
 using namespace std;
@@ -25,15 +25,16 @@ struct CPUUsage {
 
 int main(int argc, char** argv) {
 
-  if (argc != 17) {
-    cout << "USAGE: " << argv[0] << " <work_dir> <num_lock_manager> <num_lock_object>" <<
-      " <num_tx> <num_request_per_tx> <num_users> <lock_mode> <shared_exclusive_rule> " <<
-      "<exclusive_shared_rule> <exclusive_exclusive_rule> <workload_type> <local_workload_ratio> "<<
-      "<shared_lock_ratio> <min_backoff_time> <max_backoff_time> <rand_seed>" << endl;
+  if (argc != 15) {
+    cout << "USAGE: " << argv[0] << " <work_dir> " <<
+      "<num_lock_manager> <num_tx> <contention_index> " <<
+      "<num_users> <lock_mode> <shared_exclusive_rule> " <<
+      "<exclusive_shared_rule> <exclusive_exclusive_rule> "<<
+      "<min_backoff_time> <max_backoff_time> <sleep_time> <think_time> <rand_seed>" << endl;
     exit(1);
   }
 
-  int rank = 1;
+  int rank = 0;
 
   if (1 == htons(1)) {
     cout << "The current machine uses BIG ENDIAN" << endl;
@@ -41,40 +42,28 @@ int main(int argc, char** argv) {
     cout << "The current machine uses LITTLE ENDIAN" << endl;
   }
 
-  int num_managers = atoi(argv[2]);
-  int num_lock_object          = atoi(argv[3]);
-  long num_tx                  = atol(argv[4]);
-  int num_request_per_tx       = atoi(argv[5]);
-  int num_users                = atoi(argv[6]);
-  int lock_mode                = atoi(argv[7]);
-  int shared_exclusive_rule    = atoi(argv[8]);
-  int exclusive_shared_rule    = atoi(argv[9]);
-  int exclusive_exclusive_rule = atoi(argv[10]);
-  int workload_type            = atoi(argv[11]);
-  double local_workload_ratio  = atof(argv[12]);
-  double shared_lock_ratio     = atof(argv[13]);
-  int min_backoff_time         = atoi(argv[14]);
-  int max_backoff_time         = atoi(argv[15]);
-  long seed                    = atol(argv[16]);
+  int k = 2;
+  int num_managers             = atoi(argv[k++]);
+  long num_tx                  = atol(argv[k++]);
+  double contention_index      = atof(argv[k++]);
+  int num_users                = atoi(argv[k++]);
+  int lock_mode                = atoi(argv[k++]);
+  int shared_exclusive_rule    = atoi(argv[k++]);
+  int exclusive_shared_rule    = atoi(argv[k++]);
+  int exclusive_exclusive_rule = atoi(argv[k++]);
+  int min_backoff_time         = atoi(argv[k++]);
+  int max_backoff_time         = atoi(argv[k++]);
+  int sleep_time               = atoi(argv[k++]);
+  int think_time               = atoi(argv[k++]);
+  long seed                    = atol(argv[k++]);
 
   string workload_type_str, shared_lock_ratio_str;
-  if (workload_type == LockSimulator::WORKLOAD_UNIFORM) {
-    workload_type_str = "UNIFORM";
-  } else if (workload_type == LockSimulator::WORKLOAD_HOTSPOT) {
-    workload_type_str = "HOTSPOT";
-  } else if (workload_type == LockSimulator::WORKLOAD_ALL_LOCAL) {
-    workload_type_str = "ALL_LOCAL";
-  } else if (workload_type == LockSimulator::WORKLOAD_MIXED) {
-    char buf[32];
-    sprintf(buf, "MIXED (local: %.2f %%)", local_workload_ratio * 100);
-    workload_type_str = buf;
-    sprintf(buf, "Shared Lock Ratio = %.2f %%", shared_lock_ratio * 100);
-    shared_lock_ratio_str = buf;
-  }
+  workload_type_str = "MICROBENCH";
+  shared_lock_ratio_str = "N/A";
 
   string lock_method_str;
   if (lock_mode == LOCK_REMOTE_POLL) {
-    lock_method_str = "CLIENT-BASED/DIRECT/POLL";
+    lock_method_str = "CLIENT-BASED/DIRECT/RETRY";
   } else if (lock_mode == LOCK_PROXY_RETRY) {
     lock_method_str = "SERVER-BASED/PROXY/RETRY";
   } else if (lock_mode == LOCK_PROXY_QUEUE) {
@@ -129,30 +118,28 @@ int main(int argc, char** argv) {
       exit(-1);
   }
 
-  cout << "Lock Method = " << lock_method_str << endl;
-  cout << "Type of Workload = " << workload_type_str << endl;
-  cout << shared_lock_ratio_str << endl;
-  cout << "SHARED -> EXCLUSIVE = " << shared_exclusive_rule_str << endl;
-  cout << "EXCLUSIVE -> SHARED = " << exclusive_shared_rule_str << endl;
-  cout << "EXCLUSIVE -> EXCLUSIVE = " << exclusive_exclusive_rule_str << endl;
-  cout << "Num Tx = " << num_tx << endl;
-  cout << "Num Requests per Tx = " << num_request_per_tx << endl;
+    cout << "Lock Method = " << lock_method_str << endl;
+    cout << "Type of Workload = " << workload_type_str << endl;
+    cout << "SHARED -> EXCLUSIVE = " << shared_exclusive_rule_str << endl;
+    cout << "EXCLUSIVE -> SHARED = " << exclusive_shared_rule_str << endl;
+    cout << "EXCLUSIVE -> EXCLUSIVE = " << exclusive_exclusive_rule_str << endl;
+    cout << "Num Tx = " << num_tx << endl;
+    cout << "Num Managers = " << num_managers << endl;
+    cout << "Num Users Per Manager = " << num_users << endl;
 
   LockManager::SetSharedExclusiveRule(shared_exclusive_rule);
   LockManager::SetExclusiveSharedRule(exclusive_shared_rule);
   LockManager::SetExclusiveExclusiveRule(exclusive_exclusive_rule);
 
-  vector<LockSimulator*> users;
   vector<LockManager*> managers;
   for (int i = 0; i < num_managers; ++i) {
     LockManager* lock_manager = new LockManager(argv[1], i, num_managers,
-        num_lock_object, lock_mode);
+        100000, lock_mode);
 
     if (lock_manager->Initialize()) {
       cerr << "LockManager initialization failure." << endl;
       exit(-1);
     }
-
     managers.push_back(lock_manager);
 
     pthread_t lock_manager_thread;
@@ -162,52 +149,53 @@ int main(int argc, char** argv) {
       exit(-1);
     }
   }
-  sleep(1);
 
+  vector<LockSimulator*> users;
   for (int i = 0; i < num_managers; ++i) {
     for (int j=0;j<num_users;++j) {
-      LockSimulator* simulator = new LockSimulator(managers[i],
-          //(uint32_t)pow(2.0, i), // id
-          j, // id
+      bool verbose = true;
+      MicrobenchLockSimulator* simulator = new MicrobenchLockSimulator(managers[i],
+          num_users*i+j, // id
+          i,
+          0, // empty workload type
           num_managers,
-          num_lock_object,
-          num_tx, // num lock requests
-          num_request_per_tx,
-          seed,
-          true, // verbose
-          true, // measure lock
-          workload_type,
+          num_tx,
+          100000,
+          contention_index,
+          seed+(num_users*i)+j,
+          verbose, // verbose
+          true, // measure lock time
           lock_mode,
-          local_workload_ratio,
-          shared_lock_ratio,
-          0,0,0, // tx delays
+          0,0,0,
           min_backoff_time,
-          max_backoff_time
+          max_backoff_time,
+          sleep_time,
+          think_time
           );
-      //lock_manager->RegisterUser((uint32_t)pow(2.0, i), simulator);
-      managers[i]->RegisterUser(j, simulator);
+      //managers[i]->RegisterUser((uint32_t)pow(2.0, rank*num_users+i), simulator);
+      managers[i]->RegisterUser(num_users*i+j, simulator);
       users.push_back(simulator);
     }
-
-    sleep(1);
-
     if (managers[i]->InitializeLockClients()) {
       cerr << "InitializeLockClients() failed." << endl;
       exit(-1);
     }
-
     while (!managers[i]->IsClientsInitialized()) {
       usleep(250000);
     }
   }
 
+  for (int i=0;i<num_users;++i) {
+    LockManager::user_to_node_map_[i] = 0;
+  }
+
   time_t start_time;
   time_t end_time;
 
+  cout << "Simulation starting.." << endl;
   time(&start_time);
 
   for (int i=0;i<users.size();++i) {
-    //users[i]->Run();
     pthread_t lock_simulator_thread;
     if (pthread_create(&lock_simulator_thread, NULL, &RunLockSimulator,
           (void*)users[i])) {
@@ -231,12 +219,9 @@ int main(int argc, char** argv) {
     LockSimulator* simulator = users[i];
     while (simulator->GetState() != LockSimulator::STATE_DONE) {
        sleep(1);
-       cout << count << " : " << users[0]->GetCount() <<
-         "," << users[0]->GetCurrentBackoff() << endl;
+       cout << users[i]->GetID() << "," << count << " : " << users[i]->GetCount() <<
+         "," << users[i]->GetCurrentBackoff() << endl;
        ++count;
-       //if (count == 3) {
-         //lock_manager->SwitchToLocal();
-       //}
     }
   }
 

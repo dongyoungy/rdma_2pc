@@ -37,12 +37,14 @@ Client::Client(const string& work_dir, LockManager* local_manager,
   num_rdma_read_                    = 0;
   num_rdma_atomic_                  = 0;
 
-  local_owner_id_ = local_manager_->GetID();
+  local_owner_id_ = local_manager_->GetRank();
+  local_owner_bitvector_id_ = local_manager_->GetID();
 
   // initialize local lock mutex
   pthread_mutex_init(&lock_mutex_, NULL);
   pthread_mutex_init(&msg_mutex_, NULL);
   pthread_mutex_init(&mutex_, NULL);
+  pthread_cond_init(&lock_cond_, NULL);
 
   lock_requests_ = new LockRequest*[MAX_LOCAL_THREADS];
   for (int i = 0; i < MAX_LOCAL_THREADS; ++i) {
@@ -234,8 +236,8 @@ int Client::HandleRouteResolved(struct rdma_cm_id* id) {
   struct rdma_conn_param connection_parameters;
   memset(&connection_parameters, 0x00, sizeof(connection_parameters));
   connection_parameters.initiator_depth =
-    connection_parameters.responder_resources = 5;
-  connection_parameters.rnr_retry_count = 5;
+    connection_parameters.responder_resources = 7;
+  connection_parameters.rnr_retry_count = 7;
 
   // connect
   if (rdma_connect(id, &connection_parameters)) {
@@ -466,8 +468,8 @@ void Client::BuildQueuePairAttr(Context* context,
   attributes->qp_type          = IBV_QPT_RC;
   attributes->cap.max_send_wr  = 64;
   attributes->cap.max_recv_wr  = 64;
-  attributes->cap.max_send_sge = 1;
-  attributes->cap.max_recv_sge = 1;
+  attributes->cap.max_send_sge = 16;
+  attributes->cap.max_recv_sge = 16;
   attributes->comp_mask        = IBV_EXP_QP_INIT_ATTR_PD |
     IBV_EXP_QP_INIT_ATTR_CREATE_FLAGS;
   attributes->exp_create_flags = IBV_EXP_QP_CREATE_ATOMIC_BE_REPLY;

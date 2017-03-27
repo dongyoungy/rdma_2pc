@@ -7,10 +7,16 @@ namespace rdma { namespace proto {
 LocalLockManager::LocalLockManager(int node_id, int num_nodes, int num_objects) {
   owner_node_id_ = node_id;
   num_objects_ = num_objects;
-  shared_counter_ = new int[num_nodes * num_objects];
-  exclusive_counter_ = new int[num_nodes * num_objects];
-  lock_status_ = new int[num_nodes * num_objects];
-  wait_queue_ = new queue<LocalLockWaitElement>[num_nodes * num_objects];
+  shared_counter_ = new volatile int[num_nodes * num_objects];
+  exclusive_counter_ = new volatile int[num_nodes * num_objects];
+  lock_status_ = new volatile int[num_nodes * num_objects];
+  //wait_queue_ = new queue<LocalLockWaitElement>[num_nodes * num_objects];
+
+  memset((void*)shared_counter_, 0x00, sizeof(volatile int)*num_nodes*num_objects_);
+  memset((void*)exclusive_counter_, 0x00, sizeof(volatile int)*num_nodes*num_objects_);
+  memset((void*)lock_status_, 0x00, sizeof(volatile int)*num_nodes*num_objects_);
+
+  pthread_mutex_init(&mutex_, NULL);
 }
 
 // destructor
@@ -18,7 +24,66 @@ LocalLockManager::~LocalLockManager() {
   delete[] shared_counter_;
   delete[] exclusive_counter_;
   delete[] lock_status_;
-  delete[] wait_queue_;
+}
+
+int LocalLockManager::TryLock(int target_node_id, int target_obj_index, int lock_type) {
+  int ret = 0;
+  pthread_mutex_lock(&mutex_);
+  if (lock_status_[index(target_node_id, target_obj_index)] != LOCK_STATUS_IDLE) {
+    ret = LOCAL_LOCK_FAIL;
+  }
+  if (lock_type == SHARED) {
+    if (exclusive_counter_[index(target_node_id, target_obj_index)] > 0) {
+      ret = LOCAL_LOCK_FAIL;
+    } else if (shared_counter_[index(target_node_id,target_obj_index)] == 0 &&
+        exclusive_counter_[index(target_node_id,target_obj_index)] == 0) {
+      lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_LOCKING;
+      ret = LOCAL_LOCK_RETRY;
+    } else if (shared_counter_[index(target_node_id,target_obj_index)] > 0 &&
+        exclusive_counter_[index(target_node_id,target_obj_index)] == 0) {
+      ++shared_counter_[index(target_node_id, target_obj_index)];
+      ret = LOCAL_LOCK_PASS;
+    } else {
+      ret = LOCAL_LOCK_FAIL;
+    }
+  } else {
+    if (exclusive_counter_[index(target_node_id, target_obj_index)] > 0) {
+      ret = LOCAL_LOCK_FAIL;
+    } else {
+      lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_LOCKING;
+      ret = LOCAL_LOCK_RETRY;
+    }
+  }
+  pthread_mutex_unlock(&mutex_);
+  return ret;
+}
+
+int LocalLockManager::TryUnlock(int target_node_id, int target_obj_index, int lock_type) {
+  int ret = 0;
+  pthread_mutex_lock(&mutex_);
+  if (lock_status_[index(target_node_id, target_obj_index)] != LOCK_STATUS_IDLE) {
+    ret = LOCAL_LOCK_FAIL;
+  }
+  if (lock_type == SHARED) {
+    if (shared_counter_[index(target_node_id, target_obj_index)] > 1) {
+      --shared_counter_[index(target_node_id, target_obj_index)];
+      ret = LOCAL_LOCK_PASS;
+    } else if (shared_counter_[index(target_node_id, target_obj_index)] == 1) {
+      lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_UNLOCKING;
+      ret = LOCAL_LOCK_RETRY;
+    } else {
+      ret = LOCAL_LOCK_FAIL;
+    }
+  } else {
+    if (exclusive_counter_[index(target_node_id, target_obj_index)] > 0) {
+      lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_UNLOCKING;
+      ret = LOCAL_LOCK_RETRY;
+    } else {
+      ret = LOCAL_LOCK_FAIL;
+    }
+  }
+  pthread_mutex_unlock(&mutex_);
+  return ret;
 }
 
 int LocalLockManager::CheckLock(int seq_no, int owner_thread_id, int target_node_id,
@@ -76,31 +141,35 @@ int LocalLockManager::CheckLock(int seq_no, int owner_thread_id, int target_node
   }
 }
 
-int LocalLockManager::Lock(int target_node_id, int target_obj_index, int lock_type) {
-  if (lock_type == EXCLUSIVE) {
-    exclusive_counter_[index(target_node_id,target_obj_index)]++;
-  } else if (lock_type == SHARED) {
-    shared_counter_[index(target_node_id,target_obj_index)]++;
-  } else {
-    return FUNC_FAIL;
+int LocalLockManager::Lock(int target_node_id, int target_obj_index, int lock_type,
+    int result) {
+  pthread_mutex_lock(&mutex_);
+  lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_IDLE;
+  if (result == RESULT_SUCCESS) {
+    if (lock_type == SHARED) {
+      ++shared_counter_[index(target_node_id, target_obj_index)];
+    } else {
+      exclusive_counter_[index(target_node_id, target_obj_index)] = 1;
+    }
   }
+  pthread_mutex_unlock(&mutex_);
   return FUNC_SUCCESS;
 }
 
-int LocalLockManager::Unlock(int target_node_id, int target_obj_index, int lock_type) {
-  if (lock_type == EXCLUSIVE) {
-    exclusive_counter_[index(target_node_id,target_obj_index)]--;
-  } else if (lock_type == SHARED) {
-    shared_counter_[index(target_node_id,target_obj_index)]--;
-  } else {
-    return FUNC_FAIL;
+int LocalLockManager::Unlock(int target_node_id, int target_obj_index, int lock_type,
+    int result) {
+  pthread_mutex_lock(&mutex_);
+  lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_IDLE;
+  if (result == RESULT_SUCCESS) {
+    if (lock_type == SHARED) {
+      if (shared_counter_[index(target_node_id, target_obj_index)] > 0)
+        --shared_counter_[index(target_node_id, target_obj_index)];
+    } else {
+      exclusive_counter_[index(target_node_id, target_obj_index)] = 0;
+    }
   }
-
-  if (wait_queue_[index(target_node_id,target_obj_index)].size() > 0) {
-    return LOCAL_LOCK_EXIST;
-  } else {
-    return LOCAL_LOCK_NOT_EXIST;
-  }
+  pthread_mutex_unlock(&mutex_);
+  return FUNC_SUCCESS;
 }
 
 int LocalLockManager::GetCount(int target_node_id, int target_obj_index, int lock_type) {

@@ -6,6 +6,7 @@ namespace rdma { namespace proto {
 LockClient::LockClient(const string& work_dir, LockManager* local_manager,
     LockSimulator* local_user,
     uint32_t remote_lm_id) : Client(work_dir, local_manager, local_user, remote_lm_id) {
+  message_in_progress_ = false;
 }
 
 // destructor
@@ -53,7 +54,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
         //work_completion->status << endl;
       //return -1;
     //}
-    cerr << "Work completion status is not IBV_WC_SUCCESS: " <<
+    cerr << "(LockClient) Work completion status is not IBV_WC_SUCCESS: " <<
       work_completion->status << endl;
     return -1;
   }
@@ -90,18 +91,28 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           );
     } else if (message->type == Message::LOCK_REQUEST_RESULT) {
       //cout << "received lock request result." << endl;
+      pthread_mutex_lock(&lock_mutex_);
+      message_in_progress_ = false;
+      pthread_cond_signal(&lock_cond_);
+      pthread_mutex_unlock(&lock_mutex_);
+
       local_manager_->NotifyLockRequestResult(
           message->seq_no,
-          message->user_id,
+          message->owner_user_id,
           message->lock_type,
           remote_lm_id_,
           message->obj_index,
           message->lock_result);
     } else if (message->type == Message::UNLOCK_REQUEST_RESULT) {
       //cout << "received unlock request result" << endl;
+      pthread_mutex_lock(&lock_mutex_);
+      message_in_progress_ = false;
+      pthread_cond_signal(&lock_cond_);
+      pthread_mutex_unlock(&lock_mutex_);
+
       local_manager_->NotifyUnlockRequestResult(
           message->seq_no,
-          message->user_id,
+          message->owner_user_id,
           message->lock_type,
           remote_lm_id_,
           message->obj_index,
@@ -636,7 +647,6 @@ int LockClient::SendLockModeRequest(Context* context) {
 
   msg->type       = Message::LOCK_MODE_REQUEST;
   msg->manager_id = local_manager_->GetID();
-  msg->user_id    = local_user_->GetID();
 
   if (SendMessage(context)) {
     cerr << "SendLockModeRequest(): SendMessage() failed." << endl;
@@ -655,7 +665,6 @@ int LockClient::SendLockTableRequest(Context* context) {
 
   msg->type       = Message::LOCK_TABLE_MR_REQUEST;
   msg->manager_id = local_manager_->GetID();
-  msg->user_id    = local_user_->GetID();
 
   if (SendMessage(context)) {
     cerr << "SendLockTableRequest(): SendMessage() failed." << endl;
@@ -724,7 +733,7 @@ int LockClient::LockRemotely(Context* context, int seq_no, uint32_t user_id, int
   pthread_mutex_lock(&lock_mutex_);
   LockRequest* request   = lock_requests_[lock_request_idx_];
   request->seq_no        = seq_no;
-  request->owner_node_id = local_owner_id_;
+  request->owner_node_id = local_owner_bitvector_id_;
   request->user_id       = user_id;
   request->lock_type     = lock_type;
   request->obj_index     = obj_index;
@@ -739,15 +748,16 @@ int LockClient::LockRemotely(Context* context, int seq_no, uint32_t user_id, int
   send_work_request.num_sge        = 1;
   send_work_request.sg_list        = &sge;
   send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
+  //send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED | IBV_EXP_SEND_INLINE;
   send_work_request.exp_opcode     = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
 
   if (lock_type == LockManager::SHARED) {
     exclusive = 0;
-    shared = local_owner_id_;
+    shared = local_owner_bitvector_id_;
     uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
     send_work_request.wr.atomic.compare_add = new_value;
   } else if (lock_type == LockManager::EXCLUSIVE) {
-    exclusive = local_owner_id_;
+    exclusive = local_owner_bitvector_id_;
     shared = 0;
     uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
     send_work_request.wr.atomic.compare_add = new_value;
@@ -928,18 +938,19 @@ int LockClient::UnlockRemotely(Context* context, int seq_no, uint32_t user_id, i
   send_work_request.num_sge        = 1;
   send_work_request.sg_list        = &sge;
   send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
+  //send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED | IBV_EXP_SEND_INLINE;
   send_work_request.exp_opcode     = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
 
   if (lock_type == LockManager::SHARED) {
     exclusive = 0;
-    shared = local_owner_id_;
+    shared = local_owner_bitvector_id_;
     uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
     new_value = (-1) * new_value; // need to subtract for unlock
     send_work_request.wr.atomic.compare_add = new_value;
   } else if (lock_type == LockManager::EXCLUSIVE) {
     exclusive = 0;
     shared = 0;
-    uint64_t new_value = ((uint64_t)local_owner_id_) << 32 | shared;
+    uint64_t new_value = ((uint64_t)local_owner_bitvector_id_) << 32 | shared;
     new_value = (-1) * new_value; // need to subtract for unlock
     send_work_request.wr.atomic.compare_add = new_value;
   }
@@ -994,15 +1005,23 @@ int LockClient::UnlockRemotely(Context* context, int seq_no, uint32_t user_id, i
 int LockClient::SendLockRequest(Context* context, int seq_no,
     uint32_t user_id, int lock_type, int obj_index) {
 
+  pthread_mutex_lock(&lock_mutex_);
+  while (message_in_progress_) {
+    pthread_cond_wait(&lock_cond_, &lock_mutex_);
+  }
+
+
   Message* msg = context->send_message_buffer->GetMessage();
 
-  pthread_mutex_lock(&lock_mutex_);
-  msg->type      = Message::LOCK_REQUEST;
-  msg->seq_no    = seq_no;
-  msg->home_id   = local_owner_id_;
-  msg->lock_type = lock_type;
-  msg->obj_index = obj_index;
-  msg->user_id   = user_id;
+  msg->type           = Message::LOCK_REQUEST;
+  msg->seq_no         = seq_no;
+  msg->target_node_id = remote_lm_id_;
+  msg->owner_node_id  = local_owner_id_;
+  msg->lock_type      = lock_type;
+  msg->obj_index      = obj_index;
+  msg->owner_user_id  = user_id;
+
+  message_in_progress_ = true;
 
   if (SendMessage(context)) {
     cerr << "SendLockRequest(): SendMessage() failed." << endl;
@@ -1018,15 +1037,23 @@ int LockClient::SendLockRequest(Context* context, int seq_no,
 int LockClient::SendUnlockRequest(Context* context, int seq_no,
     uint32_t user_id, int lock_type, int obj_index) {
 
+  pthread_mutex_lock(&lock_mutex_);
+  while (message_in_progress_) {
+    pthread_cond_wait(&lock_cond_, &lock_mutex_);
+  }
+
   Message* msg = context->send_message_buffer->GetMessage();
 
-  pthread_mutex_lock(&lock_mutex_);
-  msg->type      = Message::UNLOCK_REQUEST;
-  msg->seq_no    = seq_no;
-  msg->home_id   = local_owner_id_;
-  msg->lock_type = lock_type;
-  msg->obj_index = obj_index;
-  msg->user_id   = user_id;
+  msg->type           = Message::UNLOCK_REQUEST;
+  msg->seq_no         = seq_no;
+  msg->target_node_id = remote_lm_id_;
+  msg->owner_node_id  = local_owner_id_;
+  msg->lock_type      = lock_type;
+  msg->obj_index      = obj_index;
+  msg->owner_user_id  = user_id;
+
+  message_in_progress_ = true;
+
   if (SendMessage(context)) {
     pthread_mutex_unlock(&lock_mutex_);
     cerr << "SendUnlockRequest(): SendMessage() failed." << endl;

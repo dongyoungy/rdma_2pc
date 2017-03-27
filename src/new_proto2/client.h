@@ -90,6 +90,7 @@ class Client {
     LockSimulator* local_user_;
     Context* context_;
     uint32_t local_owner_id_;
+    uint32_t local_owner_bitvector_id_;
     uint32_t remote_lm_id_;
     int test_duration_;
     int lock_request_idx_;
@@ -135,6 +136,7 @@ class Client {
     time_t test_end_;
     pthread_mutex_t mutex_;
     pthread_mutex_t lock_mutex_;
+    pthread_cond_t lock_cond_;
     pthread_mutex_t msg_mutex_;
 };
 

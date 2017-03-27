@@ -138,6 +138,7 @@ void LockSimulator::Run() {
   backoff_seed_ += id_;
   srand48(seed_+id_);
   is_tx_failed_ = false;
+  is_tx_timed_out_ = false;
   current_request_idx_ = 0;
   last_request_idx_ = 0;
 
@@ -233,7 +234,7 @@ void LockSimulator::InitializeCDF() {
 void LockSimulator::StartLockRequests() {
 
   int current_state = STATE_WAIT;
-  while (true) {
+  while (state_ != STATE_DONE) {
     pthread_mutex_lock(&state_mutex_);
     while (state_ == STATE_WAIT || state_ == STATE_QUEUED) {
       pthread_cond_wait(&state_cond_, &state_mutex_);
@@ -256,8 +257,25 @@ void LockSimulator::StartLockRequests() {
       default:
         break;
     }
-    if (state_ == STATE_DONE)
-      break;
+    //if (state_ == STATE_DONE)
+      //break;
+
+    //switch (state_) {
+      //case STATE_IDLE:
+        //state_ = STATE_WAIT;
+        //CreateLockRequests();
+        //break;
+      //case STATE_LOCKING:
+        //state_ = STATE_WAIT;
+        //SubmitLockRequest();
+        //break;
+      //case STATE_UNLOCKING:
+        //state_ = STATE_WAIT;
+        //SubmitUnlockRequest();
+        //break;
+      //default:
+        //break;
+    //}
   }
 
 
@@ -278,6 +296,7 @@ int LockSimulator::GetState() const {
 }
 
 void LockSimulator::ChangeState(int state) {
+  //cout << state_ << endl;
   pthread_mutex_lock(&state_mutex_);
   state_ = state;
   pthread_cond_signal(&state_cond_);
@@ -499,6 +518,7 @@ void LockSimulator::SubmitLockRequest() {
 
   int ret = 0;
   pthread_mutex_lock(&lock_mutex_);
+  is_tx_timed_out_ = false;
   if (current_request_idx_ < request_size_) {
     if (verbose_) {
       pthread_mutex_lock(&PRINT_MUTEX);
@@ -587,6 +607,7 @@ void LockSimulator::SubmitUnlockRequest() {
 
   int ret = 0;
   pthread_mutex_lock(&lock_mutex_);
+  is_tx_timed_out_ = false;
   if (current_request_idx_ >= 0) {
     if (verbose_) {
       pthread_mutex_lock(&PRINT_MUTEX);
@@ -702,7 +723,7 @@ void LockSimulator::SubmitUnlockRequestLocal() {
 int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_index,
     int result) {
 
-  pthread_mutex_lock(&mutex_);
+  //pthread_mutex_lock(&mutex_);
 
   pthread_mutex_lock(&lock_mutex_);
   if (requests_[last_request_idx_]->seq_no != seq_no ||
@@ -717,14 +738,14 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
       pthread_mutex_unlock(&PRINT_MUTEX);
     }
     pthread_mutex_unlock(&lock_mutex_);
-    pthread_mutex_unlock(&mutex_);
+    //pthread_mutex_unlock(&mutex_);
     return -1;
   }
   if (task == TASK_LOCK && result == RESULT_SUCCESS_FROM_QUEUED && state_ == STATE_QUEUED) {
     result = RESULT_SUCCESS;
     ChangeState(STATE_WAIT);
   }
-  pthread_mutex_unlock(&lock_mutex_);
+  //pthread_mutex_unlock(&lock_mutex_);
 
   if (task == TASK_LOCK && result == RESULT_QUEUED) {
     if (verbose_) {
@@ -738,14 +759,18 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
       pthread_mutex_unlock(&PRINT_MUTEX);
     }
     ChangeState(STATE_QUEUED);
-    pthread_mutex_unlock(&mutex_);
+    //pthread_mutex_unlock(&mutex_);
+    pthread_mutex_unlock(&lock_mutex_);
     return 0;
   }
 
 
   if (task == LockManager::TASK_LOCK) {
 
-    if (result == LockManager::RESULT_SUCCESS &&
+    if (is_tx_timed_out_) {
+      is_tx_timed_out_ = false;
+      ChangeState(STATE_UNLOCKING);
+    } else if (result == LockManager::RESULT_SUCCESS &&
         requests_[last_request_idx_]->lock_type == lock_type &&
         requests_[last_request_idx_]->obj_index == obj_index) {
       if (verbose_) {
@@ -878,12 +903,12 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
       ChangeState(STATE_UNLOCKING);
     }
   }
-  pthread_mutex_unlock(&mutex_);
+  pthread_mutex_unlock(&lock_mutex_);
 }
 
 int LockSimulator::TimeOut() {
 
-  pthread_mutex_lock(&mutex_);
+  //pthread_mutex_lock(&mutex_);
   pthread_mutex_lock(&lock_mutex_);
   if (requests_[last_request_idx_]->task == TASK_LOCK) {
     if (lock_mode_ == LOCK_PROXY_QUEUE ||
@@ -891,6 +916,7 @@ int LockSimulator::TimeOut() {
       current_request_idx_            = last_request_idx_;
       num_lock_acquired_till_timeout_ = last_request_idx_;
       is_tx_failed_                   = true;
+      is_tx_timed_out_                = true;
       measure_time_out_               = false;
       if (verbose_) {
         pthread_mutex_lock(&PRINT_MUTEX);
@@ -902,7 +928,7 @@ int LockSimulator::TimeOut() {
     }
   }
   pthread_mutex_unlock(&lock_mutex_);
-  pthread_mutex_unlock(&mutex_);
+  //pthread_mutex_unlock(&mutex_);
 }
 
 double LockSimulator::GetTimeSinceLastLock() {

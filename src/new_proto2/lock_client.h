@@ -51,6 +51,7 @@ class LockClient : public Client {
 
     int UndoLocking(Context* context, LockRequest* request, bool polling = false);
   private:
+    volatile bool message_in_progress_;
     map<uint32_t, uint32_t> waitlist_;
 };
 

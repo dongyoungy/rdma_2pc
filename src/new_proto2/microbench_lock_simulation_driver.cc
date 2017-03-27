@@ -1,4 +1,5 @@
 #include <iostream>
+#include <cstdlib>
 #include <vector>
 #include <cmath>
 #include <arpa/inet.h>
@@ -7,7 +8,7 @@
 #include <infiniband/verbs.h>
 #include <sys/times.h>
 #include "mpi.h"
-#include "tpcc_lock_simulator.h"
+#include "microbench_lock_simulator.h"
 #include "lock_manager.h"
 
 using namespace std;
@@ -27,13 +28,14 @@ int main(int argc, char** argv) {
 
   MPI_Init(&argc, &argv);
 
-  if (argc != 19) {
-    cout << argv[0] << " <work_dir> <workload_type> <num_tx>" <<
+  if (argc != 20) {
+    cout << argv[0] << " <work_dir> <num_manager_per_node> <num_tx> <contention_index>" <<
       " <num_users> <lock_mode>" <<
       " <shared_exclusive_rule> <exclusive_shared_rule> <exclusive_exclusive_rule>" <<
       " <fail_retry> <poll_retry> <sleep_time_for_timeout> <think_time>"
       " <transaction_delay> <transaction_delay_min> " <<
       "<transaction_delay_max> <miin_backoff_time> <max_backoff_time> <rand_seed>" << endl;
+    cout << "current argc = " << argc << endl;
     exit(1);
   }
 
@@ -52,10 +54,10 @@ int main(int argc, char** argv) {
     }
   }
 
-
   int k=2;
-  int workload_type            = atoi(argv[k++]);
-  long num_tx                  = atol(argv[k++]);
+  int num_manager_per_node     = atoi(argv[k++]);
+  int num_tx                   = atoi(argv[k++]);
+  double contention_index      = atof(argv[k++]);
   int num_users                = atoi(argv[k++]);
   int lock_mode                = atoi(argv[k++]);
   int shared_exclusive_rule    = atoi(argv[k++]);
@@ -72,41 +74,11 @@ int main(int argc, char** argv) {
   int max_backoff_time         = atoi(argv[k++]);
   long seed                    = atol(argv[k++]);
 
-  //if (num_users != 1) {
-     //cerr << "# of users must be 1." << endl;
-     //exit(-1);
-  //}
-  //if (num_users > 32) {
-     //cerr << "# of node/clients must be less than 33" << endl;
-     //exit(-1);
-  //}
+  num_servers = num_nodes;
+  num_clients = num_nodes;
+  server_start_idx = 0;
+  client_start_idx = 0;
 
-  // 1 node = server/client on the same node
-  // 2 node = 1 server, 1 client
-  // n nodes = n/2 servers, n/2 clients
-  if (num_nodes == 1) {
-    num_servers = 1;
-    num_clients = 1;
-    server_start_idx = 0;
-    client_start_idx = 0;
-  } else if (num_nodes == 2) {
-    num_servers = 1;
-    num_clients = 1;
-    server_start_idx = 0;
-    client_start_idx = 1;
-  //} else if (num_nodes == 5) {
-    //num_servers = 1;
-    //num_clients = 2;
-    //server_start_idx = 0;
-    //client_start_idx = 3;
-  } else {
-    num_servers = num_nodes;
-    num_clients = num_nodes;
-    server_start_idx = 0;
-    client_start_idx = 0;
-  }
-
-  int num_warehouses_per_server = 1;
   bool transaction_delay = (transaction_delay_num == 0) ? false : true;
 
   string lock_mode_str;
@@ -123,7 +95,7 @@ int main(int argc, char** argv) {
   }
 
   string workload_type_str, shared_lock_ratio_str;
-  workload_type_str = "TPC-C";
+  workload_type_str = "MICROBENCH";
   shared_lock_ratio_str = "N/A";
   string local_workload_ratio_str = "N/A";
 
@@ -179,22 +151,18 @@ int main(int argc, char** argv) {
     exclusive_exclusive_rule_str = "N/A";
   }
 
-  if (workload_type == WORKLOAD_UNIFORM) {
-    workload_type_str = "TPC-C/UNIFORM";
-  } else if (workload_type == WORKLOAD_HOTSPOT) {
-    workload_type_str = "TPC-C/HOTSPOT";
-  }
+  workload_type_str = "MICROBENCH";
 
-  int num_users_per_client = num_users;
+  int num_users_per_manager = num_users;
   if (rank == 0) {
     cout << "Type of Workload = " << workload_type_str << endl;
     cout << "SHARED -> EXCLUSIVE = " << shared_exclusive_rule_str << endl;
     cout << "EXCLUSIVE -> SHARED = " << exclusive_shared_rule_str << endl;
     cout << "EXCLUSIVE -> EXCLUSIVE = " << exclusive_exclusive_rule_str << endl;
     cout << "Num Tx = " << num_tx << endl;
-    cout << "Num Servers = " << num_servers << endl;
-    cout << "Num Clients = " << num_clients << endl;
-    cout << "Num Users Per Client = " << num_users_per_client << endl;
+    cout << "Num Nodes = " << num_nodes << endl;
+    cout << "Num Managers Per Node = " << num_manager_per_node << endl;
+    cout << "Num Users Per Manager = " << num_users_per_manager << endl;
   }
 
   LockManager::SetSharedExclusiveRule(shared_exclusive_rule);
@@ -205,10 +173,10 @@ int main(int argc, char** argv) {
 
   vector<LockManager*> managers;
   vector<LockSimulator*> users;
-  for (int i = 0; i < num_warehouses_per_server; ++i) {
-    LockManager* lock_manager = new LockManager(argv[1], rank*num_warehouses_per_server+i,
-        num_nodes*num_warehouses_per_server,
-        700000, lock_mode, num_users, num_clients);
+  for (int i = 0; i < num_manager_per_node; ++i) {
+    LockManager* lock_manager = new LockManager(argv[1], rank*num_manager_per_node+i,
+        num_nodes*num_manager_per_node,
+        1000000, lock_mode, num_users, num_clients);
     managers.push_back(lock_manager);
 
     if (lock_manager->Initialize()) {
@@ -222,21 +190,19 @@ int main(int argc, char** argv) {
       cerr << "pthread_create() error." << endl;
       exit(-1);
     }
-  }
 
-  if (rank >= client_start_idx) {
-    for (int i=0;i<num_users_per_client;++i) {
-      uint32_t seq = (rank-client_start_idx)*num_users_per_client+i;
-      //uint32_t id = (uint32_t)pow(2.0, seq);
-      uint32_t id = i;
+    for (int j=0;j<num_users_per_manager;++j) {
+      uint32_t id = j;
       bool verbose = false;
-      TPCCLockSimulator* simulator = new TPCCLockSimulator(managers[i%num_warehouses_per_server],
+      MicrobenchLockSimulator* simulator = new MicrobenchLockSimulator(managers[i],
           id, // id
-          seq % (num_servers*num_warehouses_per_server), // home id
-          workload_type,
-          num_servers*num_warehouses_per_server,
+          managers[i]->GetRank(),
+          0, // empty workload type
+          num_nodes*num_manager_per_node,
           num_tx,
-          seed+i+(rank*num_users_per_client),
+          1000000,
+          contention_index,
+          seed+(num_users_per_manager*i)+(rank*num_manager_per_node*num_users_per_manager)+j,
           verbose, // verbose
           true, // measure lock time
           lock_mode,
@@ -248,21 +214,20 @@ int main(int argc, char** argv) {
           sleep_time,
           think_time
           );
-      //lock_manager->RegisterUser(id, simulator);
-      managers[i % num_warehouses_per_server]->RegisterUser(id, simulator);
+      managers[i]->RegisterUser(id, simulator);
       users.push_back(simulator);
     }
   }
 
-  for (int i = client_start_idx; i < num_nodes; ++i) {
-    for (int j =0;j<num_users_per_client;++j) {
-      uint32_t seq = (i-client_start_idx)*num_users_per_client+j;
-      LockManager::user_to_node_map_[seq] = i;
-    }
-  }
+  //for (int i = client_start_idx; i < num_nodes; ++i) {
+    //for (int j =0;j<num_users_per_client;++j) {
+      //uint32_t seq = (i-client_start_idx)*num_users_per_client+j;
+      //LockManager::user_to_node_map_[seq] = i;
+    //}
+  //}
 
   MPI_Barrier(MPI_COMM_WORLD);
-  sleep(1);
+  sleep(3);
 
   for (int i = 0; i < managers.size(); ++i) {
     if (managers[i]->InitializeLockClients()) {
@@ -274,23 +239,19 @@ int main(int argc, char** argv) {
     }
   }
 
-
   MPI_Barrier(MPI_COMM_WORLD);
-  sleep(1);
 
   time_t start_time;
   time_t end_time;
 
   time(&start_time);
 
-  if (rank >= client_start_idx) {
-    for (int i=0;i<users.size();++i) {
-      pthread_t lock_simulator_thread;
-      if (pthread_create(&lock_simulator_thread, NULL, &RunLockSimulator,
-            (void*)users[i])) {
-        cerr << "pthread_create() error." << endl;
-        exit(-1);
-      }
+  for (int i=0;i<users.size();++i) {
+    pthread_t lock_simulator_thread;
+    if (pthread_create(&lock_simulator_thread, NULL, &RunLockSimulator,
+          (void*)users[i])) {
+      cerr << "pthread_create() error." << endl;
+      exit(-1);
     }
   }
 
@@ -312,7 +273,7 @@ int main(int argc, char** argv) {
   memset(locks_done, 0x00, sizeof(uint64_t)*64000);
 
   bool simulator_done = false;
-  while (rank >= client_start_idx) {
+  while (true) {
     for (int i=0;i<users.size();++i) {
       tx_done[time_taken2] += users[i]->GetCount();
       locks_done[time_taken2] += users[i]->GetTotalNumLockSuccess();
@@ -322,8 +283,6 @@ int main(int argc, char** argv) {
     }
     cout << rank << "," << time_taken2 << ":" << tx_done[time_taken2] << endl;
     ++time_taken2;
-    //cout << rank << "," << users[0]->GetID() << "," << time_taken2 << " : " << users[0]->GetCount() <<
-      //"," << users[0]->GetCurrentBackoff() << endl;
     if (simulator_done) break;
     sleep(1);
   }
@@ -333,25 +292,11 @@ int main(int argc, char** argv) {
     LockSimulator* simulator = users[i];
     while (simulator->GetState() != LockSimulator::STATE_DONE) {
       ++time_taken2;
-      //if (time_taken2 > 40) {
-        //users[i]->SetVerbose(true);
-      //}
-      //if (rank == 0) {
         cout << rank << "," << users[i]->GetID() << "," << time_taken2 << " : " << users[i]->GetCount() <<
           "," << users[i]->GetCurrentBackoff() << endl;
-      //}
       sleep(1);
     }
   }
-
-  //int temp1 = 0;
-  //while (rank < client_start_idx) {
-    //sleep(1);
-    //++temp1;
-    //if (temp1 > 30) {
-       //lock_manager->PrintTemp();
-    //}
-  //}
 
   time(&end_time);
   double time_taken = difftime(end_time, start_time);
@@ -509,7 +454,7 @@ int main(int argc, char** argv) {
     }
   }
 
-  for (int i = 0; i < num_warehouses_per_server; ++i) {
+  for (int i = 0; i < num_manager_per_node; ++i) {
     LockManager* lock_manager = managers[i];
     local_lock_contention += lock_manager->GetTotalLockContention();
     local_lock_success_with_poll += lock_manager->GetTotalLockSuccessWithPoll();
@@ -744,8 +689,9 @@ int main(int argc, char** argv) {
     cerr << lock_mode_str << "," << workload_type_str <<
       "," << shared_exclusive_rule_str << "," << exclusive_shared_rule_str << "," <<
       exclusive_exclusive_rule_str << "," << fail_retry << "," << poll_retry << "," <<
-      sleep_time << "," << think_time << "," << num_servers << "," << num_users <<
-      "," << "N/A" << "," << num_tx << "," << "N/A" << "," <<
+      sleep_time << "," << think_time << "," << num_nodes << "," << num_manager_per_node <<
+      "," << num_users <<
+      "," << "N/A" << "," << num_tx << "," << contention_index << ","  << "N/A" << "," <<
       local_workload_ratio_str << "," << shared_lock_ratio_str << "," <<
       min_backoff_time << "," <<
       max_backoff_time << "," <<

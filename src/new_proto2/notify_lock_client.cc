@@ -237,7 +237,7 @@ int NotifyLockClient::NotifyWaitingNodes(LockRequest* request, uint64_t value) {
       uint32_t node_id = (uint32_t)pow(2.0, nodes[i]);
       uint32_t home_id = LockManager::user_to_node_map_[nodes[i]];
       local_manager_->GrantLock(request->seq_no,
-          node_id, remote_lm_id_, home_id,
+          noded, remote_lm_id_, home_id,
           EXCLUSIVE, request->obj_index);
     }
   } else {
@@ -305,7 +305,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       //cout << "received lock request result." << endl;
       local_manager_->NotifyLockRequestResult(
           message->seq_no,
-          message->user_id,
+          message->owner_user_id,
           message->lock_type,
           remote_lm_id_,
           message->obj_index,
@@ -314,7 +314,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       //cout << "received unlock request result" << endl;
       local_manager_->NotifyUnlockRequestResult(
           message->seq_no,
-          message->user_id,
+          message->owner_user_id,
           message->lock_type,
           remote_lm_id_,
           message->obj_index,
@@ -449,14 +449,14 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           //cerr << "wrong1" << endl;
           //pthread_mutex_unlock(&PRINT_MUTEX);
           //}
-          prev_value = ((uint64_t)(exclusive - request->user_id)) << 32 | shared;
+          prev_value = ((uint64_t)(exclusive - local_owner_bitvector_id_)) << 32 | shared;
         } else {
           //if (request->user_id > shared) {
           //pthread_mutex_lock(&PRINT_MUTEX);
           //cerr << "wrong2" << endl;
           //pthread_mutex_unlock(&PRINT_MUTEX);
           //}
-          prev_value = ((uint64_t)exclusive) << 32 | (shared - request->user_id);
+          prev_value = ((uint64_t)exclusive) << 32 | (shared - local_owner_bitvector_id_);
         }
         pthread_mutex_lock(&wait_mutex_);
         wait_after_me_[request->obj_index]  = prev_value;
@@ -505,7 +505,8 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     } else if (request->task == TASK_READ_UNLOCK) {
        // Read for unlocking
       uint32_t exclusive, shared;
-      int user_id   = request->user_id;
+      //int user_id   = request->user_id;
+      int user_id   = local_owner_bitvector_id_;
       int lock_type = request->lock_type;
       exclusive     = (uint32_t)((value)>>32);
       shared        = (uint32_t)value;
@@ -571,7 +572,8 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
 #if __BYTE_ORDER == __LITTLE_ENDIAN
     uint64_t value = __bswap_constant_64(prev_value);  // Compiler builtin
 #endif
-    int user_id         = request->user_id;
+    //int user_id         = request->user_id;
+    int user_id         = local_owner_bitvector_id_;
     int lock_type       = request->lock_type;
     exclusive = (uint32_t)((value)>>32);
     shared    = (uint32_t)value;
@@ -583,9 +585,9 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       pthread_mutex_unlock(&wait_mutex_);
 
       if (request->lock_type == EXCLUSIVE) {
-        prev_value = ((uint64_t)(exclusive - request->user_id)) << 32 | shared;
+        prev_value = ((uint64_t)(exclusive - local_owner_bitvector_id_)) << 32 | shared;
       } else {
-        prev_value = ((uint64_t)exclusive) << 32 | (shared - request->user_id);
+        prev_value = ((uint64_t)exclusive) << 32 | (shared - local_owner_bitvector_id_);
       }
       int ret = NotifyWaitingNodes(request, prev_value);
       local_manager_->NotifyUnlockRequestResult(
