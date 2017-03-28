@@ -368,7 +368,6 @@ int LockManager::RegisterMemoryRegion(Context* context) {
 }
 
 int LockManager::HandleConnectRequest(struct rdma_cm_id* id) {
-  cout << "connect request" << endl;
   Context* context = BuildContext(id);
   if (context == NULL) {
     cerr << "LockManager: BuildContext() failed." << endl;

@@ -46,6 +46,8 @@ MicrobenchLockSimulator::MicrobenchLockSimulator(LockManager* manager, uint32_t 
   last_seq_no_                       = 0;
   seq_count_                         = 0;
   is_backing_off_                    = false;
+  is_tx_failed_                      = false;
+  is_tx_timed_out_                   = false;
   sleep_time_                        = sleep_time;
   think_time_                        = think_time;
   workload_type_                     = workload_type;
@@ -60,6 +62,7 @@ void MicrobenchLockSimulator::Run() {
   backoff_seed_ += id_;
   srand48(seed_+id_);
   is_tx_failed_ = false;
+  is_tx_timed_out_ = false;
 
   if (lock_mode_ == LOCK_REMOTE_NOTIFY || lock_mode_ == LOCK_PROXY_QUEUE) {
     int ret = pthread_create(&timeout_thread_, NULL, &LockSimulator::CheckTimeOut, (void*)this);
@@ -268,7 +271,7 @@ void MicrobenchLockSimulator::SubmitLockRequest() {
         LockManager::TASK_LOCK,
         requests_[last_request_idx_]->lock_type,
         requests_[last_request_idx_]->obj_index,
-        LockManager::RESULT_FAILURE
+        RESULT_LOCAL_FAILURE
         );
   }
 }

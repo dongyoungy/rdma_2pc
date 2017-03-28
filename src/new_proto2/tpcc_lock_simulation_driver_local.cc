@@ -116,14 +116,14 @@ int main(int argc, char** argv) {
       exit(-1);
   }
 
-  //if (rank == 0) {
-    cout << "Lock Method = " << lock_method_str << endl;
-    cout << "Type of Workload = " << workload_type_str << endl;
-    cout << "SHARED -> EXCLUSIVE = " << shared_exclusive_rule_str << endl;
-    cout << "EXCLUSIVE -> SHARED = " << exclusive_shared_rule_str << endl;
-    cout << "EXCLUSIVE -> EXCLUSIVE = " << exclusive_exclusive_rule_str << endl;
-    cout << "Num Tx = " << num_tx << endl;
-  //}
+  cout << "Lock Method = " << lock_method_str << endl;
+  cout << "Type of Workload = " << workload_type_str << endl;
+  cout << "SHARED -> EXCLUSIVE = " << shared_exclusive_rule_str << endl;
+  cout << "EXCLUSIVE -> SHARED = " << exclusive_shared_rule_str << endl;
+  cout << "EXCLUSIVE -> EXCLUSIVE = " << exclusive_exclusive_rule_str << endl;
+  cout << "Num Tx = " << num_tx << endl;
+  cout << "Num Managers = " << num_managers << endl;
+  cout << "Num Users Per Manager = " << num_users << endl;
 
   LockManager::SetSharedExclusiveRule(shared_exclusive_rule);
   LockManager::SetExclusiveSharedRule(exclusive_shared_rule);
@@ -173,6 +173,9 @@ int main(int argc, char** argv) {
       managers[i]->RegisterUser(j, simulator);
       users.push_back(simulator);
     }
+  }
+
+  for (int i = 0; i < num_managers; ++i) {
     if (managers[i]->InitializeLockClients()) {
       cerr << "InitializeLockClients() failed." << endl;
       exit(-1);
@@ -189,6 +192,7 @@ int main(int argc, char** argv) {
   time_t start_time;
   time_t end_time;
 
+  cout << "TPC-C Simulation starting.." << endl;
   time(&start_time);
 
   for (int i=0;i<users.size();++i) {

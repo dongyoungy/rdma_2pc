@@ -1,6 +1,7 @@
 #ifndef RDMA_PROTO_LOCALLOCKMANAGER_H
 #define RDMA_PROTO_LOCALLOCKMANAGER_H
 
+#include <iostream>
 #include <cstring>
 #include <queue>
 #include <unordered_map>

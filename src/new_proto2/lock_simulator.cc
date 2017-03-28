@@ -35,13 +35,15 @@ LockSimulator::LockSimulator(LockManager* manager, uint32_t id, int num_manager,
   total_num_timeouts_       = 0;
   total_time_taken_to_lock_ = 0;
   is_all_local_             = false;
-  local_manager_id_         = manager_->GetID();
+  local_manager_id_         = manager_->GetRank();
   count_limit_              = num_lock_request;
   seq_count_                = 0;
   count_                    = 0;
   request_size_             = 1;
   last_seq_no_              = 0;
   is_backing_off_           = false;
+  is_tx_failed_             = false;
+  is_tx_timed_out_          = false;
   think_time_               = 10;
 
   lock_times_ = new double[MAX_LOCK_REQUESTS];
@@ -296,7 +298,6 @@ int LockSimulator::GetState() const {
 }
 
 void LockSimulator::ChangeState(int state) {
-  //cout << state_ << endl;
   pthread_mutex_lock(&state_mutex_);
   state_ = state;
   pthread_cond_signal(&state_cond_);
@@ -566,7 +567,7 @@ void LockSimulator::SubmitLockRequest() {
         LockManager::TASK_LOCK,
         requests_[last_request_idx_]->lock_type,
         requests_[last_request_idx_]->obj_index,
-        LockManager::RESULT_FAILURE
+        RESULT_LOCAL_FAILURE
         );
   }
 }
@@ -835,6 +836,24 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
       } else {
         ChangeState(STATE_LOCKING);
       }
+    } else if (result == RESULT_LOCAL_FAILURE &&
+        requests_[last_request_idx_]->lock_type == lock_type &&
+        requests_[last_request_idx_]->obj_index == obj_index) {
+      current_request_idx_ = last_request_idx_;
+      ++total_num_lock_failure_;
+      if (verbose_) {
+        pthread_mutex_lock(&PRINT_MUTEX);
+        cout << "Simulator " << id_ << ": " <<
+          "(Local Fail) Unsuccessful lock request at LM " <<
+          requests_[last_request_idx_]->lm_id <<
+          " of type " << requests_[last_request_idx_]->lock_type <<
+          " for object " << requests_[last_request_idx_]->obj_index <<
+          " (" << lock_type << "," << obj_index << ")" << endl;
+        pthread_mutex_unlock(&PRINT_MUTEX);
+      }
+
+      // simply retries here
+      ChangeState(STATE_LOCKING);
     } else if (result == RESULT_FAILURE &&
         requests_[last_request_idx_]->lock_type == lock_type &&
         requests_[last_request_idx_]->obj_index == obj_index) {

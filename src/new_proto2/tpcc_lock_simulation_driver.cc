@@ -27,9 +27,9 @@ int main(int argc, char** argv) {
 
   MPI_Init(&argc, &argv);
 
-  if (argc != 19) {
+  if (argc != 20) {
     cout << argv[0] << " <work_dir> <workload_type> <num_tx>" <<
-      " <num_users> <lock_mode>" <<
+      " <num_warehouses_per_node> <num_users> <lock_mode>" <<
       " <shared_exclusive_rule> <exclusive_shared_rule> <exclusive_exclusive_rule>" <<
       " <fail_retry> <poll_retry> <sleep_time_for_timeout> <think_time>"
       " <transaction_delay> <transaction_delay_min> " <<
@@ -52,10 +52,10 @@ int main(int argc, char** argv) {
     }
   }
 
-
   int k=2;
   int workload_type            = atoi(argv[k++]);
   long num_tx                  = atol(argv[k++]);
+  int num_warehouses_per_node  = atoi(argv[k++]);
   int num_users                = atoi(argv[k++]);
   int lock_mode                = atoi(argv[k++]);
   int shared_exclusive_rule    = atoi(argv[k++]);
@@ -106,7 +106,6 @@ int main(int argc, char** argv) {
     client_start_idx = 0;
   }
 
-  int num_warehouses_per_server = 1;
   bool transaction_delay = (transaction_delay_num == 0) ? false : true;
 
   string lock_mode_str;
@@ -192,9 +191,9 @@ int main(int argc, char** argv) {
     cout << "EXCLUSIVE -> SHARED = " << exclusive_shared_rule_str << endl;
     cout << "EXCLUSIVE -> EXCLUSIVE = " << exclusive_exclusive_rule_str << endl;
     cout << "Num Tx = " << num_tx << endl;
-    cout << "Num Servers = " << num_servers << endl;
-    cout << "Num Clients = " << num_clients << endl;
-    cout << "Num Users Per Client = " << num_users_per_client << endl;
+    cout << "Num Nodes = " << num_nodes << endl;
+    cout << "Num Warehouse/Managers Per Node = " << num_warehouses_per_node << endl;
+    cout << "Num Users Per Node = " << num_users_per_client << endl;
   }
 
   LockManager::SetSharedExclusiveRule(shared_exclusive_rule);
@@ -205,9 +204,9 @@ int main(int argc, char** argv) {
 
   vector<LockManager*> managers;
   vector<LockSimulator*> users;
-  for (int i = 0; i < num_warehouses_per_server; ++i) {
-    LockManager* lock_manager = new LockManager(argv[1], rank*num_warehouses_per_server+i,
-        num_nodes*num_warehouses_per_server,
+  for (int i = 0; i < num_warehouses_per_node; ++i) {
+    LockManager* lock_manager = new LockManager(argv[1], rank*num_warehouses_per_node+i,
+        num_nodes*num_warehouses_per_node,
         700000, lock_mode, num_users, num_clients);
     managers.push_back(lock_manager);
 
@@ -230,11 +229,11 @@ int main(int argc, char** argv) {
       //uint32_t id = (uint32_t)pow(2.0, seq);
       uint32_t id = i;
       bool verbose = false;
-      TPCCLockSimulator* simulator = new TPCCLockSimulator(managers[i%num_warehouses_per_server],
+      TPCCLockSimulator* simulator = new TPCCLockSimulator(managers[i%num_warehouses_per_node],
           id, // id
-          seq % (num_servers*num_warehouses_per_server), // home id
+          seq % (num_servers*num_warehouses_per_node), // home id
           workload_type,
-          num_servers*num_warehouses_per_server,
+          num_servers*num_warehouses_per_node,
           num_tx,
           seed+i+(rank*num_users_per_client),
           verbose, // verbose
@@ -249,7 +248,7 @@ int main(int argc, char** argv) {
           think_time
           );
       //lock_manager->RegisterUser(id, simulator);
-      managers[i % num_warehouses_per_server]->RegisterUser(id, simulator);
+      managers[i % num_warehouses_per_node]->RegisterUser(id, simulator);
       users.push_back(simulator);
     }
   }
@@ -262,7 +261,6 @@ int main(int argc, char** argv) {
   }
 
   MPI_Barrier(MPI_COMM_WORLD);
-  sleep(1);
 
   for (int i = 0; i < managers.size(); ++i) {
     if (managers[i]->InitializeLockClients()) {
@@ -274,9 +272,7 @@ int main(int argc, char** argv) {
     }
   }
 
-
   MPI_Barrier(MPI_COMM_WORLD);
-  sleep(1);
 
   time_t start_time;
   time_t end_time;
@@ -509,7 +505,7 @@ int main(int argc, char** argv) {
     }
   }
 
-  for (int i = 0; i < num_warehouses_per_server; ++i) {
+  for (int i = 0; i < num_warehouses_per_node; ++i) {
     LockManager* lock_manager = managers[i];
     local_lock_contention += lock_manager->GetTotalLockContention();
     local_lock_success_with_poll += lock_manager->GetTotalLockSuccessWithPoll();
@@ -667,6 +663,7 @@ int main(int argc, char** argv) {
       0, MPI_COMM_WORLD);
   double global_99_lock_time_std = sqrt(global_99_lock_time_diff / (double)num_users);
 
+  MPI_Barrier(MPI_COMM_WORLD);
   if (rank==0) {
     cout << endl;
     cout << "Global Total Lock # = " << global_sum << "(# nodes: " <<
@@ -744,7 +741,8 @@ int main(int argc, char** argv) {
     cerr << lock_mode_str << "," << workload_type_str <<
       "," << shared_exclusive_rule_str << "," << exclusive_shared_rule_str << "," <<
       exclusive_exclusive_rule_str << "," << fail_retry << "," << poll_retry << "," <<
-      sleep_time << "," << think_time << "," << num_servers << "," << num_users <<
+      sleep_time << "," << think_time << "," << num_nodes << "," <<
+      num_warehouses_per_node << "," << num_users <<
       "," << "N/A" << "," << num_tx << "," << "N/A" << "," <<
       local_workload_ratio_str << "," << shared_lock_ratio_str << "," <<
       min_backoff_time << "," <<

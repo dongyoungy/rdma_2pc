@@ -23,7 +23,7 @@ TPCCLockSimulator::TPCCLockSimulator(LockManager* manager, uint32_t id, uint32_t
   default_backoff_time_              = min_backoff_time;
   current_backoff_time_              = default_backoff_time_;
   max_backoff_time_                  = max_backoff_time;
-  local_manager_id_                  = manager_->GetID();
+  local_manager_id_                  = manager_->GetRank();
   max_request_size_                  = 128;
   is_tx_failed_                      = false;
   total_num_locks_                   = 0;
@@ -41,6 +41,8 @@ TPCCLockSimulator::TPCCLockSimulator(LockManager* manager, uint32_t id, uint32_t
   last_seq_no_                       = 0;
   seq_count_                         = 0;
   is_backing_off_                    = false;
+  is_tx_failed_                      = false;
+  is_tx_timed_out_                   = false;
   sleep_time_                        = sleep_time;
   think_time_                        = think_time;
   workload_type_                     = workload_type;
@@ -53,6 +55,7 @@ void TPCCLockSimulator::Run() {
   backoff_seed_ += id_;
   srand48(seed_+id_);
   is_tx_failed_ = false;
+  is_tx_timed_out_ = false;
 
   tpcc_lock_gen_ = new TPCCLockGen(workload_type_, home_id_, num_manager_, seed_, NULL);
 
@@ -168,7 +171,8 @@ void TPCCLockSimulator::SubmitLockRequest() {
   if (current_request_idx_ < request_size_) {
     if (verbose_) {
       pthread_mutex_lock(&PRINT_MUTEX);
-      cout << "(REMOTE) Simulator " << id_ << ": " << "Sending lock request #" <<
+      cout << "(REMOTE) Simulator " << local_manager_id_ << "@" <<
+        id_ << ": " << "Sending lock request #" <<
         current_request_idx_ <<
         " at LM " <<
         requests_[current_request_idx_]->lm_id <<
@@ -210,7 +214,7 @@ void TPCCLockSimulator::SubmitLockRequest() {
         LockManager::TASK_LOCK,
         requests_[last_request_idx_]->lock_type,
         requests_[last_request_idx_]->obj_index,
-        LockManager::RESULT_FAILURE
+        RESULT_LOCAL_FAILURE
         );
   }
 }
@@ -227,7 +231,8 @@ void TPCCLockSimulator::SubmitUnlockRequest() {
   if (current_request_idx_ >= 0) {
     if (verbose_) {
       pthread_mutex_lock(&PRINT_MUTEX);
-      cout << "(REMOTE) Simulator " << id_ << ": " << "Sending unlock request #" <<
+      cout << "(REMOTE) Simulator " << local_manager_id_ << "@" <<
+        id_ << ": " << "Sending unlock request #" <<
         current_request_idx_ <<
         " at LM " <<
         requests_[current_request_idx_]->lm_id <<

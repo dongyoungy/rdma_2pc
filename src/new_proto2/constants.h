@@ -31,6 +31,7 @@ namespace rdma { namespace proto {
   static const int RESULT_RETRY   = 2;
   static const int RESULT_QUEUED  = 3;
   static const int RESULT_SUCCESS_FROM_QUEUED = 4;
+  static const int RESULT_LOCAL_FAILURE = 5;
 
   static const int RULE_FAIL = 0;
   static const int RULE_POLL = 1;
