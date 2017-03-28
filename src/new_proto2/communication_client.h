@@ -15,8 +15,10 @@ class CommunicationClient : public Client {
         int remote_lm_id);
     ~CommunicationClient();
 
-    int GrantLock(int seq_no, int user_id, int home_id, int obj_index, int lock_type);
-    int RejectLock(int seq_no, int user_id, int home_id, int obj_index, int lock_type);
+    int GrantLock(int seq_no, int target_node_id, int owner_user_id,
+        int obj_index, int lock_type);
+    int RejectLock(int seq_no, int target_node_id, int owner_user_id,
+        int obj_index, int lock_type);
 
   protected:
     pthread_mutex_t communication_mutex_;

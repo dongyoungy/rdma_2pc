@@ -71,8 +71,8 @@ int NotifyLockClient::ReadForUnlock(Context* context, int seq_no, uint32_t user_
   return 0;
 }
 
-int NotifyLockClient::UnlockRemotely(Context* context, int seq_no, uint32_t user_id, int lock_type,
-    int obj_index, bool is_undo) {
+int NotifyLockClient::UnlockRemotely(Context* context, int seq_no, uint32_t user_id,
+    int lock_type, int obj_index, bool is_undo) {
 
   uint32_t exclusive, shared;
   struct ibv_exp_send_wr send_work_request;
@@ -103,14 +103,14 @@ int NotifyLockClient::UnlockRemotely(Context* context, int seq_no, uint32_t user
 
   if (lock_type == SHARED) {
     exclusive = 0;
-    shared = user_id;
+    shared = local_owner_bitvector_id_;
     uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
     new_value = (-1) * new_value; // need to subtract for unlock
     send_work_request.wr.atomic.compare_add = new_value;
   } else if (lock_type == EXCLUSIVE) {
     exclusive = 0;
     shared = 0;
-    uint64_t new_value = ((uint64_t)user_id) << 32 | shared;
+    uint64_t new_value = ((uint64_t)local_owner_bitvector_id_) << 32 | shared;
     new_value = (-1) * new_value; // need to subtract for unlock
     send_work_request.wr.atomic.compare_add = new_value;
   }
@@ -235,10 +235,10 @@ int NotifyLockClient::NotifyWaitingNodes(LockRequest* request, uint64_t value) {
     sz = FindNodePositions(exclusive, nodes);
     for (int i = 0; i < sz; ++i) {
       uint32_t node_id = (uint32_t)pow(2.0, nodes[i]);
-      uint32_t home_id = LockManager::user_to_node_map_[nodes[i]];
+      //uint32_t home_id = LockManager::user_to_node_map_[nodes[i]];
       local_manager_->GrantLock(request->seq_no,
-          noded, remote_lm_id_, home_id,
-          EXCLUSIVE, request->obj_index);
+          remote_lm_id_, nodes[i], request->obj_index,
+          EXCLUSIVE);
     }
   } else {
     // notify nodes for shared lock.
@@ -246,10 +246,13 @@ int NotifyLockClient::NotifyWaitingNodes(LockRequest* request, uint64_t value) {
     sz = FindNodePositions(shared, nodes);
     for (int i = 0; i < sz; ++i) {
       uint32_t node_id = (uint32_t)pow(2.0, nodes[i]);
-      uint32_t home_id = LockManager::user_to_node_map_[nodes[i]];
+      //uint32_t home_id = LockManager::user_to_node_map_[nodes[i]];
       local_manager_->GrantLock(request->seq_no,
-          node_id, remote_lm_id_, home_id,
-          SHARED, request->obj_index);
+          remote_lm_id_, nodes[i], request->obj_index,
+          SHARED);
+      //local_manager_->GrantLock(request->seq_no,
+          //node_id, remote_lm_id_, home_id,
+          //SHARED, request->obj_index);
     }
 
     // notify nodes for exclusive lock.
@@ -257,10 +260,13 @@ int NotifyLockClient::NotifyWaitingNodes(LockRequest* request, uint64_t value) {
     sz = FindNodePositions(exclusive, nodes);
     for (int i = 0; i < sz; ++i) {
       uint32_t node_id = (uint32_t)pow(2.0, nodes[i]);
-      uint32_t home_id = LockManager::user_to_node_map_[nodes[i]];
+      //uint32_t home_id = LockManager::user_to_node_map_[nodes[i]];
       local_manager_->GrantLock(request->seq_no,
-          node_id, remote_lm_id_, home_id,
-          EXCLUSIVE, request->obj_index);
+          remote_lm_id_, nodes[i], request->obj_index,
+          EXCLUSIVE);
+      //local_manager_->GrantLock(request->seq_no,
+          //node_id, remote_lm_id_, home_id,
+          //EXCLUSIVE, request->obj_index);
     }
   }
 

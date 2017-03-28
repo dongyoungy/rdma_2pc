@@ -15,7 +15,7 @@ CommunicationClient::~CommunicationClient() {
 
 }
 
-int CommunicationClient::GrantLock(int seq_no, int user_id, int home_id,
+int CommunicationClient::GrantLock(int seq_no, int target_node_id, int owner_user_id,
     int obj_index, int lock_type) {
   while (is_waiting_ack_) {
     usleep(5); // busy-wait
@@ -27,9 +27,8 @@ int CommunicationClient::GrantLock(int seq_no, int user_id, int home_id,
   msg->seq_no         = seq_no;
   msg->lock_type      = lock_type;
   msg->obj_index      = obj_index;
-  msg->target_node_id = local_owner_id_;
-  msg->owner_node_id  = home_id;
-  msg->owner_user_id  = user_id;
+  msg->target_node_id = target_node_id;
+  msg->owner_user_id  = owner_user_id;
 
   //pthread_mutex_lock(&PRINT_MUTEX);
   //cout << "Grant: " << msg->seq_no << "," << msg->user_id << "," <<
@@ -47,7 +46,7 @@ int CommunicationClient::GrantLock(int seq_no, int user_id, int home_id,
   return 0;
 }
 
-int CommunicationClient::RejectLock(int seq_no, int user_id, int home_id,
+int CommunicationClient::RejectLock(int seq_no, int target_node_id, int owner_user_id,
     int obj_index, int lock_type) {
   pthread_mutex_lock(&communication_mutex_);
   Message* msg = context_->send_message_buffer->GetMessage();
@@ -56,9 +55,8 @@ int CommunicationClient::RejectLock(int seq_no, int user_id, int home_id,
   msg->seq_no         = seq_no;
   msg->lock_type      = lock_type;
   msg->obj_index      = obj_index;
-  msg->target_node_id = local_owner_id_;
-  msg->owner_node_id  = home_id;
-  msg->owner_user_id  = user_id;
+  msg->target_node_id = target_node_id;
+  msg->owner_user_id  = owner_user_id;
 
   if (SendMessage(context_)) {
     cerr << "GrantLock(): SendMessage() failed." << endl;

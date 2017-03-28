@@ -710,14 +710,16 @@ int LockManager::Unlock(int seq_no, uint32_t user_id, uint32_t manager_id, int l
   return ret;
 }
 
-int LockManager::GrantLock(int seq_no, uint32_t user_id, uint32_t home_id, uint32_t waiting_id,
-    int lock_type, int obj_index) {
+int LockManager::GrantLock(int seq_no, int target_node_id, int owner_node_id, int obj_index,
+        int lock_type) {
   //uint64_t waiting_id = user_to_home_map_[user_id];
   //CommunicationClient* client = communication_clients_[MAX_USER*waiting_id+user_id];
-  CommunicationClient* client = communication_clients_[waiting_id];
+  CommunicationClient* client = communication_clients_[owner_node_id];
   //cerr << "GrantLock():" << rank_ << "," << waiting_id << "," << home_id << "," <<
     //user_id <<endl;
-  return client->GrantLock(seq_no, user_id, home_id, obj_index, lock_type);
+  int user_id = queued_user_[obj_index];
+  queued_user_[obj_index] = -1;
+  return client->GrantLock(seq_no, target_node_id, user_id, obj_index, lock_type);
 }
 
 int LockManager::RejectLock(int seq_no, uint32_t user_id, uint32_t home_id, int lock_type,
@@ -1388,6 +1390,11 @@ int LockManager::NotifyLockRequestResult(int seq_no, uint32_t user_id, int lock_
   LockSimulator* user = user_map[user_id];
   user->NotifyResult(seq_no, LockManager::TASK_LOCK, lock_type, obj_index, result);
 
+  // keep the user id if it has been queued
+  if (result == RESULT_QUEUED) {
+    queued_user_[obj_index] = user_id;
+  }
+
   return 0;
 }
 
@@ -1397,6 +1404,7 @@ int LockManager::NotifyUnlockRequestResult(int seq_no, uint32_t user_id, int loc
   llm_->Unlock(target_node_id, obj_index, lock_type, result);
   LockSimulator* user = user_map[user_id];
   user->NotifyResult(seq_no, LockManager::TASK_UNLOCK, lock_type, obj_index, result);
+  queued_user_[obj_index] = -1;
 
   return 0;
 }

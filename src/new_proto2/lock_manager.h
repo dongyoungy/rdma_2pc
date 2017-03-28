@@ -14,6 +14,7 @@
 #include <rdma/rdma_cma.h>
 #include <iostream>
 #include <vector>
+#include <unordered_map>
 #include <map>
 #include <set>
 
@@ -46,8 +47,8 @@ class LockManager {
     int Unlock(int seq_no, uint32_t user_id, uint32_t manager_id, int lock_type, int obj_index);
     int LockLocalDirect(uint32_t user_id, int lock_type, int obj_index);
     int UnlockLocalDirect(uint32_t user_id, int lock_type, int obj_index);
-    int GrantLock(int seq_no, uint32_t user_id, uint32_t manager_id, uint32_t waiting_id,
-        int lock_type, int obj_index);
+    int GrantLock(int seq_no, int target_node_id, int owner_node_id, int obj_index,
+        int lock_type);
     int RejectLock(int seq_no, uint32_t user_id, uint32_t manager_id,
         int lock_type, int obj_index);
     int UpdateLockModeTable(int manager_id, int mode);
@@ -221,6 +222,8 @@ class LockManager {
 
     map<uint64_t, CommunicationClient*> communication_clients_;
     vector<pthread_t*> communication_client_threads_;
+
+    unordered_map<uint32_t, int> queued_user_; // map from obj index to the queued user
 
     // vector for actual user/clients/simulators
     vector<LockSimulator*> users;
