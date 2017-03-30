@@ -184,6 +184,7 @@ void TPCCLockSimulator::SubmitLockRequest() {
       //clock_gettime(CLOCK_MONOTONIC, &start_lock_);
     requests_[current_request_idx_]->task = TASK_LOCK;
     requests_[current_request_idx_]->seq_no = seq_count_;
+    last_task_ = TASK_LOCK;
     last_seq_no_ = seq_count_;
     ++seq_count_;
     last_request_idx_ = current_request_idx_;
@@ -245,6 +246,7 @@ void TPCCLockSimulator::SubmitUnlockRequest() {
     pthread_mutex_unlock(&time_mutex_);
     requests_[current_request_idx_]->task = TASK_UNLOCK;
     requests_[current_request_idx_]->seq_no = seq_count_;
+    last_task_ = TASK_UNLOCK;
     last_seq_no_ = seq_count_;
     ++seq_count_;
     last_request_idx_ = current_request_idx_;
