@@ -42,8 +42,8 @@ namespace rdma { namespace proto {
   static const int POLL_RETRY = 3;
 
   static const int MAX_MESSAGE_BUFFER_SIZE = 4096;
-  static const int MAX_LOCK_REQUESTS = 64;
-  static const int MAX_LOCAL_THREADS = 4096;
+  //static const int MAX_LOCK_REQUESTS = 64;
+  static const int MAX_LOCAL_THREADS = 128;
 
   static const int ERR_MORE_THAN_ONE_NODE = 1;
 
