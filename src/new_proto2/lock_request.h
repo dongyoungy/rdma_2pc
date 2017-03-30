@@ -11,7 +11,7 @@ struct LockRequest {
   bool is_undo;
   uint32_t owner_node_id;
   uint32_t user_id;
-  uint32_t lm_id;
+  int lm_id;
   int obj_index;
   int lock_type; // shared, exclusive
   int task; // lock, unlock

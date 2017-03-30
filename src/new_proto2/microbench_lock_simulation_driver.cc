@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
 
   int num_nodes, rank;
   int num_servers, num_clients;
-  int server_start_idx, client_start_idx;
+  int client_start_idx;
 
   MPI_Comm_size(MPI_COMM_WORLD, &num_nodes);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -76,7 +76,6 @@ int main(int argc, char** argv) {
 
   num_servers = num_nodes;
   num_clients = num_nodes;
-  server_start_idx = 0;
   client_start_idx = 0;
 
   bool transaction_delay = (transaction_delay_num == 0) ? false : true;
@@ -192,7 +191,7 @@ int main(int argc, char** argv) {
     }
 
     for (int j=0;j<num_users_per_manager;++j) {
-      uint32_t id = j;
+      uint32_t id = j + 1;
       bool verbose = false;
       MicrobenchLockSimulator* simulator = new MicrobenchLockSimulator(managers[i],
           id, // id
@@ -227,9 +226,8 @@ int main(int argc, char** argv) {
   //}
 
   MPI_Barrier(MPI_COMM_WORLD);
-  sleep(3);
 
-  for (int i = 0; i < managers.size(); ++i) {
+  for (unsigned int i = 0; i < managers.size(); ++i) {
     if (managers[i]->InitializeLockClients()) {
       cerr << "InitializeLockClients() failed." << endl;
       exit(-1);
@@ -246,7 +244,7 @@ int main(int argc, char** argv) {
 
   time(&start_time);
 
-  for (int i=0;i<users.size();++i) {
+  for (unsigned int i=0;i<users.size();++i) {
     pthread_t lock_simulator_thread;
     if (pthread_create(&lock_simulator_thread, NULL, &RunLockSimulator,
           (void*)users[i])) {
@@ -274,7 +272,7 @@ int main(int argc, char** argv) {
 
   bool simulator_done = false;
   while (true) {
-    for (int i=0;i<users.size();++i) {
+    for (unsigned int i=0;i<users.size();++i) {
       tx_done[time_taken2] += users[i]->GetCount();
       locks_done[time_taken2] += users[i]->GetTotalNumLockSuccess();
       if (users[i]->GetState() == LockSimulator::STATE_DONE) {
@@ -288,7 +286,7 @@ int main(int argc, char** argv) {
   }
   time_taken3 = time_taken2;
 
-  for (int i=0;i<users.size();++i) {
+  for (unsigned int i=0;i<users.size();++i) {
     LockSimulator* simulator = users[i];
     while (simulator->GetState() != LockSimulator::STATE_DONE) {
       ++time_taken2;
@@ -432,7 +430,7 @@ int main(int argc, char** argv) {
   }
 
   if (rank >= client_start_idx) {
-    for (int j=0;j<users.size();++j) {
+    for (unsigned int j=0;j<users.size();++j) {
       LockSimulator* simulator = users[j];
       local_sum += simulator->GetTotalNumLocks();
       local_unlock_sum += simulator->GetTotalNumUnlocks();
@@ -448,7 +446,7 @@ int main(int argc, char** argv) {
         local_95_lock_time += simulator->Get95PercentileLockTime();
       }
     }
-    for (int j=0;j<users.size();++j) {
+    for (unsigned int j=0;j<users.size();++j) {
       LockSimulator* simulator = users[j];
       local_time_taken_sum += simulator->GetTimeTaken();
     }
@@ -590,7 +588,7 @@ int main(int argc, char** argv) {
       MPI_COMM_WORLD);
   global_time_taken_avg = global_time_taken_sum / (double)num_users;
   if (rank >= client_start_idx) {
-    for (int j=0;j<users.size();++j) {
+    for (unsigned int j=0;j<users.size();++j) {
       double time = users[j]->GetTimeTaken();
       local_time_taken_diff += (time - global_time_taken_avg) * (time - global_time_taken_avg);
     }
@@ -736,11 +734,13 @@ int main(int argc, char** argv) {
 void* RunLockManager(void* args) {
   LockManager* lock_manager = (LockManager*)args;
   lock_manager->Run();
+  return NULL;
 }
 
 void* RunLockSimulator(void* args) {
   LockSimulator* user = (LockSimulator*)args;
   user->Run();
+  return NULL;
 }
 
 void* MeasureCPUUsage(void* args) {
@@ -758,12 +758,13 @@ void* MeasureCPUUsage(void* args) {
   struct tms timeSample;
   char line[128];
 
-  lastCPU = times(&timeSample);
-  lastSysCPU = timeSample.tms_stime;
+  lastCPU     = times(&timeSample);
+  lastSysCPU  = timeSample.tms_stime;
   lastUserCPU = timeSample.tms_utime;
 
-  file = fopen("/proc/cpuinfo", "r");
+  file          = fopen("/proc/cpuinfo", "r");
   numProcessors = 0;
+  percent       = 0;
   while(fgets(line, 128, file) != NULL){
     if (strncmp(line, "processor", 9) == 0) numProcessors++;
   }
@@ -794,4 +795,5 @@ void* MeasureCPUUsage(void* args) {
     //cout << percent << endl;
     sleep(1);
   }
+  return NULL;
 }

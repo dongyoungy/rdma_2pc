@@ -138,7 +138,7 @@ void MicrobenchLockSimulator::Generate() {
   requests_[0]->task      = TASK_LOCK;
 
   obj_index_set_.clear();
-  while (obj_index_set_.size() != request_size_ - 1) {
+  while (obj_index_set_.size() != (size_t) request_size_ - 1) {
     obj_index_set_.insert(num_hot_objects_ +
         (rand_r(&seed_) % (num_objects_ - num_hot_objects_)));
   }
@@ -174,15 +174,9 @@ void MicrobenchLockSimulator::CreateLockRequests() {
   }
 
   struct timespec before, after;
-  double time_taken;
 
   if (!is_tx_failed_) {
-    clock_gettime(CLOCK_MONOTONIC, &before);
     Generate();
-    clock_gettime(CLOCK_MONOTONIC, &after);
-    time_taken = ((double)after.tv_sec * 1e+9 +
-        (double)after.tv_nsec) - ((double)before.tv_sec * 1e+9 +
-          (double)before.tv_nsec);
     if (measure_lock_time_)
       clock_gettime(CLOCK_MONOTONIC, &start_lock_);
   } else {

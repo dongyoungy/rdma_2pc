@@ -403,10 +403,10 @@ int LockClient::HandleSharedToExclusive(LockRequest* request) {
       break;
     default:
       cerr << "Unsupported Shared -> Exclusive rule: " <<  rule << endl;
-      return -1;
+      return FUNC_FAIL;
   }
 
-  return 0;
+  return FUNC_SUCCESS;
 }
 
 // Handle Exclusive -> Shared
@@ -446,8 +446,9 @@ int LockClient::HandleExclusiveToShared(LockRequest* request) {
       break;
     default:
       cerr << "Unsupported Exclusive -> Shared rule: " <<  rule << endl;
-      return -1;
+      return FUNC_FAIL;
   }
+  return FUNC_SUCCESS;
 }
 
 // Handle Exclusive -> Exclusive
@@ -488,9 +489,9 @@ int LockClient::HandleExclusiveToExclusive(LockRequest* request) {
       break;
     default:
       cerr << "Unsupported Exclusive -> Exclusive rule: " <<  rule << endl;
-      return -1;
+      return FUNC_FAIL;
   }
-  return 0;
+  return FUNC_SUCCESS;
 }
 
 int LockClient::UndoLocking(Context* context, LockRequest* request, bool polling) {
@@ -503,14 +504,14 @@ int LockClient::UndoLocking(Context* context, LockRequest* request, bool polling
       request->obj_index,
       true, polling
       );
-  return 0;
+  return FUNC_SUCCESS;
 }
 
 int LockClient::PollSharedToExclusive(LockRequest* request) {
   ++context_->retry;
   if (context_->retry > LockManager::GetPollRetry()) {
     this->UndoLocking(context_, request);
-    return 0;
+    return FUNC_SUCCESS;
   }
 
   int rule = LockManager::GetSharedExclusiveRule();
@@ -525,16 +526,16 @@ int LockClient::PollSharedToExclusive(LockRequest* request) {
       break;
     default:
       cerr << "Unsupported Shared -> Exclusive rule for polling: " <<  rule << endl;
-      return -1;
+      return FUNC_FAIL;
   }
-  return 0;
+  return FUNC_SUCCESS;
 }
 
 int LockClient::PollExclusiveToShared(LockRequest* request) {
   ++context_->retry;
   if (context_->retry > LockManager::GetPollRetry()) {
     this->UndoLocking(context_, request);
-    return 0;
+    return FUNC_SUCCESS;
   }
   int rule = LockManager::GetExclusiveSharedRule();
   uint32_t value = *request->read_buffer;
@@ -579,9 +580,9 @@ int LockClient::PollExclusiveToShared(LockRequest* request) {
       break;
     default:
       cerr << "Unsupported Exclusive -> Shared rule for polling: " <<  rule << endl;
-      return -1;
+      return FUNC_FAIL;
   }
-  return 0;
+  return FUNC_SUCCESS;
 }
 
 int LockClient::PollExclusiveToExclusive(LockRequest* request) {
@@ -589,7 +590,7 @@ int LockClient::PollExclusiveToExclusive(LockRequest* request) {
   ++context_->retry;
   if (context_->retry > LockManager::GetPollRetry() && rule == RULE_QUEUE) {
     this->UndoLocking(context_, request);
-    return 0;
+    return FUNC_SUCCESS;
   }
   uint32_t value = *request->read_buffer;
   switch (rule) {
@@ -633,9 +634,9 @@ int LockClient::PollExclusiveToExclusive(LockRequest* request) {
       break;
     default:
       cerr << "Unsupported Exclusive -> Exclusive rule for polling: " <<  rule << endl;
-      return -1;
+      return FUNC_FAIL;
   }
-  return 0;
+  return FUNC_SUCCESS;
 }
 
 // Requests lock mode of lock manager via IBV_WR_SEND op.
@@ -650,10 +651,10 @@ int LockClient::SendLockModeRequest(Context* context) {
 
   if (SendMessage(context)) {
     cerr << "SendLockModeRequest(): SendMessage() failed." << endl;
-    return -1;
+    return FUNC_FAIL;
   }
 
-  return 0;
+  return FUNC_SUCCESS;
 }
 
 // Requests lock table MR region of from lock manager via IBV_WR_SEND op.
@@ -692,6 +693,7 @@ int LockClient::RequestLock(int seq_no, uint32_t user_id, int lock_type, int obj
   } else {
     cerr << "RequestLock(): Unknown lock mode: " << lock_mode << endl;
   }
+  return FUNC_SUCCESS;
 }
 
 int LockClient::RequestUnlock(int seq_no, uint32_t user_id, int lock_type, int obj_index,
@@ -706,6 +708,7 @@ int LockClient::RequestUnlock(int seq_no, uint32_t user_id, int lock_type, int o
   } else {
     cerr << "RequestUnlock(): Unknown lock mode: " << lock_mode << endl;
   }
+  return FUNC_SUCCESS;
 }
 
 int LockClient::LockRemotely(Context* context, int seq_no, uint32_t user_id, int lock_type,

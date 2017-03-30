@@ -164,7 +164,7 @@ int LockManager::InitializeLockClients() {
   int ret = 0;
   for (int i = 0; i < num_manager_; ++i) {
     //for (int j = 0; j < 1; ++j) {
-    for (int j = 0; j < users.size(); ++j) {
+    for (unsigned int j = 0; j < users.size(); ++j) {
       LockSimulator* user      = users[j];
       pthread_t* client_thread = new pthread_t;
       LockClient* client;
@@ -264,6 +264,8 @@ int LockManager::PrintInfo() {
 
   fclose(ip_file);
   fclose(port_file);
+
+  return FUNC_SUCCESS;
 }
 
 int LockManager::GetInfinibandIP(string& ip_address) {
@@ -603,6 +605,7 @@ int LockManager::NotifyLockModeAll() {
     Context* context = *it;
     NotifyLockMode(context);
   }
+  return FUNC_SUCCESS;
 }
 
 int LockManager::NotifyLockMode(Context* context) {
@@ -1055,7 +1058,7 @@ int LockManager::UnlockLocallyWithRetry(Context* context, Message* message) {
     return -1;
   }
 
-  int lock_result;
+  int lock_result        = RESULT_FAILURE;
   int seq_no             = message->seq_no;
   uint32_t owner_node_id = message->owner_node_id;
   uint32_t owner_user_id = message->owner_user_id;
@@ -1165,7 +1168,7 @@ int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
   shared    = (uint32_t)(*lock_object);
 
   // remove it from the queue as well if exists
-  int num_elem = queue->RemoveAllElements(seq_no, owner_node_id, owner_user_id, lock_type);
+  int num_elem = queue->RemoveAllElements(owner_node_id, lock_type);
 
   // unlocking shared lock
   if (lock_type == SHARED) {
@@ -1342,7 +1345,7 @@ int LockManager::TryLock(Context* context, Message* message) {
 
 
 int LockManager::UnlockLocalDirect(uint32_t user_id, int lock_type, int obj_index) {
-  int lock_result;
+  int lock_result = RESULT_FAILURE;
   uint64_t* lock_object = (lock_table_+obj_index);
   uint32_t exclusive, shared;
   exclusive = (uint32_t)((*lock_object)>>32);
@@ -1379,13 +1382,6 @@ int LockManager::UnlockLocalDirect(uint32_t user_id, int lock_type, int obj_inde
   return lock_result;
 }
 
-int LockManager::UpdateLockTableLocal(Context* context) {
-  return 0;
-}
-
-int LockManager::UpdateLockTableRemote(Context* context) {
-  return 0;
-}
 
 int LockManager::NotifyLockRequestResult(int seq_no, uint32_t user_id, int lock_type,
     int target_node_id, int obj_index, int result) {
@@ -1587,7 +1583,7 @@ int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
         LockLocallyWithQueue(context, message);
       } else {
         cerr << "Incompatible proxy lock mode: " << current_lock_mode_ << endl;
-        return -1;
+        return FUNC_FAIL;
       }
     } else if (message->type == Message::UNLOCK_REQUEST) {
       if (current_lock_mode_ == LOCK_PROXY_RETRY) {
@@ -1596,7 +1592,7 @@ int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
         UnlockLocallyWithQueue(context, message);
       } else {
         cerr << "Incompatible proxy lock mode: " << current_lock_mode_ << endl;
-        return -1;
+        return FUNC_FAIL;
       }
     } else if (message->type == Message::GRANT_LOCK) {
       if (current_lock_mode_ == LOCK_REMOTE_NOTIFY) {
@@ -1619,14 +1615,15 @@ int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
             );
       } else {
         cerr << "Unknown lock mode for GrantLock Message: " << current_lock_mode_ << endl;
-        return -1;
+        return FUNC_FAIL;
       }
     } else {
       cerr << "Unknown message type: " << message->type
         << endl;
-      return -1;
+      return FUNC_FAIL;
     }
   }
+  return FUNC_SUCCESS;
 }
 
 int LockManager::RegisterContext(Context* context) {
@@ -1884,6 +1881,7 @@ void* LockManager::PollLocalWorkQueue(void* arg) {
       }
     }
   }
+  return NULL;
 }
 
 int LockManager::GetLockMode() const {
@@ -1893,6 +1891,7 @@ int LockManager::GetLockMode() const {
 void* LockManager::RunLockClient(void* args) {
   Client* client = static_cast<Client*>(args);
   client->Run();
+  return NULL;
 }
 
 

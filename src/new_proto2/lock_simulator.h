@@ -124,6 +124,8 @@ class LockSimulator {
     int last_request_idx_;
     int current_request_idx_;
     int max_backoff_time_;
+    int request_size_;
+    int max_request_size_;
     int default_backoff_time_;
     int current_backoff_time_;
     int retry_;
@@ -136,8 +138,6 @@ class LockSimulator {
     unsigned int backoff_seed_;
     unsigned int time_out_seed_;
     uint64_t last_count_;
-    uint64_t request_size_;
-    uint64_t max_request_size_;
     uint64_t count_;
     uint64_t total_num_locks_;
     uint64_t total_num_unlocks_;
@@ -177,7 +177,7 @@ class LockSimulator {
     int local_lock_count_;
     int local_unlock_count_;
     uint64_t count_limit_;
-    int num_tx_;
+    uint64_t num_tx_;
   private:
     void SubmitLockRequestLocal();
     void SubmitUnlockRequestLocal();

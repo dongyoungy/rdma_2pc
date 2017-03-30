@@ -40,7 +40,7 @@ int main(int argc, char** argv) {
 
   int num_nodes, rank;
   int num_servers, num_clients;
-  int server_start_idx, group1_start_idx, group2_start_idx;
+  int group1_start_idx, group2_start_idx;
   int group1_users_per_client, group2_users_per_client;
   int group1_size, group2_size;
 
@@ -98,7 +98,6 @@ int main(int argc, char** argv) {
   } else {
     num_servers             = num_nodes - 4;
     num_clients             = 4;
-    server_start_idx        = 0;
     group1_start_idx        = num_nodes - 4;
     group2_start_idx        = num_nodes - 2;
     group1_users_per_client = (num_users - 2) / 2;
@@ -324,7 +323,7 @@ int main(int argc, char** argv) {
   time(&start_time);
 
   if (rank >= group1_start_idx) {
-    for (int i=0;i<users.size();++i) {
+    for (unsigned int i=0;i<users.size();++i) {
       pthread_t lock_simulator_thread;
       if (pthread_create(&lock_simulator_thread, NULL, &RunLockSimulator,
             (void*)users[i])) {
@@ -353,7 +352,7 @@ int main(int argc, char** argv) {
 
   bool simulator_done = false;
   while (rank >= group1_start_idx) {
-    for (int i=0;i<users.size();++i) {
+    for (unsigned int i=0;i<users.size();++i) {
       tx_done[time_taken2] += users[i]->GetCount();
       locks_done[time_taken2] += users[i]->GetTotalNumLockSuccess();
       if (users[i]->GetState() == LockSimulator::STATE_DONE) {
@@ -371,7 +370,7 @@ int main(int argc, char** argv) {
   }
   time_taken3 = time_taken2;
 
-  for (int i=0;i<users.size();++i) {
+  for (unsigned int i=0;i<users.size();++i) {
     LockSimulator* simulator = users[i];
     while (simulator->GetState() != LockSimulator::STATE_DONE) {
       ++time_taken2;
@@ -524,7 +523,7 @@ int main(int argc, char** argv) {
   }
 
   if (rank >= group1_start_idx && rank < group2_start_idx) {
-    for (int j=0;j<users.size();++j) {
+    for (unsigned int j=0;j<users.size();++j) {
       LockSimulator* simulator = users[j];
       group1_local_sum += simulator->GetTotalNumLocks();
       group1_local_unlock_sum += simulator->GetTotalNumUnlocks();
@@ -542,7 +541,7 @@ int main(int argc, char** argv) {
           group1_local_95_lock_time = simulator->Get95PercentileLockTime();
       }
     }
-    for (int j=0;j<users.size();++j) {
+    for (unsigned int j=0;j<users.size();++j) {
       LockSimulator* simulator = users[j];
       group1_local_time_taken_sum += simulator->GetTimeTaken();
     }
@@ -663,7 +662,7 @@ int main(int argc, char** argv) {
       MPI_COMM_WORLD);
   group1_global_time_taken_avg = group1_global_time_taken_sum / (double)group1_size;
   if (rank >= group1_start_idx && rank < group2_start_idx) {
-    for (int j=0;j<users.size();++j) {
+    for (unsigned int j=0;j<users.size();++j) {
       double time = users[j]->GetTimeTaken();
       group1_local_time_taken_diff += (time - group1_global_time_taken_avg) * (time - group1_global_time_taken_avg);
     }
@@ -940,7 +939,7 @@ int main(int argc, char** argv) {
   }
 
   if (rank >= group2_start_idx) {
-    for (int j=0;j<users.size();++j) {
+    for (unsigned int j=0;j<users.size();++j) {
       LockSimulator* simulator = users[j];
       group2_local_sum += simulator->GetTotalNumLocks();
       group2_local_unlock_sum += simulator->GetTotalNumUnlocks();
@@ -958,7 +957,7 @@ int main(int argc, char** argv) {
           group2_local_95_lock_time = simulator->Get95PercentileLockTime();
       }
     }
-    for (int j=0;j<users.size();++j) {
+    for (unsigned int j=0;j<users.size();++j) {
       LockSimulator* simulator = users[j];
       group2_local_time_taken_sum += simulator->GetTimeTaken();
     }
@@ -1079,7 +1078,7 @@ int main(int argc, char** argv) {
       MPI_COMM_WORLD);
   group2_global_time_taken_avg = group2_global_time_taken_sum / (double)group2_size;
   if (rank >= group2_start_idx) {
-    for (int j=0;j<users.size();++j) {
+    for (unsigned int j=0;j<users.size();++j) {
       double time = users[j]->GetTimeTaken();
       group2_local_time_taken_diff += (time - group2_global_time_taken_avg) * (time - group2_global_time_taken_avg);
     }
@@ -1353,7 +1352,7 @@ int main(int argc, char** argv) {
   }
 
   if (rank >= group1_start_idx) {
-    for (int j=0;j<users.size();++j) {
+    for (unsigned int j=0;j<users.size();++j) {
       LockSimulator* simulator = users[j];
       local_sum += simulator->GetTotalNumLocks();
       local_unlock_sum += simulator->GetTotalNumUnlocks();
@@ -1371,7 +1370,7 @@ int main(int argc, char** argv) {
           local_95_lock_time = simulator->Get95PercentileLockTime();
       }
     }
-    for (int j=0;j<users.size();++j) {
+    for (unsigned int j=0;j<users.size();++j) {
       LockSimulator* simulator = users[j];
       local_time_taken_sum += simulator->GetTimeTaken();
     }
@@ -1511,7 +1510,7 @@ int main(int argc, char** argv) {
       MPI_COMM_WORLD);
   global_time_taken_avg = global_time_taken_sum / (double)num_users;
   if (rank >= group1_start_idx) {
-    for (int j=0;j<users.size();++j) {
+    for (unsigned int j=0;j<users.size();++j) {
       double time = users[j]->GetTimeTaken();
       local_time_taken_diff += (time - global_time_taken_avg) * (time - global_time_taken_avg);
     }
@@ -1656,11 +1655,13 @@ int main(int argc, char** argv) {
 void* RunLockManager(void* args) {
   LockManager* lock_manager = (LockManager*)args;
   lock_manager->Run();
+  return NULL;
 }
 
 void* RunLockSimulator(void* args) {
   LockSimulator* user = (LockSimulator*)args;
   user->Run();
+  return NULL;
 }
 
 void* MeasureCPUUsage(void* args) {
@@ -1678,12 +1679,13 @@ void* MeasureCPUUsage(void* args) {
   struct tms timeSample;
   char line[128];
 
-  lastCPU = times(&timeSample);
-  lastSysCPU = timeSample.tms_stime;
+  lastCPU     = times(&timeSample);
+  lastSysCPU  = timeSample.tms_stime;
   lastUserCPU = timeSample.tms_utime;
 
-  file = fopen("/proc/cpuinfo", "r");
+  file          = fopen("/proc/cpuinfo", "r");
   numProcessors = 0;
+  percent       = 0;
   while(fgets(line, 128, file) != NULL){
     if (strncmp(line, "processor", 9) == 0) numProcessors++;
   }
@@ -1714,4 +1716,5 @@ void* MeasureCPUUsage(void* args) {
     //cout << percent << endl;
     sleep(1);
   }
+  return NULL;
 }

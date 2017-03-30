@@ -486,9 +486,9 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     LockRequest* request = (LockRequest *)work_completion->wr_id;
     uint64_t value = *request->read_buffer2;
     uint64_t prev_value;
-    uint32_t exclusive, shared;
+    uint32_t exclusive;
     exclusive = (uint32_t)((value)>>32);
-    shared = (uint32_t)value;
+    //shared = (uint32_t)value;
     if (request->task == TASK_READ) {
       // Read for retrying lock
       if (wait_seq_no_ == -1) {

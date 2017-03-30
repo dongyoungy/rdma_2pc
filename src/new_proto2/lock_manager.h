@@ -205,8 +205,6 @@ class LockManager {
     int TryLock(Context* context, Message* message);
     int DisableRemoteAtomicAccess();
     int EnableRemoteAtomicAccess();
-    int UpdateLockTableLocal(Context* context);
-    int UpdateLockTableRemote(Context* context);
     int HandleWorkCompletion(struct ibv_wc* work_completion);
     int HandleEvent(struct rdma_cm_event* event);
     int HandleConnectRequest(struct rdma_cm_id* id);

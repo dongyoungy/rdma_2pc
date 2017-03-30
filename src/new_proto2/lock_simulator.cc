@@ -311,6 +311,7 @@ void LockSimulator::CreateLockRequests() {
     //state_ = LockSimulator::STATE_DONE;
     //return;
   //}
+  int i = 0, j = 0;
   if (count_ >= count_limit_) {
     if (verbose_)
       cout << "Lock request count of " << count_limit_ << " has reached. Terminating.";
@@ -329,7 +330,7 @@ void LockSimulator::CreateLockRequests() {
   }
 
   if (requests_.empty()) {
-    for (int i = 0; i < max_request_size_; ++i) {
+    for (i = 0; i < max_request_size_; ++i) {
        LockRequest* request = new LockRequest;
        requests_.push_back(request);
     }
@@ -346,7 +347,7 @@ void LockSimulator::CreateLockRequests() {
   }
 
   if (!is_tx_failed_) {
-    for (int i = 0; i < request_size_; ++i) {
+    for (i = 0; i < request_size_; ++i) {
       if (workload_type_ == WORKLOAD_MIXED ||
           workload_type_ == WORKLOAD_ALL_LOCAL) {
         if (is_all_local_) {
@@ -356,7 +357,7 @@ void LockSimulator::CreateLockRequests() {
         }
       } else {
         double val = drand48();
-        for (int j = 0; j < num_manager_; ++j) {
+        for (j = 0; j < num_manager_; ++j) {
           if (val <= cdf_[j]) {
             requests_[i]->lm_id = j;
             break;
@@ -384,7 +385,7 @@ void LockSimulator::CreateLockRequests() {
     }
 
     is_all_local_ = true;
-    for (int i = 0; i < request_size_; ++i) {
+    for (i = 0; i < request_size_; ++i) {
       if (requests_[i]->lm_id != local_manager_id_) {
         is_all_local_ = false;
         break;
@@ -936,6 +937,8 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
     }
   }
   pthread_mutex_unlock(&lock_mutex_);
+
+  return FUNC_SUCCESS;
 }
 
 int LockSimulator::TimeOut() {
@@ -961,6 +964,7 @@ int LockSimulator::TimeOut() {
   }
   pthread_mutex_unlock(&lock_mutex_);
   //pthread_mutex_unlock(&mutex_);
+  return 0;
 }
 
 double LockSimulator::GetTimeSinceLastLock() {
@@ -1153,6 +1157,7 @@ void* LockSimulator::CheckTimeOut(void* arg) {
       //}
     //}
   }
+  return NULL;
 }
 
 }}

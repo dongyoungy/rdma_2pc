@@ -13,7 +13,7 @@ else:
 
 if int(pedantic):
     SetOption('num_jobs', 1)
-    env.Append(CCFLAGS='-Wall -Wextra -pedantic')
+    env.Append(CCFLAGS='-Wall -Wextra -Werror -Wno-unused-variable -Wno-unused-parameter -pedantic')
 
 print "running with -j", GetOption('num_jobs')
 binaries = []

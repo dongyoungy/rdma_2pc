@@ -39,7 +39,7 @@ int main(int argc, char** argv) {
 
   int num_nodes, rank;
   int num_servers, num_clients;
-  int server_start_idx, group1_start_idx, group2_start_idx;
+  int group1_start_idx, group2_start_idx;
   int group1_users_per_client, group2_users_per_client;
   int group1_size, group2_size;
 
@@ -97,7 +97,6 @@ int main(int argc, char** argv) {
   } else {
     num_servers             = num_nodes - 4;
     num_clients             = 4;
-    server_start_idx        = 0;
     group1_start_idx        = num_nodes - 4;
     group2_start_idx        = num_nodes - 2;
     group1_users_per_client = (num_users - 2) / 2;
@@ -1080,7 +1079,7 @@ int main(int argc, char** argv) {
       MPI_COMM_WORLD);
   group2_global_time_taken_avg = group2_global_time_taken_sum / (double)group2_size;
   if (rank >= group2_start_idx) {
-    for (int j=0;j<users.size();++j) {
+    for (unsigned int j=0;j<users.size();++j) {
       double time = users[j]->GetTimeTaken();
       group2_local_time_taken_diff += (time - group2_global_time_taken_avg) * (time - group2_global_time_taken_avg);
     }
@@ -1657,11 +1656,15 @@ int main(int argc, char** argv) {
 void* RunLockManager(void* args) {
   LockManager* lock_manager = (LockManager*)args;
   lock_manager->Run();
+
+  return NULL;
 }
 
 void* RunLockSimulator(void* args) {
   LockSimulator* user = (LockSimulator*)args;
   user->Run();
+
+  return NULL;
 }
 
 void* MeasureCPUUsage(void* args) {
@@ -1679,12 +1682,13 @@ void* MeasureCPUUsage(void* args) {
   struct tms timeSample;
   char line[128];
 
-  lastCPU = times(&timeSample);
-  lastSysCPU = timeSample.tms_stime;
+  lastCPU     = times(&timeSample);
+  lastSysCPU  = timeSample.tms_stime;
   lastUserCPU = timeSample.tms_utime;
 
-  file = fopen("/proc/cpuinfo", "r");
+  file          = fopen("/proc/cpuinfo", "r");
   numProcessors = 0;
+  percent       = 0.0;
   while(fgets(line, 128, file) != NULL){
     if (strncmp(line, "processor", 9) == 0) numProcessors++;
   }
@@ -1715,4 +1719,5 @@ void* MeasureCPUUsage(void* args) {
     //cout << percent << endl;
     sleep(1);
   }
+  return NULL;
 }

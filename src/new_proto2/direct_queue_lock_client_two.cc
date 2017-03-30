@@ -174,8 +174,8 @@ int DirectQueueLockClientTwo::HandleWorkCompletion(struct ibv_wc* work_completio
           (double)start_rdma_read_.tv_nsec);
     total_rdma_read_time_ += time_taken;
 
-    uint64_t all_value;
-    uint32_t value, exclusive, shared;
+    uint64_t all_value = 0;
+    //uint32_t value, exclusive, shared;
     LockRequest* request = (LockRequest *)work_completion->wr_id;
 
     // polling result
@@ -186,10 +186,10 @@ int DirectQueueLockClientTwo::HandleWorkCompletion(struct ibv_wc* work_completio
 #else
       all_value = prev_value;
 #endif
-      exclusive = (uint32_t)((all_value)>>32);
-      shared = (uint32_t)all_value;
+      //exclusive = (uint32_t)((all_value)>>32);
+      //shared = (uint32_t)all_value;
     } else {
-      value = *request->read_buffer;
+      //value = *request->read_buffer;
     }
 
     //if (request->read_target == EXCLUSIVE) {
@@ -280,6 +280,7 @@ int DirectQueueLockClientTwo::HandleShared(LockRequest* request) {
       request->user_id,
       request->lock_type,
       request->obj_index);
+  return FUNC_SUCCESS;
 }
 
 int DirectQueueLockClientTwo::HandleExclusive(LockRequest* request) {
@@ -293,6 +294,7 @@ int DirectQueueLockClientTwo::HandleExclusive(LockRequest* request) {
       request->user_id,
       request->lock_type,
       request->obj_index);
+  return FUNC_SUCCESS;
 }
 
 }}

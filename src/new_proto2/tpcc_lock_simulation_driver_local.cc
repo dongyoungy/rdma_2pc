@@ -195,7 +195,7 @@ int main(int argc, char** argv) {
   cout << "TPC-C Simulation starting.." << endl;
   time(&start_time);
 
-  for (int i=0;i<users.size();++i) {
+  for (unsigned int i=0;i<users.size();++i) {
     pthread_t lock_simulator_thread;
     if (pthread_create(&lock_simulator_thread, NULL, &RunLockSimulator,
           (void*)users[i])) {
@@ -215,7 +215,7 @@ int main(int argc, char** argv) {
 
 
   int count = 0;
-  for (int i=0;i<users.size();++i) {
+  for (unsigned int i=0;i<users.size();++i) {
     LockSimulator* simulator = users[i];
     while (simulator->GetState() != LockSimulator::STATE_DONE) {
        sleep(1);
@@ -234,7 +234,7 @@ int main(int argc, char** argv) {
   for (int i=0;i<num_managers;++i) {
     if (rank==i) {
       cout << "Node = " << rank << endl;
-      for (int j=0;j<users.size();++j) {
+      for (unsigned int j=0;j<users.size();++j) {
         LockSimulator* simulator = users[j];
         cout << "Total Lock # = " << simulator->GetTotalNumLocks() << endl;
         cout << "Total Unlock # = " << simulator->GetTotalNumUnlocks() << endl;
@@ -251,11 +251,13 @@ int main(int argc, char** argv) {
 void* RunLockManager(void* args) {
   LockManager* lock_manager = (LockManager*)args;
   lock_manager->Run();
+  return NULL;
 }
 
 void* RunLockSimulator(void* args) {
   LockSimulator* user = (LockSimulator*)args;
   user->Run();
+  return NULL;
 }
 
 void* MeasureCPUUsage(void* args) {
@@ -273,12 +275,13 @@ void* MeasureCPUUsage(void* args) {
   struct tms timeSample;
   char line[128];
 
-  lastCPU = times(&timeSample);
-  lastSysCPU = timeSample.tms_stime;
+  lastCPU     = times(&timeSample);
+  lastSysCPU  = timeSample.tms_stime;
   lastUserCPU = timeSample.tms_utime;
 
-  file = fopen("/proc/cpuinfo", "r");
+  file          = fopen("/proc/cpuinfo", "r");
   numProcessors = 0;
+  percent       = 0;
   while(fgets(line, 128, file) != NULL){
     if (strncmp(line, "processor", 9) == 0) numProcessors++;
   }
@@ -308,4 +311,5 @@ void* MeasureCPUUsage(void* args) {
     usage->num_sample += 1;
     sleep(1);
   }
+  return NULL;
 }

@@ -12,7 +12,7 @@ MessageBuffer::MessageBuffer() {
 }
 
 MessageBuffer::~MessageBuffer() {
-  for (int i = 0; i < messages_.size(); ++i) {
+  for (unsigned int i = 0; i < messages_.size(); ++i) {
     ibv_dereg_mr(mrs_[i]);
     delete messages_[i];
   }
