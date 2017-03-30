@@ -84,27 +84,32 @@ int main(int argc, char** argv) {
   // 1 node = server/client on the same node
   // 2 node = 1 server, 1 client
   // n nodes = n/2 servers, n/2 clients
-  if (num_nodes == 1) {
-    num_servers = 1;
-    num_clients = 1;
-    server_start_idx = 0;
-    client_start_idx = 0;
-  } else if (num_nodes == 2) {
-    num_servers = 1;
-    num_clients = 1;
-    server_start_idx = 0;
-    client_start_idx = 1;
-  //} else if (num_nodes == 5) {
+  //if (num_nodes == 1) {
     //num_servers = 1;
-    //num_clients = 2;
+    //num_clients = 1;
     //server_start_idx = 0;
-    //client_start_idx = 3;
-  } else {
-    num_servers = num_nodes;
-    num_clients = num_nodes;
-    server_start_idx = 0;
-    client_start_idx = 0;
-  }
+    //client_start_idx = 0;
+  //} else if (num_nodes == 2) {
+    //num_servers = 1;
+    //num_clients = 1;
+    //server_start_idx = 0;
+    //client_start_idx = 1;
+  ////} else if (num_nodes == 5) {
+    ////num_servers = 1;
+    ////num_clients = 2;
+    ////server_start_idx = 0;
+    ////client_start_idx = 3;
+  //} else {
+    //num_servers = num_nodes;
+    //num_clients = num_nodes;
+    //server_start_idx = 0;
+    //client_start_idx = 0;
+  //}
+
+  num_servers = num_nodes;
+  num_clients = num_nodes;
+  server_start_idx = 0;
+  client_start_idx = 0;
 
   bool transaction_delay = (transaction_delay_num == 0) ? false : true;
 
@@ -227,11 +232,12 @@ int main(int argc, char** argv) {
     for (int i=0;i<num_users_per_client;++i) {
       uint32_t seq = (rank-client_start_idx)*num_users_per_client+i;
       //uint32_t id = (uint32_t)pow(2.0, seq);
-      uint32_t id = i;
+      uint32_t id = i + 1;
       bool verbose = false;
       TPCCLockSimulator* simulator = new TPCCLockSimulator(managers[i%num_warehouses_per_node],
           id, // id
-          seq % (num_servers*num_warehouses_per_node), // home id
+          //seq % (num_servers*num_warehouses_per_node), // home id
+          managers[i%num_warehouses_per_node]->GetRank(), // home id
           workload_type,
           num_servers*num_warehouses_per_node,
           num_tx,
@@ -537,9 +543,7 @@ int main(int argc, char** argv) {
   usage.terminate = true;
   pthread_join(cpu_measure_thread, NULL);
   double local_cpu_usage_local = usage.total_cpu / usage.num_sample;
-  if (rank < client_start_idx) {
-    local_cpu_usage = local_cpu_usage_local;
-  }
+  local_cpu_usage = local_cpu_usage_local;
   MPI_Barrier(MPI_COMM_WORLD);
 
   MPI_Reduce(&local_sum, &global_sum, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);

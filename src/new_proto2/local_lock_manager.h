@@ -22,12 +22,14 @@ class LocalLockManager {
   public:
     LocalLockManager(int node_id, int num_nodes, int num_objects);
     ~LocalLockManager();
-    int TryLock(int target_node_id, int target_obj_index, int lock_type);
-    int TryUnlock(int target_node_id, int target_obj_index, int lock_type);
+    int TryLock(int target_node_id, int target_obj_index, int owner_user_id, int lock_type);
+    int TryUnlock(int target_node_id, int target_obj_index, int owner_user_id, int lock_type);
     int CheckLock(int seq_no, int ownder_thread_id, int target_node_id,
         int target_obj_index, int lock_type);
-    int Lock(int target_node_id, int target_obj_index, int lock_type, int result);
-    int Unlock(int target_node_id, int target_obj_index, int lock_type, int result);
+    int Lock(int target_node_id, int target_obj_index, int owner_user_id,
+        int lock_type, int result);
+    int Unlock(int target_node_id, int target_obj_index, int owner_user_id,
+        int lock_type, int result);
     int GetCount(int target_node_id, int target_obj_index, int lock_type);
     int GetStatus(int target_node_id, int target_obj_index);
     void SetStatus(int target_node_id, int target_obj_index, int status);

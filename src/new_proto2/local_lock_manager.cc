@@ -1,3 +1,4 @@
+#include <unistd.h>
 #include "constants.h"
 #include "local_lock_manager.h"
 
@@ -26,7 +27,8 @@ LocalLockManager::~LocalLockManager() {
   delete[] lock_status_;
 }
 
-int LocalLockManager::TryLock(int target_node_id, int target_obj_index, int lock_type) {
+int LocalLockManager::TryLock(int target_node_id, int target_obj_index, int owner_user_id,
+    int lock_type) {
   int ret = 0;
   pthread_mutex_lock(&mutex_);
   if (lock_status_[index(target_node_id, target_obj_index)] != LOCK_STATUS_IDLE) {
@@ -47,7 +49,10 @@ int LocalLockManager::TryLock(int target_node_id, int target_obj_index, int lock
         ret = LOCAL_LOCK_FAIL;
       }
     } else {
-      if (exclusive_counter_[index(target_node_id, target_obj_index)] > 0 ||
+      if (exclusive_counter_[index(target_node_id, target_obj_index)] == owner_user_id &&
+          shared_counter_[index(target_node_id, target_obj_index)] == 0) {
+        ret = LOCAL_LOCK_PASS;
+      } else if (exclusive_counter_[index(target_node_id, target_obj_index)] > 0 ||
           shared_counter_[index(target_node_id, target_obj_index)] > 0) {
         ret = LOCAL_LOCK_FAIL;
       } else {
@@ -61,7 +66,8 @@ int LocalLockManager::TryLock(int target_node_id, int target_obj_index, int lock
   return ret;
 }
 
-int LocalLockManager::TryUnlock(int target_node_id, int target_obj_index, int lock_type) {
+int LocalLockManager::TryUnlock(int target_node_id, int target_obj_index, int owner_user_id,
+    int lock_type) {
   int ret = 0;
   pthread_mutex_lock(&mutex_);
   if (lock_status_[index(target_node_id, target_obj_index)] != LOCK_STATUS_IDLE) {
@@ -75,14 +81,14 @@ int LocalLockManager::TryUnlock(int target_node_id, int target_obj_index, int lo
         lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_UNLOCKING;
         ret = LOCAL_LOCK_RETRY;
       } else {
-        ret = LOCAL_LOCK_FAIL;
+        ret = LOCAL_LOCK_PASS;
       }
     } else {
-      if (exclusive_counter_[index(target_node_id, target_obj_index)] > 0) {
+      if (exclusive_counter_[index(target_node_id, target_obj_index)] == owner_user_id) {
         lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_UNLOCKING;
         ret = LOCAL_LOCK_RETRY;
       } else {
-        ret = LOCAL_LOCK_FAIL;
+        ret = LOCAL_LOCK_PASS;
       }
     }
   }
@@ -145,23 +151,23 @@ int LocalLockManager::CheckLock(int seq_no, int owner_thread_id, int target_node
   }
 }
 
-int LocalLockManager::Lock(int target_node_id, int target_obj_index, int lock_type,
-    int result) {
+int LocalLockManager::Lock(int target_node_id, int target_obj_index, int owner_user_id,
+    int lock_type, int result) {
   pthread_mutex_lock(&mutex_);
   lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_IDLE;
-  if (result == RESULT_SUCCESS) {
+  if (result == RESULT_SUCCESS || result == RESULT_SUCCESS_FROM_QUEUED) {
     if (lock_type == SHARED) {
       ++shared_counter_[index(target_node_id, target_obj_index)];
     } else {
-      exclusive_counter_[index(target_node_id, target_obj_index)] = 1;
+      exclusive_counter_[index(target_node_id, target_obj_index)] = owner_user_id;
     }
   }
   pthread_mutex_unlock(&mutex_);
   return FUNC_SUCCESS;
 }
 
-int LocalLockManager::Unlock(int target_node_id, int target_obj_index, int lock_type,
-    int result) {
+int LocalLockManager::Unlock(int target_node_id, int target_obj_index, int owner_user_id,
+    int lock_type, int result) {
   pthread_mutex_lock(&mutex_);
   lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_IDLE;
   if (result == RESULT_SUCCESS) {
@@ -169,7 +175,8 @@ int LocalLockManager::Unlock(int target_node_id, int target_obj_index, int lock_
       if (shared_counter_[index(target_node_id, target_obj_index)] > 0)
         --shared_counter_[index(target_node_id, target_obj_index)];
     } else {
-      exclusive_counter_[index(target_node_id, target_obj_index)] = 0;
+      if (exclusive_counter_[index(target_node_id, target_obj_index)] == owner_user_id)
+        exclusive_counter_[index(target_node_id, target_obj_index)] = 0;
     }
   }
   pthread_mutex_unlock(&mutex_);

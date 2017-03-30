@@ -154,7 +154,7 @@ int main(int argc, char** argv) {
       bool verbose = false;
       TPCCLockSimulator* simulator = new TPCCLockSimulator(managers[i],
           //(uint32_t)pow(2.0, rank*num_users+i), // id
-          j,
+          j+1,
           i,
           WORKLOAD_UNIFORM,
           num_managers,
@@ -170,7 +170,7 @@ int main(int argc, char** argv) {
           think_time
           );
       //managers[i]->RegisterUser((uint32_t)pow(2.0, rank*num_users+i), simulator);
-      managers[i]->RegisterUser(j, simulator);
+      managers[i]->RegisterUser(j+1, simulator);
       users.push_back(simulator);
     }
   }

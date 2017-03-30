@@ -208,7 +208,7 @@ int main(int argc, char** argv) {
   for (int i=0;i<num_users;++i) {
     LockSimulator* simulator = new LockSimulator(lock_manager,
         //(int)pow(2.0, rank), // id
-        i, // id
+        i+1, // id
         num_managers,
         num_lock_object,
         num_tx,
@@ -226,7 +226,7 @@ int main(int argc, char** argv) {
         min_backoff_time,
         max_backoff_time
         );
-    lock_manager->RegisterUser(i, simulator);
+    lock_manager->RegisterUser(i+1, simulator);
     users.push_back(simulator);
   }
 

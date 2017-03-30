@@ -93,8 +93,6 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       //cout << "received lock request result." << endl;
       pthread_mutex_lock(&lock_mutex_);
       message_in_progress_ = false;
-      pthread_cond_signal(&lock_cond_);
-      pthread_mutex_unlock(&lock_mutex_);
 
       local_manager_->NotifyLockRequestResult(
           message->seq_no,
@@ -103,12 +101,12 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           remote_lm_id_,
           message->obj_index,
           message->lock_result);
+      pthread_cond_signal(&lock_cond_);
+      pthread_mutex_unlock(&lock_mutex_);
     } else if (message->type == Message::UNLOCK_REQUEST_RESULT) {
       //cout << "received unlock request result" << endl;
       pthread_mutex_lock(&lock_mutex_);
       message_in_progress_ = false;
-      pthread_cond_signal(&lock_cond_);
-      pthread_mutex_unlock(&lock_mutex_);
 
       local_manager_->NotifyUnlockRequestResult(
           message->seq_no,
@@ -117,6 +115,8 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           remote_lm_id_,
           message->obj_index,
           message->lock_result);
+      pthread_cond_signal(&lock_cond_);
+      pthread_mutex_unlock(&lock_mutex_);
     }
   } else if (work_completion->opcode == IBV_WC_SEND) {
     clock_gettime(CLOCK_MONOTONIC, &end_send_message_);

@@ -90,7 +90,7 @@ LockSimulator::LockSimulator(LockManager* manager, uint32_t id, int num_manager,
   transaction_delay_                 = transaction_delay;
   transaction_delay_min_             = transaction_delay_min;
   transaction_delay_max_             = transaction_delay_max;
-  local_manager_id_                  = manager_->GetID();
+  local_manager_id_                  = manager_->GetRank();
   count_limit_                       = num_tx;
   num_tx_                            = num_tx;
   count_                             = 0;
@@ -743,6 +743,15 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
     return -1;
   }
   if (task == TASK_LOCK && result == RESULT_SUCCESS_FROM_QUEUED && state_ == STATE_QUEUED) {
+    if (verbose_) {
+      pthread_mutex_lock(&PRINT_MUTEX);
+      cout << "Simulator " << local_manager_id_ << "@" << id_ << ": " <<
+        "Sucessful from queued lock request at LM " <<
+        requests_[last_request_idx_]->lm_id <<
+        " of type " << requests_[last_request_idx_]->lock_type <<
+        " for object " << requests_[last_request_idx_]->obj_index << endl;
+      pthread_mutex_unlock(&PRINT_MUTEX);
+    }
     result = RESULT_SUCCESS;
     ChangeState(STATE_WAIT);
   }
@@ -750,9 +759,8 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
 
   if (task == TASK_LOCK && result == RESULT_QUEUED) {
     if (verbose_) {
-    //if (id_ == 1) {
       pthread_mutex_lock(&PRINT_MUTEX);
-      cout << "Simulator " << id_ << ": " <<
+      cout << "Simulator " << local_manager_id_ << "@" << id_ << ": " <<
         "Queued lock request at LM " <<
         requests_[last_request_idx_]->lm_id <<
         " of type " << requests_[last_request_idx_]->lock_type <<
@@ -776,7 +784,7 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
         requests_[last_request_idx_]->obj_index == obj_index) {
       if (verbose_) {
         pthread_mutex_lock(&PRINT_MUTEX);
-        cout << "Simulator " << id_ << ": " <<
+        cout << "Simulator " << local_manager_id_ << "@" << id_ << ": " <<
           "Successful lock request at LM " <<
           requests_[last_request_idx_]->lm_id <<
           " of type " << requests_[last_request_idx_]->lock_type <<
@@ -814,7 +822,7 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
       current_request_idx_ = last_request_idx_;
       if (verbose_) {
         pthread_mutex_lock(&PRINT_MUTEX);
-        cout << "Simulator " << id_ << ": " <<
+        cout << "Simulator " << local_manager_id_ << "@" << id_ << ": " <<
           "(Retry) Unsuccessful lock request at LM " <<
           requests_[last_request_idx_]->lm_id <<
           " of type " << requests_[last_request_idx_]->lock_type <<
@@ -839,11 +847,11 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
     } else if (result == RESULT_LOCAL_FAILURE &&
         requests_[last_request_idx_]->lock_type == lock_type &&
         requests_[last_request_idx_]->obj_index == obj_index) {
-      current_request_idx_ = last_request_idx_;
+      current_request_idx_ = last_request_idx_ - 1;
       ++total_num_lock_failure_;
       if (verbose_) {
         pthread_mutex_lock(&PRINT_MUTEX);
-        cout << "Simulator " << id_ << ": " <<
+        cout << "Simulator " << local_manager_id_ << "@" << id_ << ": " <<
           "(Local Fail) Unsuccessful lock request at LM " <<
           requests_[last_request_idx_]->lm_id <<
           " of type " << requests_[last_request_idx_]->lock_type <<
@@ -851,16 +859,21 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
           " (" << lock_type << "," << obj_index << ")" << endl;
         pthread_mutex_unlock(&PRINT_MUTEX);
       }
-
-      // simply retries here
-      ChangeState(STATE_LOCKING);
+      num_lock_acquired_till_timeout_ = last_request_idx_;
+      is_tx_failed_ = true;
+      // retry upon failure
+      if (last_request_idx_ == 0) {
+        ChangeState(STATE_IDLE);
+      } else {
+        ChangeState(STATE_UNLOCKING);
+      }
     } else if (result == RESULT_FAILURE &&
         requests_[last_request_idx_]->lock_type == lock_type &&
         requests_[last_request_idx_]->obj_index == obj_index) {
       current_request_idx_ = last_request_idx_ - 1;
       if (verbose_) {
         pthread_mutex_lock(&PRINT_MUTEX);
-        cout << "Simulator " << id_ << ": " <<
+        cout << "Simulator " << local_manager_id_ << "@" << id_ << ": " <<
           "(Fail) Unsuccessful lock request at LM " <<
           requests_[last_request_idx_]->lm_id <<
           " of type " << requests_[last_request_idx_]->lock_type <<
@@ -884,7 +897,7 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
         requests_[last_request_idx_]->obj_index == obj_index) {
       if (verbose_) {
         pthread_mutex_lock(&PRINT_MUTEX);
-        cout << "Simulator " << id_ << ": " <<
+        cout << "Simulator " << local_manager_id_ << "@" << id_ << ": " <<
           "Successful unlock request at LM " <<
           requests_[last_request_idx_]->lm_id <<
           " of type " << requests_[last_request_idx_]->lock_type <<
@@ -901,7 +914,7 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
       current_request_idx_ = last_request_idx_;
       if (verbose_) {
         pthread_mutex_lock(&PRINT_MUTEX);
-        cout << "Simulator " << id_ << ": " <<
+        cout << "Simulator " << local_manager_id_ << "@" << id_ << ": " <<
           "retrying exclusive unlock request at LM " <<
           requests_[last_request_idx_]->lm_id <<
           " of type " << requests_[last_request_idx_]->lock_type <<
@@ -912,7 +925,7 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
     } else {
       if (verbose_) {
         pthread_mutex_lock(&PRINT_MUTEX);
-        cout << "Simulator " << id_ << ": " <<
+        cout << "Simulator " << local_manager_id_ << "@" << id_ << ": " <<
           "Unsuccessful unlock request at LM " <<
           requests_[last_request_idx_]->lm_id <<
           " of type " << requests_[last_request_idx_]->lock_type <<
@@ -930,8 +943,8 @@ int LockSimulator::TimeOut() {
   //pthread_mutex_lock(&mutex_);
   pthread_mutex_lock(&lock_mutex_);
   if (requests_[last_request_idx_]->task == TASK_LOCK) {
-    if (lock_mode_ == LOCK_PROXY_QUEUE ||
-        (lock_mode_ == LOCK_REMOTE_NOTIFY && state_ == STATE_QUEUED)) {
+    if ((lock_mode_ == LOCK_PROXY_QUEUE ||
+        lock_mode_ == LOCK_REMOTE_NOTIFY) && state_ == STATE_QUEUED) {
       current_request_idx_            = last_request_idx_;
       num_lock_acquired_till_timeout_ = last_request_idx_;
       is_tx_failed_                   = true;
@@ -1106,7 +1119,7 @@ void* LockSimulator::CheckTimeOut(void* arg) {
         continue;
       }
     } else if (lock_mode == LOCK_PROXY_QUEUE) {
-      if (simulator->GetState() != STATE_WAIT) {
+      if (simulator->GetState() != STATE_WAIT && simulator->GetState() != STATE_QUEUED) {
         retry = 0;
         continue;
       }

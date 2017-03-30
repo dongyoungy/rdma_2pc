@@ -25,11 +25,11 @@ struct CPUUsage {
 
 int main(int argc, char** argv) {
 
-  if (argc != 17) {
+  if (argc != 18) {
     cout << "USAGE: " << argv[0] << " <work_dir> <num_lock_manager> <num_lock_object>" <<
       " <num_tx> <num_request_per_tx> <num_users> <lock_mode> <shared_exclusive_rule> " <<
       "<exclusive_shared_rule> <exclusive_exclusive_rule> <workload_type> <local_workload_ratio> "<<
-      "<shared_lock_ratio> <min_backoff_time> <max_backoff_time> <rand_seed>" << endl;
+      "<shared_lock_ratio> <min_backoff_time> <max_backoff_time> <sleep_time> <rand_seed>" << endl;
     exit(1);
   }
 
@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
     cout << "The current machine uses LITTLE ENDIAN" << endl;
   }
 
-  int num_managers = atoi(argv[2]);
+  int num_managers             = atoi(argv[2]);
   int num_lock_object          = atoi(argv[3]);
   long num_tx                  = atol(argv[4]);
   int num_request_per_tx       = atoi(argv[5]);
@@ -55,7 +55,8 @@ int main(int argc, char** argv) {
   double shared_lock_ratio     = atof(argv[13]);
   int min_backoff_time         = atoi(argv[14]);
   int max_backoff_time         = atoi(argv[15]);
-  long seed                    = atol(argv[16]);
+  int sleep_time               = atoi(argv[16]);
+  long seed                    = atol(argv[17]);
 
   string workload_type_str, shared_lock_ratio_str;
   if (workload_type == LockSimulator::WORKLOAD_UNIFORM) {
@@ -168,7 +169,7 @@ int main(int argc, char** argv) {
     for (int j=0;j<num_users;++j) {
       LockSimulator* simulator = new LockSimulator(managers[i],
           //(uint32_t)pow(2.0, i), // id
-          j, // id
+          j+1, // id
           num_managers,
           num_lock_object,
           num_tx, // num lock requests
@@ -182,10 +183,11 @@ int main(int argc, char** argv) {
           shared_lock_ratio,
           0,0,0, // tx delays
           min_backoff_time,
-          max_backoff_time
+          max_backoff_time,
+          sleep_time
           );
       //lock_manager->RegisterUser((uint32_t)pow(2.0, i), simulator);
-      managers[i]->RegisterUser(j, simulator);
+      managers[i]->RegisterUser(j+1, simulator);
       users.push_back(simulator);
     }
 
@@ -201,6 +203,8 @@ int main(int argc, char** argv) {
     }
   }
 
+
+  cout << "Starting simulation..." << endl;
   time_t start_time;
   time_t end_time;
 

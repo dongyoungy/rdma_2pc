@@ -16,8 +16,9 @@ class LockWaitQueue {
   public:
     LockWaitQueue(int max_size);
     ~LockWaitQueue();
-    int RemoveAllElements(int seq_no, uint32_t home_id, uint32_t user_id, int type);
-    int Insert(int seq_no, uint32_t home_id, uint32_t user_id, int type);
+    int RemoveAllElements(int seq_no, uint32_t owner_node_id, uint32_t owner_user_id, int type);
+    int Insert(int seq_no, uint32_t target_node_id, uint32_t owner_node_id, uint32_t owner_user_id,
+        int type);
     void PrintAll();
     void RemoveAll();
     LockWaitElement* Pop();
