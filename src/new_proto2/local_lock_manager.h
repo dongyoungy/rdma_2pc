@@ -5,6 +5,7 @@
 #include <cstring>
 #include <queue>
 #include <unordered_map>
+#include <map>
 #include <pthread.h>
 
 #include "local_lock_wait_element.h"
@@ -43,12 +44,12 @@ class LocalLockManager {
     volatile int* shared_counter_;
     volatile int* exclusive_counter_;
     volatile int* lock_status_;
+    //map<int, int> shared_counter_;
+    //map<int, int> exclusive_counter_;
+    //map<int, int> lock_status_;
+
     queue<LocalLockWaitElement>* wait_queue_;
     pthread_mutex_t mutex_;
-    //unordered_map<int, unordered_map<int, int> > shared_counter_;
-    //unordered_map<int, unordered_map<int, int> > exclusive_counter_;
-    //unordered_map<int, unordered_map<int, int> > lock_status_;
-    //unordered_map<int, unordered_map<int, queue<LocalLockWaitElement> > > wait_queue_;
 };
 
 }}

@@ -25,7 +25,8 @@ struct CPUUsage {
 
 int main(int argc, char** argv) {
 
-  MPI_Init(&argc, &argv);
+  int provided = 0;
+  MPI_Init_thread(&argc, &argv, MPI_THREAD_FUNNELED, &provided);
 
   if (argc != 20) {
     cout << argv[0] << " <work_dir> <workload_type> <num_tx>" <<
@@ -50,6 +51,8 @@ int main(int argc, char** argv) {
     } else {
       cout << "The current machine uses LITTLE ENDIAN" << endl;
     }
+    cout << "Desired level of thread support = " << MPI_THREAD_FUNNELED << endl;
+    cout << "Provided level of thread support = " << provided << endl;
   }
 
   int k=2;
@@ -629,13 +632,16 @@ int main(int argc, char** argv) {
   MPI_Barrier(MPI_COMM_WORLD);
 
   // Get standard deviation for cpu usage
-  if (rank < client_start_idx) {
-    global_cpu_usage_avg = global_cpu_usage / (double)num_servers;
-  }
-  if (rank < client_start_idx) {
-    local_cpu_diff = (global_cpu_usage_avg - local_cpu_usage) *
-      (global_cpu_usage_avg - local_cpu_usage);
-  }
+  //if (rank < client_start_idx) {
+    //global_cpu_usage_avg = global_cpu_usage / (double)num_servers;
+  //}
+  //if (rank < client_start_idx) {
+    //local_cpu_diff = (global_cpu_usage_avg - local_cpu_usage) *
+      //(global_cpu_usage_avg - local_cpu_usage);
+  //}
+  global_cpu_usage_avg = global_cpu_usage / (double)num_servers;
+  local_cpu_diff = (global_cpu_usage_avg - local_cpu_usage) *
+    (global_cpu_usage_avg - local_cpu_usage);
   MPI_Reduce(&local_cpu_diff, &global_cpu_diff, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
   global_cpu_usage_std = sqrt(global_cpu_diff / (double)num_servers);
 

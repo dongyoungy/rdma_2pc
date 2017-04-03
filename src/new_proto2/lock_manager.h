@@ -231,7 +231,8 @@ class LockManager {
     map<uint64_t, uint64_t> user_to_home_map_;
 
     // queue for lock waits
-    vector<LockWaitQueue*> wait_queues_;
+    //vector<LockWaitQueue*> wait_queues_;
+    LockWaitQueue** wait_queues_;
     LocalWorkQueue<Message>* local_work_queue_;
     pthread_t local_work_poller_;
 

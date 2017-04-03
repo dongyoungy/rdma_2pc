@@ -31,6 +31,7 @@ LockManager::LockManager(const string& work_dir, uint32_t rank,
   listener_                        = NULL;
   event_channel_                   = NULL;
   registered_memory_region_        = NULL;
+  wait_queues_                     = NULL;
   port_                            = 0;
   lock_mode_                       = lock_mode;
   total_local_exclusive_lock_time_ = 0;
@@ -61,13 +62,6 @@ LockManager::LockManager(const string& work_dir, uint32_t rank,
     //lock_mode_table_[i] = LockManager::LOCK_REMOTE;
   //}
 
-  // initialize lock wait queues, one for each lock object
-  wait_queues_.reserve(num_lock_object_);
-  for (int i = 0; i < num_lock_object_; ++i) {
-    LockWaitQueue* queue = new LockWaitQueue(num_manager+36); // +36 is for the buffer
-    wait_queues_.push_back(queue);
-  }
-
   // initialize local lock mutex
   lock_mutex_ = new pthread_mutex_t*[num_lock_object_];
   pthread_mutex_init(&msg_mutex_, NULL);
@@ -83,6 +77,9 @@ LockManager::~LockManager() {
 
   if (lock_mode_table_)
     delete[] lock_mode_table_;
+
+  if (wait_queues_)
+    delete[] wait_queues_;
 
   // destroy mutex and free the resource
   for (int i=0;i<num_lock_object_;++i) {
@@ -208,6 +205,19 @@ int LockManager::InitializeLockClients() {
     communication_client_threads_.push_back(comm_client_thread);
 
   }
+  // initialize lock wait queues, one for each lock object
+  if (lock_mode_ == LOCK_PROXY_QUEUE || lock_mode_ == LOCK_PROXY_RETRY) {
+    wait_queues_ = new LockWaitQueue*[num_lock_object_];
+    for (int i = 0; i < num_lock_object_; ++i) {
+      wait_queues_[i] = new LockWaitQueue(users.size()+1);
+    }
+    //wait_queues_.reserve(num_lock_object_);
+    //for (int i = 0; i < num_lock_object_; ++i) {
+      //LockWaitQueue* queue = new LockWaitQueue(users.size()+1); // +36 is for the buffer
+      //wait_queues_.push_back(queue);
+    //}
+  }
+
   // initialize local work queue/poller.
   local_work_queue_ = new LocalWorkQueue<Message>;
   ret = pthread_create(&local_work_poller_, NULL, &LockManager::PollLocalWorkQueue,

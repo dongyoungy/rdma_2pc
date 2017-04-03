@@ -8,15 +8,18 @@ namespace rdma { namespace proto {
 LocalLockManager::LocalLockManager(int node_id, int num_nodes, int num_objects) {
   owner_node_id_ = node_id;
   num_objects_ = num_objects;
+
+  //shared_counter_.clear();
+  //exclusive_counter_.clear();
+  //lock_status_.clear();
+
   shared_counter_ = new volatile int[num_nodes * num_objects];
   exclusive_counter_ = new volatile int[num_nodes * num_objects];
   lock_status_ = new volatile int[num_nodes * num_objects];
-  //wait_queue_ = new queue<LocalLockWaitElement>[num_nodes * num_objects];
-
   memset((void*)shared_counter_, 0x00, sizeof(volatile int)*num_nodes*num_objects_);
   memset((void*)exclusive_counter_, 0x00, sizeof(volatile int)*num_nodes*num_objects_);
   memset((void*)lock_status_, 0x00, sizeof(volatile int)*num_nodes*num_objects_);
-
+  //wait_queue_ = new queue<LocalLockWaitElement>[num_nodes * num_objects];
   pthread_mutex_init(&mutex_, NULL);
 }
 
@@ -155,6 +158,7 @@ int LocalLockManager::Lock(int target_node_id, int target_obj_index, int owner_u
     int lock_type, int result) {
   pthread_mutex_lock(&mutex_);
   lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_IDLE;
+  //lock_status_.erase(index(target_node_id, target_obj_index));
   if (result == RESULT_SUCCESS || result == RESULT_SUCCESS_FROM_QUEUED) {
     if (lock_type == SHARED) {
       ++shared_counter_[index(target_node_id, target_obj_index)];
@@ -170,13 +174,19 @@ int LocalLockManager::Unlock(int target_node_id, int target_obj_index, int owner
     int lock_type, int result) {
   pthread_mutex_lock(&mutex_);
   lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_IDLE;
+  //lock_status_.erase(index(target_node_id, target_obj_index));
   if (result == RESULT_SUCCESS) {
     if (lock_type == SHARED) {
       if (shared_counter_[index(target_node_id, target_obj_index)] > 0)
         --shared_counter_[index(target_node_id, target_obj_index)];
+      //if (shared_counter_[index(target_node_id, target_obj_index)] == 0) {
+         //shared_counter_.erase(index(target_node_id, target_obj_index));
+      //}
     } else {
-      if (exclusive_counter_[index(target_node_id, target_obj_index)] == owner_user_id)
+      if (exclusive_counter_[index(target_node_id, target_obj_index)] == owner_user_id) {
+        //exclusive_counter_.erase(index(target_node_id, target_obj_index));
         exclusive_counter_[index(target_node_id, target_obj_index)] = 0;
+      }
     }
   }
   pthread_mutex_unlock(&mutex_);

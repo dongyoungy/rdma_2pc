@@ -4,7 +4,8 @@ namespace rdma { namespace proto {
 
 MessageBuffer::MessageBuffer() {
   index_ = 0;
-  for (int i = 0; i < MAX_MESSAGE_BUFFER_SIZE; ++i) {
+  messages_.reserve(MAX_LOCAL_THREADS);
+  for (int i = 0; i < MAX_LOCAL_THREADS; ++i) {
     Message* message = new Message;
     messages_.push_back(message);
   }

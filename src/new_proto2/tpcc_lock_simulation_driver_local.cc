@@ -246,6 +246,8 @@ int main(int argc, char** argv) {
   pthread_join(cpu_measure_thread, NULL);
   cout << "Avg CPU Usage = " << usage.total_cpu / usage.num_sample << endl;
   cout<< "Total Time Taken = " << time_taken << endl;
+
+  return 0;
 }
 
 void* RunLockManager(void* args) {
