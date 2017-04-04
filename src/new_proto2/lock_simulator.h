@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <pthread.h>
+#include <thread>
+#include <chrono>
 #include "constants.h"
 #include "lock_manager.h"
 #include "lock_request.h"

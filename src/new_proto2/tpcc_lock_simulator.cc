@@ -124,6 +124,8 @@ void TPCCLockSimulator::CreateLockRequests() {
   }
 
   if (!is_tx_failed_) {
+    // enforce think time here
+    this_thread::sleep_for (chrono::microseconds(think_time_));
     request_size_ = tpcc_lock_gen_->Generate(requests_);
     if (measure_lock_time_)
       clock_gettime(CLOCK_MONOTONIC, &start_lock_);
@@ -164,7 +166,7 @@ void TPCCLockSimulator::SubmitLockRequest() {
   pthread_mutex_unlock(&time_mutex_);
 
   // enforce think time
-  usleep(think_time_);
+  //usleep(think_time_);
 
   int ret = 0;
   pthread_mutex_lock(&lock_mutex_);
@@ -228,6 +230,15 @@ void TPCCLockSimulator::SubmitUnlockRequest() {
   restart_ = false;
 
   int ret = 0;
+
+  if (current_request_idx_ == request_size_ - 1 && !is_tx_failed_) {
+    // simulate transaction time
+    if (transaction_delay_) {
+      // uses transaction_delay_min_ for now.
+      this_thread::sleep_for (chrono::microseconds((int)transaction_delay_min_));
+    }
+  }
+
   pthread_mutex_lock(&lock_mutex_);
   if (current_request_idx_ >= 0) {
     if (verbose_) {
