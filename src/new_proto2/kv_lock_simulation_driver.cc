@@ -96,7 +96,15 @@ int main(int argc, char** argv) {
   }
 
   string workload_type_str, shared_lock_ratio_str;
-  workload_type_str = "KV";
+  int workload_type = 0;
+  if (alpha == 0) {
+    workload_type = KV_UNIFORM;
+    workload_type_str = "KV_UNIFORM";
+  }
+  else {
+    workload_type = KV_ZIPF;
+    workload_type_str = "KV_ZIPF";
+  }
   shared_lock_ratio_str = "N/A";
   string local_workload_ratio_str = "N/A";
 
@@ -152,8 +160,6 @@ int main(int argc, char** argv) {
     exclusive_exclusive_rule_str = "N/A";
   }
 
-  workload_type_str = "MICROBENCH";
-
   int num_users_per_manager = num_users;
   if (rank == 0) {
     cout << "Type of Workload = " << workload_type_str << endl;
@@ -198,7 +204,7 @@ int main(int argc, char** argv) {
       KVLockSimulator* simulator = new KVLockSimulator(managers[i],
           id, // id
           managers[i]->GetRank(),
-          0, // empty workload type
+          workload_type, // empty workload type
           num_nodes*num_manager_per_node,
           num_tx,
           num_objects,

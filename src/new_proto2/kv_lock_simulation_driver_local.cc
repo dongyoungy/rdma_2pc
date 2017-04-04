@@ -60,7 +60,15 @@ int main(int argc, char** argv) {
   long seed                    = atol(argv[k++]);
 
   string workload_type_str, shared_lock_ratio_str;
-  workload_type_str = "KV";
+  int workload_type = 0;
+  if (alpha == 0) {
+    workload_type = KV_UNIFORM;
+    workload_type_str = "KV_UNIFORM";
+  }
+  else {
+    workload_type = KV_ZIPF;
+    workload_type_str = "KV_ZIPF";
+  }
   shared_lock_ratio_str = "N/A";
 
   string lock_method_str;
@@ -159,9 +167,9 @@ int main(int argc, char** argv) {
     for (int j=0;j<num_users;++j) {
       bool verbose = true;
       KVLockSimulator* simulator = new KVLockSimulator(managers[i],
-          num_users*i+j, // id
+          j+1, // id
           i,
-          0, // empty workload type
+          workload_type, // empty workload type
           num_managers,
           num_tx,
           num_objects,
@@ -178,7 +186,7 @@ int main(int argc, char** argv) {
           think_time
           );
       //managers[i]->RegisterUser((uint32_t)pow(2.0, rank*num_users+i), simulator);
-      managers[i]->RegisterUser(num_users*i+j, simulator);
+      managers[i]->RegisterUser(j+1, simulator);
       users.push_back(simulator);
     }
     if (managers[i]->InitializeLockClients()) {

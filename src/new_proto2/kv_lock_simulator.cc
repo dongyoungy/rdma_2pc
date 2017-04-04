@@ -66,6 +66,9 @@ void KVLockSimulator::Run() {
   is_tx_failed_ = false;
   is_tx_timed_out_ = false;
 
+  rd_ = new default_random_engine(seed_+id_);
+  uniform_dist_ = new uniform_int_distribution<uint64_t>(0, N_-1);
+
   if (lock_mode_ == LOCK_REMOTE_NOTIFY || lock_mode_ == LOCK_PROXY_QUEUE) {
     int ret = pthread_create(&timeout_thread_, NULL, &LockSimulator::CheckTimeOut, (void*)this);
     if (ret) {
@@ -141,7 +144,11 @@ void KVLockSimulator::Generate() {
   if (update_p <= update_ratio_) lock_type = EXCLUSIVE;
   else lock_type = SHARED;
 
-  uint64_t index = getZipfRand(p, alpha_, N_);
+  uint64_t index = 0;
+  if (workload_type_ == KV_UNIFORM)
+    index = (*uniform_dist_)(*rd_);
+  else if (workload_type_ == KV_ZIPF)
+    index = getZipfRand(p, alpha_, N_);
   int target_manager_id = index / num_objects_;
   uint64_t obj_index = index % num_objects_;
   // set first request for hot object

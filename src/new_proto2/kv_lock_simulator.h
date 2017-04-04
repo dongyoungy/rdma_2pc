@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <algorithm>
+#include <random>
 
 #include "lock_simulator.h"
 #include "constants.h"
@@ -35,6 +36,9 @@ class KVLockSimulator : public LockSimulator {
     double alpha_;
     double N_;
     int num_objects_;
+    default_random_engine* rd_;
+    uniform_int_distribution<uint64_t>* uniform_dist_;
+
 };
 
 }}
