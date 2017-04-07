@@ -160,8 +160,8 @@ int LockManager::RegisterUser(uint32_t user_id, LockSimulator* user) {
 int LockManager::InitializeLockClients() {
   int ret = 0;
   for (int i = 0; i < num_manager_; ++i) {
-    //for (int j = 0; j < 1; ++j) {
-    for (unsigned int j = 0; j < users.size(); ++j) {
+    for (int j = 0; j < 1; ++j) {
+    //for (unsigned int j = 0; j < users.size(); ++j) {
       LockSimulator* user      = users[j];
       pthread_t* client_thread = new pthread_t;
       LockClient* client;
