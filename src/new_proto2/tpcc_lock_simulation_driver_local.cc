@@ -309,6 +309,7 @@ void* MeasureCPUUsage(void* args) {
     lastSysCPU = timeSample.tms_stime;
     lastUserCPU = timeSample.tms_utime;
 
+    //cout << "Current CPU = " << percent << endl;
     usage->total_cpu += percent;
     usage->num_sample += 1;
     sleep(1);

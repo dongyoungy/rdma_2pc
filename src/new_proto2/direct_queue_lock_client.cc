@@ -4,8 +4,8 @@ namespace rdma { namespace proto {
 
 // constructor
 DirectQueueLockClient::DirectQueueLockClient(const string& work_dir, LockManager* local_manager,
-    LockSimulator* local_user,
-    uint32_t remote_lm_id) : LockClient(work_dir, local_manager, local_user, remote_lm_id) {
+    uint32_t local_user_count,
+    uint32_t remote_lm_id) : LockClient(work_dir, local_manager, local_user_count, remote_lm_id) {
 }
 
 // destructor
@@ -119,7 +119,7 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
           //this->UndoLocking(context_, request, true);
         } else {
           ++total_lock_contention_;
-          context_->all_waiters = value;
+          user_all_waiters_[request->user_id] = value;
           this->HandleExclusive(request);
         }
       } else {
@@ -139,7 +139,7 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
           //this->UndoLocking(context_, request, true);
         } else {
           ++total_lock_contention_;
-          context_->waiters = exclusive;
+          user_waiters_[request->user_id] = exclusive;
           this->HandleShared(request);
         }
       }
@@ -230,7 +230,8 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
       //}
     //}
 
-    uint64_t remaining = (context_->all_waiters & all_value);
+    uint64_t remaining = (user_all_waiters_[request->user_id] & all_value);
+    //uint64_t remaining = (context_->all_waiters & all_value);
     //cout << "prev_value = " << all_value << endl;
     //cout << "prev_value2 = " << prev << endl;
     //cout << "waiters = " << context_->all_waiters << endl;
@@ -241,9 +242,9 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
     if (request->lock_type == SHARED) {
       // Polling on X -> proceed if value is zero
       if (remaining == 0 || (remaining >> 32) == 0) {
-        context_->waiters = 0;
+        user_waiters_[request->user_id] = 0;
         ++total_lock_success_with_poll_;
-        sum_poll_when_success_ += context_->retry;
+        sum_poll_when_success_ += user_retry_count_[request->user_id];
         local_manager_->NotifyLockRequestResult(
             request->seq_no,
             request->user_id,
@@ -257,9 +258,9 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
       }
     } else {
       if (remaining == 0) {
-        context_->all_waiters = 0;
+        user_all_waiters_[request->user_id] = 0;
         ++total_lock_success_with_poll_;
-        sum_poll_when_success_ += context_->retry;
+        sum_poll_when_success_ += user_retry_count_[request->user_id];
         local_manager_->NotifyLockRequestResult(
             request->seq_no,
             request->user_id,
@@ -277,11 +278,11 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
 }
 
 int DirectQueueLockClient::HandleShared(LockRequest* request) {
-  if (context_->retry >= LockManager::GetPollRetry()) {
+  if (user_retry_count_[request->user_id] >= LockManager::GetPollRetry()) {
     this->UndoLocking(context_, request);
     return 0;
   }
-  ++context_->retry;
+  ++user_retry_count_[request->user_id];
   //request->read_target = EXCLUSIVE;
   //this->ReadRemotely(context_,
       //request->seq_no,
@@ -299,11 +300,11 @@ int DirectQueueLockClient::HandleShared(LockRequest* request) {
 }
 
 int DirectQueueLockClient::HandleExclusive(LockRequest* request) {
-  if (context_->retry >= LockManager::GetPollRetry()) {
+  if (user_retry_count_[request->user_id] >= LockManager::GetPollRetry()) {
     this->UndoLocking(context_, request);
     return 0;
   }
-  ++context_->retry;
+  ++user_retry_count_[request->user_id];
   this->ReadRemotely(context_,
       request->seq_no,
       request->user_id,

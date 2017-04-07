@@ -4,8 +4,8 @@ namespace rdma { namespace proto {
 
 // constructor
 NotifyLockClient::NotifyLockClient(const string& work_dir, LockManager* local_manager,
-    LockSimulator* local_user,
-    uint32_t remote_lm_id) : LockClient(work_dir, local_manager, local_user, remote_lm_id) {
+    uint32_t local_user_count,
+    uint32_t remote_lm_id) : LockClient(work_dir, local_manager, local_user_count, remote_lm_id) {
   pthread_mutex_init(&wait_mutex_, NULL);
   pthread_cond_init(&wait_cond_, NULL);
 }

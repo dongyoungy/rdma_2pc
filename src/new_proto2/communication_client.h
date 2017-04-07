@@ -11,7 +11,7 @@ class CommunicationClient : public Client {
 
   public:
     CommunicationClient(const string& work_dir, LockManager* local_manager,
-        LockSimulator* local_user,
+        uint32_t local_user_count,
         int remote_lm_id);
     ~CommunicationClient();
 

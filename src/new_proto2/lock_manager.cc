@@ -10,8 +10,8 @@ namespace rdma { namespace proto {
 int LockManager::shared_exclusive_rule_    = LockManager::RULE_FAIL;
 int LockManager::exclusive_shared_rule_    = LockManager::RULE_FAIL;
 int LockManager::exclusive_exclusive_rule_ = LockManager::RULE_FAIL;
-int LockManager::poll_retry_               = 10;
-int LockManager::fail_retry_               = 10;
+int LockManager::poll_retry_               = 3;
+int LockManager::fail_retry_               = 3;
 map<uint32_t, uint32_t> LockManager::user_to_node_map_;
 
 // constructor
@@ -166,11 +166,11 @@ int LockManager::InitializeLockClients() {
       pthread_t* client_thread = new pthread_t;
       LockClient* client;
       if (lock_mode_ == LOCK_REMOTE_NOTIFY)
-        client = new NotifyLockClient(work_dir_, this, user, i);
+        client = new NotifyLockClient(work_dir_, this, users.size(), i);
       else if (lock_mode_ == LOCK_REMOTE_QUEUE)
-        client = new DirectQueueLockClient(work_dir_, this, user, i);
+        client = new DirectQueueLockClient(work_dir_, this, users.size(), i);
       else
-        client = new LockClient(work_dir_, this, user, i);
+        client = new LockClient(work_dir_, this, users.size(), i);
 
       ret = pthread_create(client_thread, NULL,
             &LockManager::RunLockClient, (void*)client);
@@ -192,7 +192,7 @@ int LockManager::InitializeLockClients() {
       user_to_home_map_[user->GetID()] = i;
     }
 
-    CommunicationClient* comm_client = new CommunicationClient(work_dir_, this, NULL, i);
+    CommunicationClient* comm_client = new CommunicationClient(work_dir_, this, users.size(), i);
     pthread_t* comm_client_thread    = new pthread_t;
     ret = pthread_create(comm_client_thread, NULL,
         &LockManager::RunLockClient, (void*)comm_client);

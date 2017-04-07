@@ -11,7 +11,7 @@ namespace rdma { namespace proto {
 class DirectQueueLockClient : public LockClient {
   public:
     DirectQueueLockClient(const string& work_dir, LockManager* local_manager,
-        LockSimulator* local_user,
+        uint32_t local_user_count,
         uint32_t remote_lm_id);
     ~DirectQueueLockClient();
 
