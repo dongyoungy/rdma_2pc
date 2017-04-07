@@ -4,8 +4,8 @@ namespace rdma { namespace proto {
 
 // constructor
 CommunicationClient::CommunicationClient(const string& work_dir, LockManager* local_manager,
-    LockSimulator* local_user,
-    int remote_lm_id) : Client(work_dir, local_manager, local_user, remote_lm_id) {
+    uint32_t local_user_count,
+    int remote_lm_id) : Client(work_dir, local_manager, local_user_count, remote_lm_id) {
   pthread_mutex_init(&communication_mutex_, NULL);
   is_waiting_ack_ = false;
 }
@@ -18,7 +18,7 @@ CommunicationClient::~CommunicationClient() {
 int CommunicationClient::GrantLock(int seq_no, int target_node_id, int owner_user_id,
     int obj_index, int lock_type) {
   while (is_waiting_ack_) {
-    usleep(5); // busy-wait
+    usleep(50); // busy-wait
   }
   pthread_mutex_lock(&communication_mutex_);
   Message* msg = context_->send_message_buffer->GetMessage();

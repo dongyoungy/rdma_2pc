@@ -4,13 +4,30 @@ namespace rdma { namespace proto {
 
 // constructor
 LockClient::LockClient(const string& work_dir, LockManager* local_manager,
-    LockSimulator* local_user,
-    uint32_t remote_lm_id) : Client(work_dir, local_manager, local_user, remote_lm_id) {
+    uint32_t local_user_count,
+    uint32_t remote_lm_id) : Client(work_dir, local_manager, local_user_count, remote_lm_id) {
   message_in_progress_ = false;
+
+  user_retry_count_ = new int[local_user_count+1];
+  user_fail_        = new bool[local_user_count+1];
+  user_polling_     = new bool[local_user_count+1];
+  user_waiters_     = new uint32_t[local_user_count+1];
+  user_all_waiters_ = new uint64_t[local_user_count+1];
+
+  memset(user_retry_count_, 0x00, sizeof(int)*(local_user_count+1));
+  memset(user_fail_, 0x00, sizeof(bool)*(local_user_count+1));
+  memset(user_polling_, 0x00, sizeof(bool)*(local_user_count+1));
+  memset(user_waiters_, 0x00, sizeof(uint32_t)*(local_user_count+1));
+  memset(user_all_waiters_, 0x00, sizeof(uint64_t)*(local_user_count+1));
 }
 
 // destructor
 LockClient::~LockClient() {
+  delete[] user_retry_count_;
+  delete[] user_fail_;
+  delete[] user_polling_;
+  delete[] user_waiters_;
+  delete[] user_all_waiters_;
 }
 
 int LockClient::HandleConnection(Context* context) {
@@ -264,13 +281,13 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
         }
       }
     } else if (request->task == TASK_UNLOCK) {
-      if (context_->fail) {
-        context_->fail = false;
-        if (context_->polling) {
-          context_->polling = false;
+      if (user_fail_[request->user_id]) {
+        user_fail_[request->user_id] = false;
+        if (user_polling_[request->user_id]) {
+          user_polling_[request->user_id] = false;
         } else {
-          ++context_->retry;
-          if (context_->retry > LockManager::GetPollRetry()) {
+          ++user_retry_count_[request->user_id];
+          if (user_retry_count_[request->user_id] > LockManager::GetPollRetry()) {
             local_manager_->NotifyLockRequestResult(
                 request->seq_no,
                 request->user_id,
@@ -350,7 +367,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     } else {
       if (request->lock_type == EXCLUSIVE) {
         // exclusive -> exclusive
-        if (context_->retry > LockManager::GetPollRetry()) {
+        if (user_retry_count_[request->user_id] > LockManager::GetPollRetry()) {
           local_manager_->NotifyLockRequestResult(
               request->seq_no,
               request->user_id,
@@ -431,7 +448,7 @@ int LockClient::HandleExclusiveToShared(LockRequest* request) {
         waitlist_[request->obj_index] = 0;
       }
       if (waitlist_[request->obj_index] == 0) {
-        context_->waiters = request->exclusive;
+        user_waiters_[request->user_id] = request->exclusive;
         request->read_target = EXCLUSIVE;
         this->ReadRemotely(context_,
           request->seq_no,
@@ -474,7 +491,7 @@ int LockClient::HandleExclusiveToExclusive(LockRequest* request) {
         waitlist_[request->obj_index] = 0;
       }
       if (waitlist_[request->obj_index] == 0) {
-        context_->waiters = request->exclusive;
+        user_waiters_[request->user_id] = request->exclusive;
         request->read_target = EXCLUSIVE;
         this->ReadRemotely(context_,
             request->seq_no,
@@ -495,8 +512,8 @@ int LockClient::HandleExclusiveToExclusive(LockRequest* request) {
 }
 
 int LockClient::UndoLocking(Context* context, LockRequest* request, bool polling) {
-  context->fail = true;
-  context->polling = polling;
+  user_fail_[request->user_id] = true;
+  user_polling_[request->user_id] = polling;
   this->UnlockRemotely(context,
       request->seq_no,
       request->user_id,
@@ -508,8 +525,8 @@ int LockClient::UndoLocking(Context* context, LockRequest* request, bool polling
 }
 
 int LockClient::PollSharedToExclusive(LockRequest* request) {
-  ++context_->retry;
-  if (context_->retry > LockManager::GetPollRetry()) {
+  ++user_retry_count_[request->user_id];
+  if (user_retry_count_[request->user_id] > LockManager::GetPollRetry()) {
     this->UndoLocking(context_, request);
     return FUNC_SUCCESS;
   }
@@ -532,8 +549,9 @@ int LockClient::PollSharedToExclusive(LockRequest* request) {
 }
 
 int LockClient::PollExclusiveToShared(LockRequest* request) {
-  ++context_->retry;
-  if (context_->retry > LockManager::GetPollRetry()) {
+  ++user_retry_count_[request->user_id];
+  if (user_retry_count_[request->user_id] > LockManager::GetPollRetry()) {
+    cout << "THIS JUST HAPPENDED!" << endl;
     this->UndoLocking(context_, request);
     return FUNC_SUCCESS;
   }
@@ -543,7 +561,7 @@ int LockClient::PollExclusiveToShared(LockRequest* request) {
     case RULE_POLL:
       if (value == 0) {
         ++total_lock_success_with_poll_;
-        sum_poll_when_success_ += context_->retry;
+        sum_poll_when_success_ += user_retry_count_[request->user_id];
         local_manager_->NotifyLockRequestResult(
             request->seq_no,
             request->user_id,
@@ -561,7 +579,7 @@ int LockClient::PollExclusiveToShared(LockRequest* request) {
       }
       break;
     case RULE_QUEUE:
-      if ((value & context_->waiters) == 0) {
+      if ((value & user_waiters_[request->user_id]) == 0) {
         local_manager_->NotifyLockRequestResult(
             request->seq_no,
             request->user_id,
@@ -587,8 +605,9 @@ int LockClient::PollExclusiveToShared(LockRequest* request) {
 
 int LockClient::PollExclusiveToExclusive(LockRequest* request) {
   int rule = LockManager::GetExclusiveExclusiveRule();
-  ++context_->retry;
-  if (context_->retry > LockManager::GetPollRetry() && rule == RULE_QUEUE) {
+  ++user_retry_count_[request->user_id];
+  if (++user_retry_count_[request->user_id] > LockManager::GetPollRetry() &&
+      rule == RULE_QUEUE) {
     this->UndoLocking(context_, request);
     return FUNC_SUCCESS;
   }
@@ -615,7 +634,7 @@ int LockClient::PollExclusiveToExclusive(LockRequest* request) {
       }
       break;
     case RULE_QUEUE:
-      if ((value & context_->waiters) == 0) {
+      if ((value & user_waiters_[request->user_id]) == 0) {
         local_manager_->NotifyLockRequestResult(
             request->seq_no,
             request->user_id,
@@ -677,11 +696,17 @@ int LockClient::SendLockTableRequest(Context* context) {
 
 int LockClient::RequestLock(int seq_no, uint32_t user_id, int lock_type, int obj_index,
     int lock_mode) {
-  context_->fail        = false;
-  context_->polling     = false;
-  context_->retry       = 0;
-  context_->waiters     = 0;
-  context_->all_waiters = 0;
+  user_retry_count_[user_id] = 0;
+  user_fail_[user_id]        = false;
+  user_polling_[user_id]     = false;
+  user_waiters_[user_id]     = 0;
+  user_all_waiters_[user_id] = 0;
+
+  //context_->fail        = false;
+  //context_->polling     = false;
+  //context_->retry       = 0;
+  //context_->waiters     = 0;
+  //context_->all_waiters = 0;
   if (lock_mode == LOCK_PROXY_RETRY ||
       lock_mode == LOCK_PROXY_QUEUE) {
     // ask lock manager to place the lock

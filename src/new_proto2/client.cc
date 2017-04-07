@@ -5,7 +5,7 @@ namespace rdma { namespace proto {
 
 // constructor
 Client::Client(const string& work_dir, LockManager* local_manager,
-    LockSimulator* local_user,
+    uint32_t local_user_count,
     uint32_t remote_lm_id) {
   work_dir_                         = work_dir;
   context_                          = NULL;
@@ -13,7 +13,7 @@ Client::Client(const string& work_dir, LockManager* local_manager,
   connection_                       = NULL;
   address_                          = NULL;
   local_manager_                    = local_manager;
-  local_user_                       = local_user;
+  local_user_count_                 = local_user_count;
   remote_lm_id_                     = remote_lm_id;
   initialized_                      = false;
   total_exclusive_lock_remote_time_ = 0;

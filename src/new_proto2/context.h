@@ -18,8 +18,8 @@ struct Context {
   Client* client;
 
   bool connected;
-  bool fail;
-  bool polling;
+  //bool fail;
+  //bool polling;
   struct rdma_cm_id* id;
   struct ibv_qp* queue_pair;
 
@@ -31,19 +31,19 @@ struct Context {
   MessageBuffer* send_message_buffer;
   MessageBuffer* receive_message_buffer;
 
-  int read_purpose;
-  int last_user_id;
-  int last_lock_type;
-  int last_obj_index;
-  int last_lock_task;
-  int last_read_target;
-  int last_seq_no;
-  int retry;
+  //int read_purpose;
+  //int last_user_id;
+  //int last_lock_type;
+  //int last_obj_index;
+  //int last_lock_task;
+  //int last_read_target;
+  //int last_seq_no;
+  //int retry;
 
-  uint32_t shared;
-  uint32_t exclusive;
-  uint32_t waiters;
-  uint64_t all_waiters;
+  //uint32_t shared;
+  //uint32_t exclusive;
+  //uint32_t waiters;
+  //uint64_t all_waiters;
 
   uint64_t* lock_table;
   struct ibv_mr* lock_table_mr;

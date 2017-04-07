@@ -11,7 +11,7 @@ namespace rdma { namespace proto {
 class NotifyLockClient : public LockClient {
   public:
     NotifyLockClient(const string& work_dir, LockManager* local_manager,
-        LockSimulator* local_user,
+        uint32_t local_user_count,
         uint32_t remote_lm_id);
     ~NotifyLockClient();
     virtual int RequestLock(int seq_no, uint32_t user_id, int lock_type, int obj_index,

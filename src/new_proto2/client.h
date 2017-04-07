@@ -30,7 +30,7 @@ class Client {
 
   public:
     Client(const string& work_dir, LockManager* local_manager,
-        LockSimulator* local_user,
+        uint32_t local_user_count,
         uint32_t remote_lm_id);
     ~Client();
     int Run();
@@ -88,6 +88,7 @@ class Client {
     LockRequest** lock_requests_;
     LockManager* local_manager_;
     LockSimulator* local_user_;
+    uint32_t local_user_count_;
     Context* context_;
     uint32_t local_owner_id_;
     uint32_t local_owner_bitvector_id_;

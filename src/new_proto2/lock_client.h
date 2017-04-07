@@ -1,6 +1,7 @@
 #ifndef RDMA_PROTO_LOCK_CLIENT_H
 #define RDMA_PROTO_LOCK_CLIENT_H
 
+#include <unordered_map>
 #include "client.h"
 
 using namespace std;
@@ -11,7 +12,7 @@ class LockClient : public Client {
 
   public:
     LockClient(const string& work_dir, LockManager* local_manager,
-        LockSimulator* local_user,
+        uint32_t local_user_count,
         uint32_t remote_lm_id);
     ~LockClient();
     virtual int RequestLock(int seq_no, uint32_t user_id, int lock_type, int obj_index,
@@ -50,6 +51,13 @@ class LockClient : public Client {
     int PollExclusiveToExclusive(LockRequest* request);
 
     int UndoLocking(Context* context, LockRequest* request, bool polling = false);
+
+    int* user_retry_count_;
+    bool* user_fail_;
+    bool* user_polling_;
+    uint32_t* user_waiters_;
+    uint64_t* user_all_waiters_;
+
   private:
     volatile bool message_in_progress_;
     map<uint32_t, uint32_t> waitlist_;
