@@ -28,7 +28,7 @@ binaries = []
 # binaries.append(b)
 # b = SConscript('src/algo2/SConscript', variant_dir='build/algo2', duplicate=0, exports='env')
 # binaries.append(b)
-b = SConscript('src/new_proto2/SConscript', variant_dir='build/new_proto2', duplicate=0, exports='env')
+b = SConscript('src/new_proto3/SConscript', variant_dir='build/new_proto3', duplicate=0, exports='env')
 binaries.append(b)
 b = SConscript('src/test_zipf/SConscript', variant_dir='build/test_zipf', duplicate=0, exports='env')
 binaries.append(b)
