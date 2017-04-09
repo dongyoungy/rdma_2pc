@@ -551,7 +551,6 @@ int LockClient::PollSharedToExclusive(LockRequest* request) {
 int LockClient::PollExclusiveToShared(LockRequest* request) {
   ++user_retry_count_[request->user_id];
   if (user_retry_count_[request->user_id] > LockManager::GetPollRetry()) {
-    cout << "THIS JUST HAPPENDED!" << endl;
     this->UndoLocking(context_, request);
     return FUNC_SUCCESS;
   }
