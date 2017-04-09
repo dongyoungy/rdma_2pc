@@ -310,6 +310,10 @@ int main(int argc, char** argv) {
   int min_time_taken = 0;
   int time_taken2 = 0;
   int time_taken3 = 0;
+  uint64_t last_tx_done = 0;
+  int not_done_count = 0;
+  bool is_deadlock = false;
+  const int deadlock_threshold = 20;
   uint64_t* tx_done = new uint64_t[64000];
   uint64_t* locks_done = new uint64_t[64000];
   memset(tx_done, 0x00, sizeof(uint64_t)*64000);
@@ -325,37 +329,48 @@ int main(int argc, char** argv) {
       }
     }
     cout << rank << "," << time_taken2 << ":" << tx_done[time_taken2] << endl;
+    if (tx_done[time_taken2] == last_tx_done) {
+      ++not_done_count;
+    } else {
+      last_tx_done = tx_done[time_taken2];
+      not_done_count = 0;
+    }
+    if (not_done_count >= deadlock_threshold) {
+      is_deadlock = true;
+      break;
+    }
     ++time_taken2;
-    //cout << rank << "," << users[0]->GetID() << "," << time_taken2 << " : " << users[0]->GetCount() <<
-      //"," << users[0]->GetCurrentBackoff() << endl;
     if (simulator_done) break;
     sleep(1);
   }
   time_taken3 = time_taken2;
 
-  for (unsigned int i=0;i<users.size();++i) {
-    LockSimulator* simulator = users[i];
-    while (simulator->GetState() != LockSimulator::STATE_DONE) {
-      ++time_taken2;
-      //if (time_taken2 > 40) {
-        //users[i]->SetVerbose(true);
-      //}
-      //if (rank == 0) {
+  if (!is_deadlock) {
+    for (unsigned int i=0;i<users.size();++i) {
+      LockSimulator* simulator = users[i];
+      last_tx_done = 0;
+      not_done_count = 0;
+      while (simulator->GetState() != LockSimulator::STATE_DONE) {
+        if (users[i]->GetCount() == last_tx_done) {
+          ++not_done_count;
+        } else {
+          last_tx_done = users[i]->GetCount();
+          not_done_count = 0;
+        }
+        if (not_done_count >= deadlock_threshold) {
+          is_deadlock = true;
+          break;
+        }
+        ++time_taken2;
         cout << rank << "," << users[i]->GetID() << "," << time_taken2 << " : " << users[i]->GetCount() <<
           "," << users[i]->GetCurrentBackoff() << endl;
-      //}
-      sleep(1);
+        sleep(1);
+      }
+      if (is_deadlock) {
+        break;
+      }
     }
   }
-
-  //int temp1 = 0;
-  //while (rank < client_start_idx) {
-    //sleep(1);
-    //++temp1;
-    //if (temp1 > 30) {
-       //lock_manager->PrintTemp();
-    //}
-  //}
 
   time(&end_time);
   double time_taken = difftime(end_time, start_time);
@@ -787,8 +802,12 @@ int main(int argc, char** argv) {
       max_tx_throughput << "," << max_lock_throughput << "," <<
       global_rdma_send_count << "," << global_rdma_recv_count << "," <<
       global_rdma_write_count << "," << global_rdma_read_count << "," <<
-      global_rdma_atomic_count <<
-      endl;
+      global_rdma_atomic_count;
+    if (is_deadlock) {
+       cerr << ",DEADLOCK" << endl;
+    } else {
+      cerr << endl;
+    }
   }
 
   MPI_Finalize();

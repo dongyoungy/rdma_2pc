@@ -21,11 +21,14 @@ class NotifyLockClient : public LockClient {
 
     int TryLock(int seq_no, int user_id, int lock_type, int obj_index);
   protected:
+    int ReadForLock(Context* context, int seq_no, uint32_t user_id, int lock_type, int obj_index);
     int ReadForUnlock(Context* context, int seq_no, uint32_t user_id, int lock_type, int obj_index);
     int UnlockRemotely(Context* context, int seq_no, uint32_t user_id, int lock_type, int obj_index,
         bool is_undo = false);
     int UnlockRemotelyCS(Context* context, int seq_no, uint32_t user_id, int lock_type,
         int obj_index, uint64_t prev_value, uint64_t new_value);
+    int LockRemotelyCS(Context* context, int seq_no, uint32_t user_id, int lock_type,
+        int obj_index, uint64_t prev_value);
     int NotifyWaitingNodes(LockRequest* request, uint64_t value);
     int GetNumberOfLockWaiters(uint32_t value);
     int FindNodePosition(uint32_t value);

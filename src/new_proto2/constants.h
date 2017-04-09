@@ -25,6 +25,7 @@ namespace rdma { namespace proto {
   static const int TASK_UNLOCK = 1;
   static const int TASK_READ = 2;
   static const int TASK_READ_UNLOCK = 3;
+  static const int TASK_READ_LOCK = 4;
 
   static const int RESULT_SUCCESS = 0;
   static const int RESULT_FAILURE = 1;

@@ -143,7 +143,7 @@ void TPCCLockSimulator::CreateLockRequests() {
       last_count_     = count_;
       int amount      = rand_r(&backoff_seed_) % current_backoff_time_;
       is_backing_off_ = true;
-      usleep(amount);
+      this_thread::sleep_for (chrono::microseconds(amount));
       is_backing_off_ = false;
     }
 

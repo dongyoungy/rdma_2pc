@@ -16,13 +16,59 @@ NotifyLockClient::~NotifyLockClient() {
 
 int NotifyLockClient::RequestLock(int seq_no, uint32_t user_id, int lock_type, int obj_index,
     int lock_mode) {
-  return this->LockRemotely(context_, seq_no, user_id, lock_type, obj_index);
+  return this->LockRemotelyCS(context_, seq_no, user_id, lock_type, obj_index, 0); // assume zero
 }
 
 int NotifyLockClient::RequestUnlock(int seq_no, uint32_t user_id, int lock_type, int obj_index,
     int lock_mode) {
-  return this->UnlockRemotely(context_, seq_no, user_id, lock_type, obj_index);
-  //return this->ReadForUnlock(context_, seq_no, user_id, lock_type, obj_index);
+  //return this->UnlockRemotely(context_, seq_no, user_id, lock_type, obj_index);
+  return this->ReadForUnlock(context_, seq_no, user_id, lock_type, obj_index);
+}
+
+// read lock object for locking
+int NotifyLockClient::ReadForLock(Context* context, int seq_no, uint32_t user_id, int lock_type,
+    int obj_index) {
+
+  struct ibv_exp_send_wr send_work_request;
+  struct ibv_exp_send_wr* bad_work_request;
+  struct ibv_sge sge;
+
+  memset(&send_work_request, 0x00, sizeof(send_work_request));
+
+  pthread_mutex_lock(&lock_mutex_);
+  LockRequest* request = lock_requests_[lock_request_idx_];
+  request->seq_no    = seq_no;
+  request->user_id   = user_id;
+  request->obj_index = obj_index;
+  request->lock_type = lock_type;
+  request->task      = TASK_READ_LOCK;
+  lock_request_idx_  = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
+
+  sge.addr   = (uint64_t)request->read_buffer2;
+  sge.length = sizeof(uint64_t);
+  sge.lkey   = request->read_buffer2_mr->lkey;
+
+  send_work_request.wr_id          = (uint64_t)request;
+  send_work_request.num_sge        = 1;
+  send_work_request.sg_list        = &sge;
+  send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
+  send_work_request.exp_opcode     = IBV_EXP_WR_RDMA_READ;
+
+  send_work_request.wr.rdma.rkey = context->lock_table_mr->rkey;
+  send_work_request.wr.rdma.remote_addr =
+      (uint64_t)context->lock_table_mr->addr + (obj_index*sizeof(uint64_t));
+
+  int ret = 0;
+  if ((ret = ibv_exp_post_send(context->queue_pair, &send_work_request,
+          &bad_work_request))) {
+    cerr << "ReadForUnlock(): ibv_exp_post_send() failed: " << strerror(ret) << endl;
+    pthread_mutex_unlock(&lock_mutex_);
+    return -1;
+  }
+
+  ++num_rdma_read_;
+  pthread_mutex_unlock(&lock_mutex_);
+  return 0;
 }
 
 // read lock object for unlocking
@@ -42,7 +88,7 @@ int NotifyLockClient::ReadForUnlock(Context* context, int seq_no, uint32_t user_
   request->obj_index = obj_index;
   request->lock_type = lock_type;
   request->task      = TASK_READ_UNLOCK;
-  lock_request_idx_  = (lock_request_idx_ + 1) % 16;
+  lock_request_idx_  = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
   sge.addr   = (uint64_t)request->read_buffer2;
   sge.length = sizeof(uint64_t);
@@ -89,7 +135,7 @@ int NotifyLockClient::UnlockRemotely(Context* context, int seq_no, uint32_t user
   request->obj_index = obj_index;
   request->is_undo   = is_undo;
   request->task      = TASK_UNLOCK;
-  lock_request_idx_  = (lock_request_idx_ + 1) % 16;
+  lock_request_idx_  = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
   sge.addr   = (uint64_t)request->original_value;
   sge.length = sizeof(uint64_t);
@@ -132,6 +178,67 @@ int NotifyLockClient::UnlockRemotely(Context* context, int seq_no, uint32_t user
   return 0;
 }
 
+int NotifyLockClient::LockRemotelyCS(Context* context, int seq_no, uint32_t user_id,
+    int lock_type, int obj_index, uint64_t prev_value) {
+
+  uint32_t exclusive, shared;
+  struct ibv_exp_send_wr send_work_request;
+  struct ibv_exp_send_wr* bad_work_request;
+  struct ibv_sge sge;
+
+  memset(&send_work_request, 0x00, sizeof(send_work_request));
+
+  pthread_mutex_lock(&lock_mutex_);
+  LockRequest* request = lock_requests_[lock_request_idx_];
+  request->seq_no     = seq_no;
+  request->user_id    = user_id;
+  request->lock_type  = lock_type;
+  request->obj_index  = obj_index;
+  request->task       = TASK_LOCK;
+  request->prev_value = prev_value;
+  lock_request_idx_   = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
+
+  sge.addr   = (uint64_t)request->original_value;
+  sge.length = sizeof(uint64_t);
+  sge.lkey   = request->original_value_mr->lkey;
+
+  send_work_request.wr_id                 = (uint64_t)request;
+  send_work_request.num_sge               = 1;
+  send_work_request.sg_list               = &sge;
+  send_work_request.exp_send_flags        = IBV_EXP_SEND_SIGNALED;
+  send_work_request.exp_opcode            = IBV_EXP_WR_ATOMIC_CMP_AND_SWP;
+
+  if (lock_type == LockManager::SHARED) {
+    exclusive = 0;
+    shared = local_owner_bitvector_id_;
+    uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
+    send_work_request.wr.atomic.swap = (prev_value | new_value);
+  } else if (lock_type == LockManager::EXCLUSIVE) {
+    exclusive = local_owner_bitvector_id_;
+    shared = 0;
+    uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
+    send_work_request.wr.atomic.swap = (prev_value | new_value);
+  }
+
+  send_work_request.wr.atomic.compare_add = prev_value;
+  send_work_request.wr.atomic.remote_addr =
+    (uint64_t)context->lock_table_mr->addr + (obj_index*sizeof(uint64_t));
+  send_work_request.wr.atomic.rkey        =
+    context->lock_table_mr->rkey;
+
+  int ret = 0;
+  if ((ret = ibv_exp_post_send(context->queue_pair, &send_work_request,
+          &bad_work_request))) {
+    cerr << "NotifyLockClient::LockRemotelyCS(): ibv_exp_post_send() failed: " << strerror(ret) <<
+      endl;
+    pthread_mutex_unlock(&lock_mutex_);
+    return -1;
+  }
+  ++num_rdma_atomic_;
+  pthread_mutex_unlock(&lock_mutex_);
+  return 0;
+}
+
 int NotifyLockClient::UnlockRemotelyCS(Context* context, int seq_no, uint32_t user_id,
     int lock_type, int obj_index, uint64_t prev_value, uint64_t new_value) {
 
@@ -150,7 +257,7 @@ int NotifyLockClient::UnlockRemotelyCS(Context* context, int seq_no, uint32_t us
   request->obj_index  = obj_index;
   request->task       = TASK_UNLOCK;
   request->prev_value = prev_value;
-  lock_request_idx_   = (lock_request_idx_ + 1) % 16;
+  lock_request_idx_   = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
   sge.addr   = (uint64_t)request->original_value;
   sge.length = sizeof(uint64_t);
@@ -584,81 +691,162 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     exclusive = (uint32_t)((value)>>32);
     shared    = (uint32_t)value;
 
-    if (value == request->prev_value) {
-      // Unlock successful
-      pthread_mutex_lock(&wait_mutex_);
-      wait_after_me_[request->obj_index] = value;
-      pthread_mutex_unlock(&wait_mutex_);
+    if (request->task == TASK_LOCK) {
+      if (value == request->prev_value) {
+        if (request->lock_type == EXCLUSIVE) {
+          if (exclusive == 0 && shared == 0) {
+            // exclusive lock acquisition successful
+            pthread_mutex_lock(&wait_mutex_);
+            wait_after_me_[request->obj_index] = 0;
+            wait_seq_no_ = -1;
+            pthread_mutex_unlock(&wait_mutex_);
+            ++total_lock_success_;
+            local_manager_->NotifyLockRequestResult(
+                request->seq_no,
+                request->user_id,
+                request->lock_type,
+                remote_lm_id_,
+                request->obj_index,
+                RESULT_SUCCESS);
+          } else {
+            pthread_mutex_lock(&wait_mutex_);
+            wait_before_me_[request->obj_index] = value;
+            wait_after_me_[request->obj_index]  = 0;
+            wait_seq_no_                        = request->seq_no;
+            wait_user_id_                       = request->user_id;
+            wait_lock_type_                     = request->lock_type;
+            wait_obj_index_                     = request->obj_index;
+            //pthread_cond_signal(&wait_cond_);
+            pthread_mutex_unlock(&wait_mutex_);
 
-      if (request->lock_type == EXCLUSIVE) {
-        prev_value = ((uint64_t)(exclusive - local_owner_bitvector_id_)) << 32 | shared;
-      } else {
-        prev_value = ((uint64_t)exclusive) << 32 | (shared - local_owner_bitvector_id_);
-      }
-      int ret = NotifyWaitingNodes(request, prev_value);
-      local_manager_->NotifyUnlockRequestResult(
-          request->seq_no,
-          request->user_id,
-          request->lock_type,
-          remote_lm_id_,
-          request->obj_index,
-          RESULT_SUCCESS);
-    } else {
-      // unlock failed --> re-read the lock object
-      //this->ReadForUnlock(context_,
-          //request->seq_no,
-          //request->user_id,
-          //request->lock_type,
-          //request->obj_index);
-      if (lock_type == SHARED) {
-        if ((shared & user_id) != 0) {
-          // needs to unlock
-          uint64_t new_value = (uint64_t)exclusive << 32 | (shared - user_id);
-          this->UnlockRemotelyCS(context_,
-             request->seq_no,
-             request->user_id,
-             request->lock_type,
-             request->obj_index,
-             value, new_value);
-        } else {
-          // shared lock already 0 --> unlock successful
-          pthread_mutex_lock(&wait_mutex_);
-          wait_after_me_[request->obj_index] = value;
-          pthread_mutex_unlock(&wait_mutex_);
+            ++total_lock_contention_;
+            local_manager_->NotifyLockRequestResult(
+                request->seq_no,
+                request->user_id,
+                request->lock_type,
+                remote_lm_id_,
+                request->obj_index,
+                RESULT_QUEUED);
+          }
+        } else if (request->lock_type == SHARED) {
+          if (exclusive == 0) {
+            // shared lock acquisition successful
+            pthread_mutex_lock(&wait_mutex_);
+            wait_after_me_[request->obj_index] = 0;
+            wait_seq_no_ = -1;
+            pthread_mutex_unlock(&wait_mutex_);
+            ++total_lock_success_;
+            local_manager_->NotifyLockRequestResult(
+                request->seq_no,
+                request->user_id,
+                request->lock_type,
+                remote_lm_id_,
+                request->obj_index,
+                LockManager::RESULT_SUCCESS);
+          } else {
+            pthread_mutex_lock(&wait_mutex_);
+            wait_after_me_[request->obj_index]  = 0;
+            wait_before_me_[request->obj_index] = value;
+            wait_seq_no_                        = request->seq_no;
+            wait_user_id_                       = request->user_id;
+            wait_lock_type_                     = request->lock_type;
+            wait_obj_index_                     = request->obj_index;
+            pthread_mutex_unlock(&wait_mutex_);
 
-          int ret = NotifyWaitingNodes(request, value);
-          local_manager_->NotifyUnlockRequestResult(
-              request->seq_no,
-              request->user_id,
-              request->lock_type,
-              remote_lm_id_,
-              request->obj_index,
-              RESULT_SUCCESS);
+            ++total_lock_contention_;
+            local_manager_->NotifyLockRequestResult(
+                request->seq_no,
+                request->user_id,
+                request->lock_type,
+                remote_lm_id_,
+                request->obj_index,
+                RESULT_QUEUED);
+          }
         }
       } else {
-        if ((exclusive & user_id) != 0) {
-          // needs to unlock
-          uint64_t new_value = (uint64_t)(exclusive - user_id) << 32 | shared;
-          this->UnlockRemotelyCS(context_,
+         this->LockRemotelyCS(context_,
              request->seq_no,
              request->user_id,
              request->lock_type,
-             request->obj_index,
-             value, new_value);
-        } else {
-          // exclusive lock already 0 --> unlock successful
-          pthread_mutex_lock(&wait_mutex_);
-          wait_after_me_[request->obj_index] = value;
-          pthread_mutex_unlock(&wait_mutex_);
+             request->obj_index, value);
+      }
+    } else if (request->task == TASK_UNLOCK) {
+        if (value == request->prev_value) {
+        // Unlock successful
+        pthread_mutex_lock(&wait_mutex_);
+        wait_after_me_[request->obj_index] = value;
+        pthread_mutex_unlock(&wait_mutex_);
 
-          int ret = NotifyWaitingNodes(request, value);
-          local_manager_->NotifyUnlockRequestResult(
-              request->seq_no,
-              request->user_id,
-              request->lock_type,
-              remote_lm_id_,
-              request->obj_index,
-              RESULT_SUCCESS);
+        if (request->lock_type == EXCLUSIVE) {
+          prev_value = ((uint64_t)(exclusive - local_owner_bitvector_id_)) << 32 | shared;
+        } else {
+          prev_value = ((uint64_t)exclusive) << 32 | (shared - local_owner_bitvector_id_);
+        }
+        int ret = NotifyWaitingNodes(request, prev_value);
+        local_manager_->NotifyUnlockRequestResult(
+            request->seq_no,
+            request->user_id,
+            request->lock_type,
+            remote_lm_id_,
+            request->obj_index,
+            RESULT_SUCCESS);
+      } else {
+        // unlock failed --> re-read the lock object
+        //this->ReadForUnlock(context_,
+        //request->seq_no,
+        //request->user_id,
+        //request->lock_type,
+        //request->obj_index);
+        if (lock_type == SHARED) {
+          if ((shared & user_id) != 0) {
+            // needs to unlock
+            uint64_t new_value = (uint64_t)exclusive << 32 | (shared - user_id);
+            this->UnlockRemotelyCS(context_,
+                request->seq_no,
+                request->user_id,
+                request->lock_type,
+                request->obj_index,
+                value, new_value);
+          } else {
+            // shared lock already 0 --> unlock successful
+            pthread_mutex_lock(&wait_mutex_);
+            wait_after_me_[request->obj_index] = value;
+            pthread_mutex_unlock(&wait_mutex_);
+
+            int ret = NotifyWaitingNodes(request, value);
+            local_manager_->NotifyUnlockRequestResult(
+                request->seq_no,
+                request->user_id,
+                request->lock_type,
+                remote_lm_id_,
+                request->obj_index,
+                RESULT_SUCCESS);
+          }
+        } else {
+          if ((exclusive & user_id) != 0) {
+            // needs to unlock
+            uint64_t new_value = (uint64_t)(exclusive - user_id) << 32 | shared;
+            this->UnlockRemotelyCS(context_,
+                request->seq_no,
+                request->user_id,
+                request->lock_type,
+                request->obj_index,
+                value, new_value);
+          } else {
+            // exclusive lock already 0 --> unlock successful
+            pthread_mutex_lock(&wait_mutex_);
+            wait_after_me_[request->obj_index] = value;
+            pthread_mutex_unlock(&wait_mutex_);
+
+            int ret = NotifyWaitingNodes(request, value);
+            local_manager_->NotifyUnlockRequestResult(
+                request->seq_no,
+                request->user_id,
+                request->lock_type,
+                remote_lm_id_,
+                request->obj_index,
+                RESULT_SUCCESS);
+          }
         }
       }
     }
