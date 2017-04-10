@@ -8,17 +8,18 @@ LockClient::LockClient(const string& work_dir, LockManager* local_manager,
     uint32_t remote_lm_id) : Client(work_dir, local_manager, local_user_count, remote_lm_id) {
   message_in_progress_ = false;
 
-  user_retry_count_ = new int[local_user_count+1];
-  user_fail_        = new bool[local_user_count+1];
-  user_polling_     = new bool[local_user_count+1];
-  user_waiters_     = new uint32_t[local_user_count+1];
-  user_all_waiters_ = new uint64_t[local_user_count+1];
+  int num_manager = local_manager->GetNumManager();
+  user_retry_count_ = new int[num_manager*(local_user_count+1)];
+  user_fail_        = new bool[num_manager*(local_user_count+1)];
+  user_polling_     = new bool[num_manager*(local_user_count+1)];
+  user_waiters_     = new uint32_t[num_manager*(local_user_count+1)];
+  user_all_waiters_ = new uint64_t[num_manager*(local_user_count+1)];
 
-  memset(user_retry_count_, 0x00, sizeof(int)*(local_user_count+1));
-  memset(user_fail_, 0x00, sizeof(bool)*(local_user_count+1));
-  memset(user_polling_, 0x00, sizeof(bool)*(local_user_count+1));
-  memset(user_waiters_, 0x00, sizeof(uint32_t)*(local_user_count+1));
-  memset(user_all_waiters_, 0x00, sizeof(uint64_t)*(local_user_count+1));
+  memset(user_retry_count_, 0x00, sizeof(int)*(num_manager*(local_user_count+1)));
+  memset(user_fail_, 0x00, sizeof(bool)*(num_manager*(local_user_count+1)));
+  memset(user_polling_, 0x00, sizeof(bool)*(num_manager*(local_user_count+1)));
+  memset(user_waiters_, 0x00, sizeof(uint32_t)*(num_manager*(local_user_count+1)));
+  memset(user_all_waiters_, 0x00, sizeof(uint64_t)*(num_manager*(local_user_count+1)));
 }
 
 // destructor

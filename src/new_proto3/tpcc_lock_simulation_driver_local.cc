@@ -237,17 +237,17 @@ int main(int argc, char** argv) {
   time(&end_time);
   double time_taken = difftime(end_time, start_time);
 
-  for (int i=0;i<num_managers;++i) {
-    if (rank==i) {
-      cout << "Node = " << rank << endl;
-      for (unsigned int j=0;j<users.size();++j) {
-        LockSimulator* simulator = users[j];
-        cout << "Total Lock # = " << simulator->GetTotalNumLocks() << endl;
-        cout << "Total Unlock # = " << simulator->GetTotalNumUnlocks() << endl;
-        cout << "Time Taken = " << simulator->GetTimeTaken() << " s" << endl;
-      }
-    }
-  }
+  //for (int i=0;i<num_managers;++i) {
+    //if (rank==i) {
+      //cout << "Node = " << rank << endl;
+      //for (unsigned int j=0;j<users.size();++j) {
+        //LockSimulator* simulator = users[j];
+        //cout << "Total Lock # = " << simulator->GetTotalNumLocks() << endl;
+        //cout << "Total Unlock # = " << simulator->GetTotalNumUnlocks() << endl;
+        //cout << "Time Taken = " << simulator->GetTimeTaken() << " s" << endl;
+      //}
+    //}
+  //}
   usage.terminate = true;
   pthread_join(cpu_measure_thread, NULL);
   cout << "Avg CPU Usage = " << usage.total_cpu / usage.num_sample << endl;

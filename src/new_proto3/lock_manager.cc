@@ -1407,7 +1407,10 @@ int LockManager::UnlockLocalDirect(uint32_t user_id, int lock_type, int obj_inde
 int LockManager::NotifyLockRequestResult(int seq_no, uint32_t user_id, int lock_type,
     int target_node_id, int obj_index, int result) {
 
-  llm_->Lock(target_node_id, obj_index, user_id, lock_type, result);
+  if (lock_mode_ == LOCK_REMOTE_QUEUE || lock_mode_ == LOCK_REMOTE_NOTIFY) {
+    llm_->Lock(target_node_id, obj_index, user_id, lock_type, result);
+  }
+
   LockSimulator* user = user_map[user_id];
   user->NotifyResult(seq_no, LockManager::TASK_LOCK, lock_type, obj_index, result);
 
@@ -1422,7 +1425,10 @@ int LockManager::NotifyLockRequestResult(int seq_no, uint32_t user_id, int lock_
 int LockManager::NotifyUnlockRequestResult(int seq_no, uint32_t user_id, int lock_type,
     int target_node_id, int obj_index, int result) {
 
-  llm_->Unlock(target_node_id, obj_index, user_id, lock_type, result);
+  if (lock_mode_ == LOCK_REMOTE_QUEUE || lock_mode_ == LOCK_REMOTE_NOTIFY) {
+    llm_->Unlock(target_node_id, obj_index, user_id, lock_type, result);
+  }
+
   LockSimulator* user = user_map[user_id];
   user->NotifyResult(seq_no, LockManager::TASK_UNLOCK, lock_type, obj_index, result);
   queued_user_[obj_index] = -1;
