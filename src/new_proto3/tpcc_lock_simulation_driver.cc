@@ -233,8 +233,12 @@ int main(int argc, char** argv) {
   if (rank >= client_start_idx) {
     for (int i=0;i<num_users_per_client;++i) {
       uint32_t seq = (rank-client_start_idx)*num_users_per_client+i;
-      //uint32_t id = (uint32_t)pow(2.0, seq);
-      uint32_t id = i + 1;
+      uint32_t id  = 0;
+      if (lock_mode == LOCK_REMOTE_QUEUE || lock_mode == LOCK_REMOTE_NOTIFY) {
+        id = i+1;
+      } else {
+        id = (num_users_per_client*rank)+(i+1);
+      }
       bool verbose = false;
       TPCCLockSimulator* simulator = new TPCCLockSimulator(managers[i%num_warehouses_per_node],
           id, // id
