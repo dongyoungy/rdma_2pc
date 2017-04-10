@@ -21,6 +21,7 @@ LocalLockManager::LocalLockManager(int node_id, int num_nodes, int num_objects) 
   memset((void*)lock_status_, 0x00, sizeof(volatile int)*num_nodes*num_objects_);
   //wait_queue_ = new queue<LocalLockWaitElement>[num_nodes * num_objects];
   pthread_mutex_init(&mutex_, NULL);
+  max_shared_locks_ = 5;
 }
 
 // destructor
@@ -47,6 +48,9 @@ int LocalLockManager::TryLock(int target_node_id, int target_obj_index, int owne
       } else if (shared_counter_[index(target_node_id,target_obj_index)] > 0 &&
           exclusive_counter_[index(target_node_id,target_obj_index)] == 0) {
         ++shared_counter_[index(target_node_id, target_obj_index)];
+        //if (shared_counter_[index(target_node_id, target_obj_index)] >= max_shared_locks_) {
+          //lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_FULL;
+        //}
         ret = LOCAL_LOCK_PASS;
       } else {
         ret = LOCAL_LOCK_FAIL;
@@ -73,7 +77,8 @@ int LocalLockManager::TryUnlock(int target_node_id, int target_obj_index, int ow
     int lock_type) {
   int ret = 0;
   pthread_mutex_lock(&mutex_);
-  if (lock_status_[index(target_node_id, target_obj_index)] != LOCK_STATUS_IDLE) {
+  if (lock_status_[index(target_node_id, target_obj_index)] != LOCK_STATUS_IDLE &&
+      lock_status_[index(target_node_id, target_obj_index)] != LOCK_STATUS_FULL) {
     ret = LOCAL_LOCK_FAIL;
   } else {
     if (lock_type == SHARED) {
@@ -162,6 +167,9 @@ int LocalLockManager::Lock(int target_node_id, int target_obj_index, int owner_u
   if (result == RESULT_SUCCESS || result == RESULT_SUCCESS_FROM_QUEUED) {
     if (lock_type == SHARED) {
       ++shared_counter_[index(target_node_id, target_obj_index)];
+      //if (shared_counter_[index(target_node_id, target_obj_index)] >= max_shared_locks_) {
+        //lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_FULL;
+      //}
     } else {
       exclusive_counter_[index(target_node_id, target_obj_index)] = owner_user_id;
     }
@@ -173,14 +181,16 @@ int LocalLockManager::Lock(int target_node_id, int target_obj_index, int owner_u
 int LocalLockManager::Unlock(int target_node_id, int target_obj_index, int owner_user_id,
     int lock_type, int result) {
   pthread_mutex_lock(&mutex_);
-  lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_IDLE;
+  if (lock_status_[index(target_node_id, target_obj_index)] != LOCK_STATUS_FULL) {
+    lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_IDLE;
+  }
   //lock_status_.erase(index(target_node_id, target_obj_index));
   if (result == RESULT_SUCCESS) {
     if (lock_type == SHARED) {
       if (shared_counter_[index(target_node_id, target_obj_index)] > 0)
         --shared_counter_[index(target_node_id, target_obj_index)];
       //if (shared_counter_[index(target_node_id, target_obj_index)] == 0) {
-         //shared_counter_.erase(index(target_node_id, target_obj_index));
+        //lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_IDLE;
       //}
     } else {
       if (exclusive_counter_[index(target_node_id, target_obj_index)] == owner_user_id) {

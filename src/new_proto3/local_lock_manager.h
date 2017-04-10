@@ -39,6 +39,7 @@ class LocalLockManager {
       return node_id * num_objects_ + obj_index;
     }
   private:
+    int max_shared_locks_;
     int owner_node_id_;
     int num_objects_;
     volatile int* shared_counter_;

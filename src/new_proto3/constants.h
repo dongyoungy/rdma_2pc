@@ -65,6 +65,7 @@ namespace rdma { namespace proto {
   static const int LOCK_STATUS_IDLE = 0;
   static const int LOCK_STATUS_LOCKING = 1;
   static const int LOCK_STATUS_UNLOCKING = 2;
+  static const int LOCK_STATUS_FULL = 3;
 
   static const int KV_UNIFORM = 0;
   static const int KV_ZIPF = 1;
