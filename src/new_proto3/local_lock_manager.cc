@@ -20,8 +20,8 @@ LocalLockManager::LocalLockManager(int node_id, int num_nodes, int num_objects) 
   memset((void*)exclusive_counter_, 0x00, sizeof(volatile int)*num_nodes*num_objects_);
   memset((void*)lock_status_, 0x00, sizeof(volatile int)*num_nodes*num_objects_);
   //wait_queue_ = new queue<LocalLockWaitElement>[num_nodes * num_objects];
-  pthread_mutex_init(&mutex_, NULL);
   max_shared_locks_ = 5;
+  mutex_ = new mutex[num_nodes * num_objects];
 }
 
 // destructor
@@ -34,7 +34,7 @@ LocalLockManager::~LocalLockManager() {
 int LocalLockManager::TryLock(int target_node_id, int target_obj_index, int owner_user_id,
     int lock_type) {
   int ret = 0;
-  pthread_mutex_lock(&mutex_);
+  mutex_[index(target_node_id, target_obj_index)].lock();
   if (lock_status_[index(target_node_id, target_obj_index)] != LOCK_STATUS_IDLE) {
     ret = LOCAL_LOCK_FAIL;
   } else {
@@ -68,15 +68,14 @@ int LocalLockManager::TryLock(int target_node_id, int target_obj_index, int owne
       }
     }
   }
-
-  pthread_mutex_unlock(&mutex_);
+  mutex_[index(target_node_id, target_obj_index)].unlock();
   return ret;
 }
 
 int LocalLockManager::TryUnlock(int target_node_id, int target_obj_index, int owner_user_id,
     int lock_type) {
   int ret = 0;
-  pthread_mutex_lock(&mutex_);
+  mutex_[index(target_node_id, target_obj_index)].lock();
   if (lock_status_[index(target_node_id, target_obj_index)] != LOCK_STATUS_IDLE &&
       lock_status_[index(target_node_id, target_obj_index)] != LOCK_STATUS_FULL) {
     ret = LOCAL_LOCK_FAIL;
@@ -100,7 +99,7 @@ int LocalLockManager::TryUnlock(int target_node_id, int target_obj_index, int ow
       }
     }
   }
-  pthread_mutex_unlock(&mutex_);
+  mutex_[index(target_node_id, target_obj_index)].unlock();
   return ret;
 }
 
@@ -161,7 +160,7 @@ int LocalLockManager::CheckLock(int seq_no, int owner_thread_id, int target_node
 
 int LocalLockManager::Lock(int target_node_id, int target_obj_index, int owner_user_id,
     int lock_type, int result) {
-  pthread_mutex_lock(&mutex_);
+  mutex_[index(target_node_id, target_obj_index)].lock();
   lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_IDLE;
   //lock_status_.erase(index(target_node_id, target_obj_index));
   if (result == RESULT_SUCCESS || result == RESULT_SUCCESS_FROM_QUEUED) {
@@ -174,13 +173,13 @@ int LocalLockManager::Lock(int target_node_id, int target_obj_index, int owner_u
       exclusive_counter_[index(target_node_id, target_obj_index)] = owner_user_id;
     }
   }
-  pthread_mutex_unlock(&mutex_);
+  mutex_[index(target_node_id, target_obj_index)].unlock();
   return FUNC_SUCCESS;
 }
 
 int LocalLockManager::Unlock(int target_node_id, int target_obj_index, int owner_user_id,
     int lock_type, int result) {
-  pthread_mutex_lock(&mutex_);
+  mutex_[index(target_node_id, target_obj_index)].lock();
   if (lock_status_[index(target_node_id, target_obj_index)] != LOCK_STATUS_FULL) {
     lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_IDLE;
   }
@@ -199,7 +198,7 @@ int LocalLockManager::Unlock(int target_node_id, int target_obj_index, int owner
       }
     }
   }
-  pthread_mutex_unlock(&mutex_);
+  mutex_[index(target_node_id, target_obj_index)].unlock();
   return FUNC_SUCCESS;
 }
 
