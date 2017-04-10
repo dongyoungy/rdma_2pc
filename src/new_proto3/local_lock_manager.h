@@ -6,6 +6,7 @@
 #include <queue>
 #include <unordered_map>
 #include <map>
+#include <mutex>
 #include <pthread.h>
 
 #include "local_lock_wait_element.h"
@@ -49,7 +50,7 @@ class LocalLockManager {
     //map<int, int> lock_status_;
 
     queue<LocalLockWaitElement>* wait_queue_;
-    pthread_mutex_t mutex_;
+    mutex* mutex_;
 };
 
 }}
