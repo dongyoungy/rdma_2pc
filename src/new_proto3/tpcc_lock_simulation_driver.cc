@@ -234,16 +234,18 @@ int main(int argc, char** argv) {
     for (int i=0;i<num_users_per_client;++i) {
       uint32_t seq = (rank-client_start_idx)*num_users_per_client+i;
       uint32_t id  = 0;
-      if (lock_mode == LOCK_REMOTE_QUEUE || lock_mode == LOCK_REMOTE_NOTIFY) {
-        id = i+1;
-      } else {
-        id = (num_users_per_client*rank)+(i+1);
-      }
+      //if (lock_mode == LOCK_REMOTE_QUEUE || lock_mode == LOCK_REMOTE_NOTIFY) {
+        //id = i+1;
+      //} else {
+        //id = (num_users_per_client*rank)+(i+1);
+      //}
+      id = (num_users_per_client*rank)+(i+1);
       bool verbose = false;
       TPCCLockSimulator* simulator = new TPCCLockSimulator(managers[i%num_warehouses_per_node],
           id, // id
           //seq % (num_servers*num_warehouses_per_node), // home id
-          managers[i%num_warehouses_per_node]->GetRank(), // home id
+          //managers[i%num_warehouses_per_node]->GetRank(), // home id
+          i%(num_servers*num_warehouses_per_node), // home_id
           workload_type,
           num_servers*num_warehouses_per_node,
           num_tx,

@@ -25,11 +25,11 @@ struct CPUUsage {
 
 int main(int argc, char** argv) {
 
-  if (argc != 14) {
+  if (argc != 15) {
     cout << "USAGE: " << argv[0] << " <work_dir>" <<
       "<num_lock_manager> <num_tx> <num_users> <lock_mode> <shared_exclusive_rule> " <<
       "<exclusive_shared_rule> <exclusive_exclusive_rule> "<<
-      "<min_backoff_time> <max_backoff_time> <sleep_time> <think_time> <rand_seed>" << endl;
+      "<min_backoff_time> <max_backoff_time> <num_retry> <sleep_time> <think_time> <rand_seed>" << endl;
     exit(1);
   }
 
@@ -51,6 +51,7 @@ int main(int argc, char** argv) {
   int exclusive_exclusive_rule = atoi(argv[k++]);
   int min_backoff_time         = atoi(argv[k++]);
   int max_backoff_time         = atoi(argv[k++]);
+  int num_retry                = atoi(argv[k++]);
   int sleep_time               = atoi(argv[k++]);
   int think_time               = atoi(argv[k++]);
   long seed                    = atol(argv[k++]);
@@ -121,6 +122,7 @@ int main(int argc, char** argv) {
   cout << "SHARED -> EXCLUSIVE = " << shared_exclusive_rule_str << endl;
   cout << "EXCLUSIVE -> SHARED = " << exclusive_shared_rule_str << endl;
   cout << "EXCLUSIVE -> EXCLUSIVE = " << exclusive_exclusive_rule_str << endl;
+  cout << "Num Retry = " << num_retry << endl;
   cout << "Num Tx = " << num_tx << endl;
   cout << "Num Managers = " << num_managers << endl;
   cout << "Num Users Per Manager = " << num_users << endl;
@@ -128,6 +130,8 @@ int main(int argc, char** argv) {
   LockManager::SetSharedExclusiveRule(shared_exclusive_rule);
   LockManager::SetExclusiveSharedRule(exclusive_shared_rule);
   LockManager::SetExclusiveExclusiveRule(exclusive_exclusive_rule);
+  LockManager::SetPollRetry(num_retry);
+  LockManager::SetFailRetry(num_retry);
 
   vector<LockManager*> managers;
   for (int i = 0; i < num_managers; ++i) {
@@ -152,16 +156,17 @@ int main(int argc, char** argv) {
   for (int i = 0; i < num_managers; ++i) {
     for (int j=0;j<num_users;++j) {
       int id=0;
-      if (lock_mode == LOCK_REMOTE_QUEUE || lock_mode == LOCK_REMOTE_NOTIFY) {
-        id = j+1;
-      } else {
-        id = (num_users*i)+(j+1);
-      }
+      //if (lock_mode == LOCK_REMOTE_QUEUE || lock_mode == LOCK_REMOTE_NOTIFY) {
+        //id = j+1;
+      //} else {
+        //id = (num_users*i)+(j+1);
+      //}
+      id = (num_users*i)+(j+1);
       bool verbose = false;
       TPCCLockSimulator* simulator = new TPCCLockSimulator(managers[i],
           //(uint32_t)pow(2.0, rank*num_users+i), // id
           id,
-          i,
+          j%num_managers,
           WORKLOAD_UNIFORM,
           num_managers,
           num_tx,
@@ -169,11 +174,11 @@ int main(int argc, char** argv) {
           verbose, // verbose
           true, // measure lock time
           lock_mode,
-          0,0,0,
+          1,think_time,think_time,
           min_backoff_time,
           max_backoff_time,
           sleep_time,
-          think_time
+          0
           );
       //managers[i]->RegisterUser((uint32_t)pow(2.0, rank*num_users+i), simulator);
       managers[i]->RegisterUser(id, simulator);

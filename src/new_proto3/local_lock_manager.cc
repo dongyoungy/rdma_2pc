@@ -34,20 +34,19 @@ LocalLockManager::~LocalLockManager() {
 int LocalLockManager::TryLock(int target_node_id, int target_obj_index, int owner_user_id,
     int lock_type) {
   int ret = 0;
-  mutex_[index(target_node_id, target_obj_index)].lock();
-  if (lock_status_[index(target_node_id, target_obj_index)] != LOCK_STATUS_IDLE) {
+  int idx = index(target_node_id, target_obj_index);
+  mutex_[idx].lock();
+  if (lock_status_[idx] != LOCK_STATUS_IDLE) {
     ret = LOCAL_LOCK_FAIL;
   } else {
     if (lock_type == SHARED) {
-      if (exclusive_counter_[index(target_node_id, target_obj_index)] > 0) {
+      if (exclusive_counter_[idx] > 0) {
         ret = LOCAL_LOCK_FAIL;
-      } else if (shared_counter_[index(target_node_id,target_obj_index)] == 0 &&
-          exclusive_counter_[index(target_node_id,target_obj_index)] == 0) {
-        lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_LOCKING;
+      } else if (shared_counter_[idx] == 0 && exclusive_counter_[idx] == 0) {
+        lock_status_[idx] = LOCK_STATUS_LOCKING;
         ret = LOCAL_LOCK_RETRY;
-      } else if (shared_counter_[index(target_node_id,target_obj_index)] > 0 &&
-          exclusive_counter_[index(target_node_id,target_obj_index)] == 0) {
-        ++shared_counter_[index(target_node_id, target_obj_index)];
+      } else if (shared_counter_[idx] > 0 && exclusive_counter_[idx] == 0) {
+        ++shared_counter_[idx];
         //if (shared_counter_[index(target_node_id, target_obj_index)] >= max_shared_locks_) {
           //lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_FULL;
         //}
@@ -56,50 +55,49 @@ int LocalLockManager::TryLock(int target_node_id, int target_obj_index, int owne
         ret = LOCAL_LOCK_FAIL;
       }
     } else {
-      if (exclusive_counter_[index(target_node_id, target_obj_index)] == owner_user_id &&
-          shared_counter_[index(target_node_id, target_obj_index)] == 0) {
+      if (exclusive_counter_[idx] == owner_user_id && shared_counter_[idx] == 0) {
         ret = LOCAL_LOCK_PASS;
-      } else if (exclusive_counter_[index(target_node_id, target_obj_index)] > 0 ||
-          shared_counter_[index(target_node_id, target_obj_index)] > 0) {
+      } else if (exclusive_counter_[idx] > 0 || shared_counter_[idx] > 0) {
         ret = LOCAL_LOCK_FAIL;
       } else {
-        lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_LOCKING;
+        lock_status_[idx] = LOCK_STATUS_LOCKING;
         ret = LOCAL_LOCK_RETRY;
       }
     }
   }
-  mutex_[index(target_node_id, target_obj_index)].unlock();
+  mutex_[idx].unlock();
   return ret;
 }
 
 int LocalLockManager::TryUnlock(int target_node_id, int target_obj_index, int owner_user_id,
     int lock_type) {
   int ret = 0;
-  mutex_[index(target_node_id, target_obj_index)].lock();
-  if (lock_status_[index(target_node_id, target_obj_index)] != LOCK_STATUS_IDLE &&
-      lock_status_[index(target_node_id, target_obj_index)] != LOCK_STATUS_FULL) {
+  int idx = index(target_node_id, target_obj_index);
+  mutex_[idx].lock();
+  if (lock_status_[idx] != LOCK_STATUS_IDLE &&
+      lock_status_[idx] != LOCK_STATUS_FULL) {
     ret = LOCAL_LOCK_FAIL;
   } else {
     if (lock_type == SHARED) {
-      if (shared_counter_[index(target_node_id, target_obj_index)] > 1) {
-        --shared_counter_[index(target_node_id, target_obj_index)];
+      if (shared_counter_[idx] > 1) {
+        --shared_counter_[idx];
         ret = LOCAL_LOCK_PASS;
-      } else if (shared_counter_[index(target_node_id, target_obj_index)] == 1) {
-        lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_UNLOCKING;
+      } else if (shared_counter_[idx] == 1) {
+        lock_status_[idx] = LOCK_STATUS_UNLOCKING;
         ret = LOCAL_LOCK_RETRY;
       } else {
         ret = LOCAL_LOCK_PASS;
       }
     } else {
-      if (exclusive_counter_[index(target_node_id, target_obj_index)] == owner_user_id) {
-        lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_UNLOCKING;
+      if (exclusive_counter_[idx] == owner_user_id) {
+        lock_status_[idx] = LOCK_STATUS_UNLOCKING;
         ret = LOCAL_LOCK_RETRY;
       } else {
         ret = LOCAL_LOCK_PASS;
       }
     }
   }
-  mutex_[index(target_node_id, target_obj_index)].unlock();
+  mutex_[idx].unlock();
   return ret;
 }
 
@@ -160,45 +158,47 @@ int LocalLockManager::CheckLock(int seq_no, int owner_thread_id, int target_node
 
 int LocalLockManager::Lock(int target_node_id, int target_obj_index, int owner_user_id,
     int lock_type, int result) {
-  mutex_[index(target_node_id, target_obj_index)].lock();
-  lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_IDLE;
+  int idx = index(target_node_id, target_obj_index);
+  mutex_[idx].lock();
+  lock_status_[idx] = LOCK_STATUS_IDLE;
   //lock_status_.erase(index(target_node_id, target_obj_index));
   if (result == RESULT_SUCCESS || result == RESULT_SUCCESS_FROM_QUEUED) {
     if (lock_type == SHARED) {
-      ++shared_counter_[index(target_node_id, target_obj_index)];
+      ++shared_counter_[idx];
       //if (shared_counter_[index(target_node_id, target_obj_index)] >= max_shared_locks_) {
         //lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_FULL;
       //}
     } else {
-      exclusive_counter_[index(target_node_id, target_obj_index)] = owner_user_id;
+      exclusive_counter_[idx] = owner_user_id;
     }
   }
-  mutex_[index(target_node_id, target_obj_index)].unlock();
+  mutex_[idx].unlock();
   return FUNC_SUCCESS;
 }
 
 int LocalLockManager::Unlock(int target_node_id, int target_obj_index, int owner_user_id,
     int lock_type, int result) {
-  mutex_[index(target_node_id, target_obj_index)].lock();
-  if (lock_status_[index(target_node_id, target_obj_index)] != LOCK_STATUS_FULL) {
-    lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_IDLE;
+  int idx = index(target_node_id, target_obj_index);
+  mutex_[idx].lock();
+  if (lock_status_[idx] != LOCK_STATUS_FULL) {
+    lock_status_[idx] = LOCK_STATUS_IDLE;
   }
   //lock_status_.erase(index(target_node_id, target_obj_index));
   if (result == RESULT_SUCCESS) {
     if (lock_type == SHARED) {
-      if (shared_counter_[index(target_node_id, target_obj_index)] > 0)
-        --shared_counter_[index(target_node_id, target_obj_index)];
+      if (shared_counter_[idx] > 0)
+        --shared_counter_[idx];
       //if (shared_counter_[index(target_node_id, target_obj_index)] == 0) {
         //lock_status_[index(target_node_id, target_obj_index)] = LOCK_STATUS_IDLE;
       //}
     } else {
-      if (exclusive_counter_[index(target_node_id, target_obj_index)] == owner_user_id) {
+      if (exclusive_counter_[idx] == owner_user_id) {
         //exclusive_counter_.erase(index(target_node_id, target_obj_index));
-        exclusive_counter_[index(target_node_id, target_obj_index)] = 0;
+        exclusive_counter_[idx] = 0;
       }
     }
   }
-  mutex_[index(target_node_id, target_obj_index)].unlock();
+  mutex_[idx].unlock();
   return FUNC_SUCCESS;
 }
 

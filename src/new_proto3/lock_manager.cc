@@ -1416,7 +1416,9 @@ int LockManager::NotifyLockRequestResult(int seq_no, uint32_t user_id, int lock_
 
   // keep the user id if it has been queued
   if (result == RESULT_QUEUED) {
-    queued_user_[obj_index] = user_id;
+    //pthread_mutex_lock(lock_mutex_[obj_index]);
+    //queued_user_[obj_index] = user_id;
+    //pthread_mutex_unlock(lock_mutex_[obj_index]);
   }
 
   return 0;
@@ -1431,7 +1433,9 @@ int LockManager::NotifyUnlockRequestResult(int seq_no, uint32_t user_id, int loc
 
   LockSimulator* user = user_map[user_id];
   user->NotifyResult(seq_no, LockManager::TASK_UNLOCK, lock_type, obj_index, result);
-  queued_user_[obj_index] = -1;
+    //pthread_mutex_lock(lock_mutex_[obj_index]);
+  //queued_user_[obj_index] = -1;
+    //pthread_mutex_unlock(lock_mutex_[obj_index]);
 
   return 0;
 }
