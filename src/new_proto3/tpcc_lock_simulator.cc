@@ -30,6 +30,7 @@ TPCCLockSimulator::TPCCLockSimulator(LockManager* manager, uint32_t id, uint32_t
   total_num_unlocks_                 = 0;
   total_num_lock_success_            = 0;
   total_num_lock_failure_            = 0;
+  total_num_local_lock_failure_      = 0;
   total_num_timeouts_                = 0;
   total_num_lock_contention_         = 0;
   total_num_lock_success_with_retry_ = 0;
@@ -166,7 +167,7 @@ void TPCCLockSimulator::SubmitLockRequest() {
   pthread_mutex_unlock(&time_mutex_);
 
   // enforce think time
-  //usleep(think_time_);
+  usleep(transaction_delay_min_);
 
   int ret = 0;
   pthread_mutex_lock(&lock_mutex_);

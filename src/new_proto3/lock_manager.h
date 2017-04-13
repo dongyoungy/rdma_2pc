@@ -61,6 +61,7 @@ class LockManager {
     int GetID() const;
     int GetRank() const;
     int GetLockMode() const;
+    void SetTerminate(bool terminate);
     inline int GetNumManager() const {
       return num_manager_;
     }
@@ -145,6 +146,23 @@ class LockManager {
        uint32_t exclusive = (uint32_t)(value >> 32);
        cout << rank_ << " = "  << shared << "," << exclusive << endl;
     }
+    inline long GetLocalExclusiveToExclusiveFailCount() {
+      return llm_->GetExclusiveToExclusiveFailCount();
+    }
+    inline long GetLocalSharedToExclusiveFailCount() {
+      return llm_->GetSharedToExclusiveFailCount();
+    }
+    inline long GetLocalExclusiveToSharedFailCount() {
+      return llm_->GetExclusiveToSharedFailCount();
+    }
+    inline long GetLocalMaxSharedLockCount() {
+      return llm_->GetMaxSharedLockCount();
+    }
+    inline long GetLocalMaxExclusiveLockCount() {
+      return llm_->GetMaxExclusiveLockCount();
+    }
+    // temp
+    long local_e_e_lock_pass_count_;
 
 
     static const int EXCLUSIVE = 1;
@@ -240,6 +258,7 @@ class LockManager {
     LocalLockManager* llm_;
 
     string work_dir_;
+    bool terminate_;
     uint64_t num_rdma_send_;
     uint64_t num_rdma_recv_;
     uint64_t* last_lock_table_;

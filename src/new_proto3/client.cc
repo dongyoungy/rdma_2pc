@@ -16,6 +16,7 @@ Client::Client(const string& work_dir, LockManager* local_manager,
   local_user_count_                 = local_user_count;
   remote_lm_id_                     = remote_lm_id;
   initialized_                      = false;
+  terminate_                        = false;
   total_exclusive_lock_remote_time_ = 0;
   total_shared_lock_remote_time_    = 0;
   total_send_message_time_          = 0;
@@ -95,7 +96,7 @@ int Client::Run() {
   freeaddrinfo(address_);
 
   struct rdma_cm_event* event = NULL;
-  while (rdma_get_cm_event(event_channel_, &event) == 0) {
+  while (rdma_get_cm_event(event_channel_, &event) == 0 && !terminate_) {
     struct rdma_cm_event current_event;
     memcpy(&current_event, event, sizeof(current_event));
     rdma_ack_cm_event(event);
@@ -109,7 +110,8 @@ int Client::Run() {
 }
 
 void Client::Stop() {
-  exit(0);
+  terminate_ = true;
+  //exit(0);
 }
 
 int Client::ReadServerAddress() {
@@ -466,10 +468,10 @@ void Client::BuildQueuePairAttr(Context* context,
   attributes->send_cq          = context->completion_queue;
   attributes->recv_cq          = context->completion_queue;
   attributes->qp_type          = IBV_QPT_RC;
-  attributes->cap.max_send_wr  = 64;
-  attributes->cap.max_recv_wr  = 64;
-  attributes->cap.max_send_sge = 16;
-  attributes->cap.max_recv_sge = 16;
+  attributes->cap.max_send_wr  = 4096;
+  attributes->cap.max_recv_wr  = 4096;
+  attributes->cap.max_send_sge = 4;
+  attributes->cap.max_recv_sge = 4;
   attributes->comp_mask        = IBV_EXP_QP_INIT_ATTR_PD |
     IBV_EXP_QP_INIT_ATTR_CREATE_FLAGS;
   attributes->exp_create_flags = IBV_EXP_QP_CREATE_ATOMIC_BE_REPLY;

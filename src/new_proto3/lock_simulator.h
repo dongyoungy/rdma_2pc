@@ -59,6 +59,7 @@ class LockSimulator {
     uint64_t GetTotalNumLockSuccess() const;
     uint64_t GetTotalNumLockSuccessWithRetry() const;
     uint64_t GetTotalNumLockFailure() const;
+    uint64_t GetTotalNumLocalLockFailure() const;
     uint64_t GetTotalNumTimeout() const;
     uint64_t GetSumRetryWhenSuccess() const;
     uint64_t GetSumIndexWhenTimeout() const;
@@ -146,6 +147,7 @@ class LockSimulator {
     uint64_t total_num_lock_success_;
     uint64_t total_num_lock_success_with_retry_;
     uint64_t total_num_lock_failure_;
+    uint64_t total_num_local_lock_failure_;
     uint64_t total_num_lock_contention_;
     uint64_t total_num_timeouts_;
     uint64_t sum_retry_when_success_;

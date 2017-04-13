@@ -42,7 +42,10 @@ LockManager::LockManager(const string& work_dir, uint32_t rank,
   num_remote_lock_                 = 0;
   num_rdma_send_                   = 0;
   num_rdma_recv_                   = 0;
+  terminate_                       = false;
   llm_                             = new LocalLockManager(rank_, num_manager_, num_lock_object_);
+
+  local_e_e_lock_pass_count_ = 0;
 
   if (lock_mode_ == LOCK_ADAPTIVE) {
     current_lock_mode_ = LOCK_REMOTE_POLL;
@@ -133,9 +136,13 @@ int LockManager::Initialize() {
   return 0;
 }
 
+void LockManager::SetTerminate(bool terminate) {
+  terminate_ = terminate;
+}
+
 int LockManager::Run() {
   struct rdma_cm_event* event = NULL;
-  while (rdma_get_cm_event(event_channel_, &event) == 0) {
+  while (rdma_get_cm_event(event_channel_, &event) == 0 && !terminate_) {
     struct rdma_cm_event current_event;
     memcpy(&current_event, event, sizeof(current_event));
     rdma_ack_cm_event(event);
@@ -329,8 +336,13 @@ void LockManager::DestroyListener() {
 }
 
 void LockManager::Stop() {
-  DestroyListener();
-  exit(0);
+  map<uint64_t, LockClient*>::const_iterator it;
+  for (it=lock_clients_.begin(); it != lock_clients_.end();++it) {
+    it->second->Stop();
+  }
+  terminate_ = true;
+  //DestroyListener();
+  //exit(0);
 }
 
 // Currently the server registers same memory region for each client.
@@ -682,6 +694,23 @@ int LockManager::Lock(int seq_no, uint32_t user_id, uint32_t manager_id, int loc
       ret = LOCAL_LOCK_PASS;
     } else if (ret == LOCAL_LOCK_FAIL) {
       ret = LOCAL_LOCK_FAIL;
+    } else if (ret == LOCAL_LOCK_WAIT) {
+      // Ex -> Ex case
+      int wait_count = 0;
+      while (wait_count < poll_retry_) {
+        usleep(100);
+        if (llm_->GetCurrentExclusiveOwner(manager_id, obj_index) == (int)user_id) {
+          ++local_e_e_lock_pass_count_;
+          ret = LOCAL_LOCK_PASS;
+          break;
+        }
+        ++wait_count;
+      }
+      if (ret == LOCAL_LOCK_WAIT) {
+        llm_->LeaveExclusive(manager_id, obj_index, user_id);
+        if (ret != LOCAL_LOCK_PASS)
+          ret = LOCAL_LOCK_FAIL;
+      }
     }
   } else {
       LockClient* lock_client = lock_clients_[manager_id];
@@ -1524,10 +1553,10 @@ void LockManager::BuildQueuePairAttr(Context* context,
   attributes->send_cq          = context->completion_queue;
   attributes->recv_cq          = context->completion_queue;
   attributes->qp_type          = IBV_QPT_RC;
-  attributes->cap.max_send_wr  = 64;
-  attributes->cap.max_recv_wr  = 64;
-  attributes->cap.max_send_sge = 16;
-  attributes->cap.max_recv_sge = 16;
+  attributes->cap.max_send_wr  = 4096;
+  attributes->cap.max_recv_wr  = 4096;
+  attributes->cap.max_send_sge = 4;
+  attributes->cap.max_recv_sge = 4;
   attributes->comp_mask        = IBV_EXP_QP_INIT_ATTR_PD |
     IBV_EXP_QP_INIT_ATTR_CREATE_FLAGS;
   attributes->max_atomic_arg   = sizeof(uint64_t);

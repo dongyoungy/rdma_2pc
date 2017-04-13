@@ -85,6 +85,7 @@ class Client {
     uint64_t num_rdma_write_;
 
     bool initialized_;
+    bool terminate_;
     LockRequest** lock_requests_;
     LockManager* local_manager_;
     LockSimulator* local_user_;

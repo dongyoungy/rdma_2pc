@@ -25,11 +25,11 @@ struct CPUUsage {
 
 int main(int argc, char** argv) {
 
-  if (argc != 15) {
+  if (argc != 16) {
     cout << "USAGE: " << argv[0] << " <work_dir>" <<
       "<num_lock_manager> <num_tx> <num_users> <lock_mode> <shared_exclusive_rule> " <<
       "<exclusive_shared_rule> <exclusive_exclusive_rule> "<<
-      "<min_backoff_time> <max_backoff_time> <num_retry> <sleep_time> <think_time> <rand_seed>" << endl;
+      "<min_backoff_time> <max_backoff_time> <fail_retry> <poll_retry> <sleep_time> <think_time> <rand_seed>" << endl;
     exit(1);
   }
 
@@ -51,7 +51,8 @@ int main(int argc, char** argv) {
   int exclusive_exclusive_rule = atoi(argv[k++]);
   int min_backoff_time         = atoi(argv[k++]);
   int max_backoff_time         = atoi(argv[k++]);
-  int num_retry                = atoi(argv[k++]);
+  int fail_retry               = atoi(argv[k++]);
+  int poll_retry               = atoi(argv[k++]);
   int sleep_time               = atoi(argv[k++]);
   int think_time               = atoi(argv[k++]);
   long seed                    = atol(argv[k++]);
@@ -122,16 +123,18 @@ int main(int argc, char** argv) {
   cout << "SHARED -> EXCLUSIVE = " << shared_exclusive_rule_str << endl;
   cout << "EXCLUSIVE -> SHARED = " << exclusive_shared_rule_str << endl;
   cout << "EXCLUSIVE -> EXCLUSIVE = " << exclusive_exclusive_rule_str << endl;
-  cout << "Num Retry = " << num_retry << endl;
+  cout << "Num Fail Retry = " << fail_retry << endl;
+  cout << "Num Poll Retry = " << poll_retry << endl;
   cout << "Num Tx = " << num_tx << endl;
   cout << "Num Managers = " << num_managers << endl;
   cout << "Num Users Per Manager = " << num_users << endl;
+  cout << "Think Time = " << think_time << endl;
 
   LockManager::SetSharedExclusiveRule(shared_exclusive_rule);
   LockManager::SetExclusiveSharedRule(exclusive_shared_rule);
   LockManager::SetExclusiveExclusiveRule(exclusive_exclusive_rule);
-  LockManager::SetPollRetry(num_retry);
-  LockManager::SetFailRetry(num_retry);
+  LockManager::SetFailRetry(fail_retry);
+  LockManager::SetPollRetry(poll_retry);
 
   vector<LockManager*> managers;
   for (int i = 0; i < num_managers; ++i) {
@@ -185,7 +188,9 @@ int main(int argc, char** argv) {
       users.push_back(simulator);
     }
   }
+  cout << "Initialzing Clients..." << endl;
 
+  #pragma omp parallel for num_threads(20)
   for (int i = 0; i < num_managers; ++i) {
     if (managers[i]->InitializeLockClients()) {
       cerr << "InitializeLockClients() failed." << endl;
@@ -255,8 +260,42 @@ int main(int argc, char** argv) {
   //}
   usage.terminate = true;
   pthread_join(cpu_measure_thread, NULL);
+  long total_num_locks = 0;
+  long total_num_lock_failure = 0;
+  long total_num_local_lock_failure = 0;
+  long total_e_e_fail_count = 0;
+  long total_e_s_fail_count = 0;
+  long total_s_e_fail_count = 0;
+  long total_e_e_lock_pass_count = 0;
+  long total_max_shared_lock_count = 0;
+  long total_max_exclusive_lock_count = 0;
+  for (unsigned int i=0;i<users.size();++i) {
+    LockSimulator* simulator = users[i];
+    total_num_locks += simulator->GetTotalNumLocks();
+    total_num_lock_failure += simulator->GetTotalNumLockFailure();
+    total_num_local_lock_failure += simulator->GetTotalNumLocalLockFailure();
+  }
+  for (unsigned int i = 0; i < managers.size(); ++i) {
+    LockManager* manager = managers[i];
+    total_e_e_fail_count += manager->GetLocalExclusiveToExclusiveFailCount();
+    total_e_s_fail_count += manager->GetLocalExclusiveToSharedFailCount();
+    total_s_e_fail_count += manager->GetLocalSharedToExclusiveFailCount();
+    total_e_e_lock_pass_count += manager->local_e_e_lock_pass_count_;
+    total_max_shared_lock_count += manager->GetLocalMaxSharedLockCount();
+    total_max_exclusive_lock_count += manager->GetLocalMaxExclusiveLockCount();
+    manager->Stop();
+  }
   cout << "Avg CPU Usage = " << usage.total_cpu / usage.num_sample << endl;
-  cout<< "Total Time Taken = " << time_taken << endl;
+  cout << "Total Lock Attempt = " << total_num_locks << endl;
+  cout << "Total Lock Failure = " << total_num_lock_failure << endl;
+  cout << "Total Local Lock Failure = " << total_num_local_lock_failure << endl;
+  cout << "Total Ex -> Ex Fail Count = " << total_e_e_fail_count << endl;
+  cout << "Total Ex -> Sh Fail Count = " << total_e_s_fail_count << endl;
+  cout << "Total Sh -> Ex Fail Count = " << total_s_e_fail_count << endl;
+  cout << "Total Ex -> Ex Lock Pass Count = " << total_e_e_lock_pass_count << endl;
+  cout << "Total Max Shared Lock Count = " << total_max_shared_lock_count << endl;
+  cout << "Total Max Exclusive Lock Count = " << total_max_exclusive_lock_count << endl;
+  cout << "Total Time Taken = " << time_taken << endl;
 
   return 0;
 }

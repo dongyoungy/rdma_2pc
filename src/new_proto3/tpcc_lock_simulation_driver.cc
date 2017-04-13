@@ -319,7 +319,7 @@ int main(int argc, char** argv) {
   uint64_t last_tx_done = 0;
   int not_done_count = 0;
   bool is_deadlock = false;
-  const int deadlock_threshold = 20;
+  const int deadlock_threshold = 60;
   uint64_t* tx_done = new uint64_t[64000];
   uint64_t* locks_done = new uint64_t[64000];
   memset(tx_done, 0x00, sizeof(uint64_t)*64000);
@@ -401,6 +401,8 @@ int main(int argc, char** argv) {
   long global_sum_index_when_timeout       = 0;
   long local_lock_failure                  = 0;
   long global_lock_failure                 = 0;
+  long local_local_lock_failure            = 0;
+  long global_local_lock_failure           = 0;
   long local_timeout                       = 0;
   long global_timeout                      = 0;
   double local_lock_time                   = 0;
@@ -521,6 +523,7 @@ int main(int argc, char** argv) {
       local_sum_retry_when_success += simulator->GetSumRetryWhenSuccess();
       local_sum_index_when_timeout += simulator->GetSumIndexWhenTimeout();
       local_lock_failure += simulator->GetTotalNumLockFailure();
+      local_local_lock_failure += simulator->GetTotalNumLocalLockFailure();
       local_timeout += simulator->GetTotalNumTimeout();
       if (simulator->IsLockTimeMeasured()) {
         local_lock_time += simulator->GetAverageTimeTakenToLock();
@@ -575,6 +578,8 @@ int main(int argc, char** argv) {
   MPI_Reduce(&local_lock_success, &global_lock_success, 1, MPI_LONG, MPI_SUM, 0,
       MPI_COMM_WORLD);
   MPI_Reduce(&local_lock_failure, &global_lock_failure, 1, MPI_LONG, MPI_SUM, 0,
+      MPI_COMM_WORLD);
+  MPI_Reduce(&local_local_lock_failure, &global_local_lock_failure, 1, MPI_LONG, MPI_SUM, 0,
       MPI_COMM_WORLD);
   MPI_Reduce(&local_lock_time, &global_lock_time, 1, MPI_DOUBLE, MPI_SUM, 0,
       MPI_COMM_WORLD);
@@ -706,6 +711,9 @@ int main(int argc, char** argv) {
       "(# nodes: " << num_servers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Total Lock Failure # = " << global_lock_failure <<
+      "(# nodes: " << num_servers <<
+      ", mode: " << lock_mode_str << ")" << endl;
+    cout << "Global Total Local Lock Failure # = " << global_local_lock_failure <<
       "(# nodes: " << num_servers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Global Total Timeout # = " << global_timeout <<

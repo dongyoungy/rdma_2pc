@@ -4,6 +4,7 @@ namespace rdma { namespace proto {
 
 LockSimulator::LockSimulator() {
 
+  total_num_local_lock_failure_ = 0;
   num_lock_acquired_till_timeout_ = 0;
   lock_times_ = new double[MAX_LOCK_REQUESTS];
   single_lock_times_ = new double[MAX_LOCK_REQUESTS];
@@ -17,34 +18,35 @@ LockSimulator::LockSimulator() {
 
 LockSimulator::LockSimulator(LockManager* manager, uint32_t id, int num_manager,
     int num_lock_object, uint64_t num_lock_request) {
-  manager_                  = manager;
-  id_                       = id;
-  num_manager_              = num_manager;
-  num_lock_object_          = num_lock_object;
-  seed_                     = 1;
-  state_                    = LockSimulator::STATE_IDLE;
-  max_request_size_         = 1;
-  verbose_                  = false;
-  measure_lock_time_        = false;
-  workload_type_            = WORKLOAD_UNIFORM;
-  lock_mode_                = LockManager::LOCK_REMOTE;
-  total_num_locks_          = 0;
-  total_num_unlocks_        = 0;
-  total_num_lock_success_   = 0;
-  total_num_lock_failure_   = 0;
-  total_num_timeouts_       = 0;
-  total_time_taken_to_lock_ = 0;
-  is_all_local_             = false;
-  local_manager_id_         = manager_->GetRank();
-  count_limit_              = num_lock_request;
-  seq_count_                = 0;
-  count_                    = 0;
-  request_size_             = 1;
-  last_seq_no_              = 0;
-  is_backing_off_           = false;
-  is_tx_failed_             = false;
-  is_tx_timed_out_          = false;
-  think_time_               = 10;
+  manager_                      = manager;
+  id_                           = id;
+  num_manager_                  = num_manager;
+  num_lock_object_              = num_lock_object;
+  seed_                         = 1;
+  state_                        = LockSimulator::STATE_IDLE;
+  max_request_size_             = 1;
+  verbose_                      = false;
+  measure_lock_time_            = false;
+  workload_type_                = WORKLOAD_UNIFORM;
+  lock_mode_                    = LockManager::LOCK_REMOTE;
+  total_num_locks_              = 0;
+  total_num_unlocks_            = 0;
+  total_num_lock_success_       = 0;
+  total_num_lock_failure_       = 0;
+  total_num_local_lock_failure_ = 0;
+  total_num_timeouts_           = 0;
+  total_time_taken_to_lock_     = 0;
+  is_all_local_                 = false;
+  local_manager_id_             = manager_->GetRank();
+  count_limit_                  = num_lock_request;
+  seq_count_                    = 0;
+  count_                        = 0;
+  request_size_                 = 1;
+  last_seq_no_                  = 0;
+  is_backing_off_               = false;
+  is_tx_failed_                 = false;
+  is_tx_timed_out_              = false;
+  think_time_                   = 10;
 
   lock_times_ = new double[MAX_LOCK_REQUESTS];
   single_lock_times_ = new double[MAX_LOCK_REQUESTS];
@@ -82,6 +84,7 @@ LockSimulator::LockSimulator(LockManager* manager, uint32_t id, int num_manager,
   total_num_lock_success_with_retry_ = 0;
   sum_retry_when_success_            = 0;
   total_num_lock_failure_            = 0;
+  total_num_local_lock_failure_ = 0;
   total_num_timeouts_                = 0;
   sum_index_when_timeout_            = 0;
   total_time_taken_to_lock_          = 0;
@@ -848,26 +851,53 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
     } else if (result == RESULT_LOCAL_FAILURE &&
         requests_[last_request_idx_]->lock_type == lock_type &&
         requests_[last_request_idx_]->obj_index == obj_index) {
-      current_request_idx_ = last_request_idx_ - 1;
-      ++total_num_lock_failure_;
+      ++retry_;
+      current_request_idx_ = last_request_idx_;
       if (verbose_) {
         pthread_mutex_lock(&PRINT_MUTEX);
         cout << "Simulator " << local_manager_id_ << "@" << id_ << ": " <<
-          "(Local Fail) Unsuccessful lock request at LM " <<
+          "(Retry) Unsuccessful lock request at LM " <<
           requests_[last_request_idx_]->lm_id <<
           " of type " << requests_[last_request_idx_]->lock_type <<
-          " for object " << requests_[last_request_idx_]->obj_index <<
-          " (" << lock_type << "," << obj_index << ")" << endl;
+          " for object " << requests_[last_request_idx_]->obj_index << endl;
         pthread_mutex_unlock(&PRINT_MUTEX);
       }
-      num_lock_acquired_till_timeout_ = last_request_idx_;
-      is_tx_failed_ = true;
-      // retry upon failure
-      if (last_request_idx_ == 0) {
-        ChangeState(STATE_IDLE);
+      // retry
+      if (retry_ > LockManager::GetFailRetry()) {
+      //if (retry_ > 3000) {
+        current_request_idx_ = last_request_idx_ - 1;
+        ++total_num_local_lock_failure_;
+        retry_ = 0;
+        num_lock_acquired_till_timeout_ = last_request_idx_;
+        is_tx_failed_ = true;
+        if (last_request_idx_ == 0) {
+          ChangeState(STATE_IDLE);
+        } else {
+          ChangeState(STATE_UNLOCKING);
+        }
       } else {
-        ChangeState(STATE_UNLOCKING);
+        ChangeState(STATE_LOCKING);
       }
+      //current_request_idx_ = last_request_idx_ - 1;
+      //++total_num_lock_failure_;
+      //if (verbose_) {
+        //pthread_mutex_lock(&PRINT_MUTEX);
+        //cout << "Simulator " << local_manager_id_ << "@" << id_ << ": " <<
+          //"(Local Fail) Unsuccessful lock request at LM " <<
+          //requests_[last_request_idx_]->lm_id <<
+          //" of type " << requests_[last_request_idx_]->lock_type <<
+          //" for object " << requests_[last_request_idx_]->obj_index <<
+          //" (" << lock_type << "," << obj_index << ")" << endl;
+        //pthread_mutex_unlock(&PRINT_MUTEX);
+      //}
+      //num_lock_acquired_till_timeout_ = last_request_idx_;
+      //is_tx_failed_ = true;
+      //// retry upon failure
+      //if (last_request_idx_ == 0) {
+        //ChangeState(STATE_IDLE);
+      //} else {
+        //ChangeState(STATE_UNLOCKING);
+      //}
     } else if (result == RESULT_FAILURE &&
         requests_[last_request_idx_]->lock_type == lock_type &&
         requests_[last_request_idx_]->obj_index == obj_index) {
@@ -1010,6 +1040,10 @@ uint64_t LockSimulator::GetTotalNumLockSuccessWithRetry() const {
 
 uint64_t LockSimulator::GetTotalNumLockFailure() const {
   return total_num_lock_failure_;
+}
+
+uint64_t LockSimulator::GetTotalNumLocalLockFailure() const {
+  return total_num_local_lock_failure_;
 }
 
 uint64_t LockSimulator::GetTotalNumTimeout() const {
