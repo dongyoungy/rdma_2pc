@@ -5,7 +5,8 @@
 namespace rdma { namespace proto {
 
 // constructor
-LocalLockManager::LocalLockManager(int node_id, int num_nodes, int num_objects) {
+LocalLockManager::LocalLockManager(int node_id, int num_nodes, int num_objects,
+    int max_exclusive_locks, int max_shared_locks) {
   owner_node_id_ = node_id;
   num_objects_ = num_objects;
 
@@ -24,8 +25,8 @@ LocalLockManager::LocalLockManager(int node_id, int num_nodes, int num_objects) 
   memset((void*)last_exclusive_owner_, 0x00, sizeof(volatile int)*num_nodes*num_objects_);
   memset((void*)lock_status_, 0x00, sizeof(volatile int)*num_nodes*num_objects_);
   //wait_queue_ = new queue<LocalLockWaitElement>[num_nodes * num_objects];
-  max_shared_locks_ = 16;
-  max_exclusive_locks_ = 4;
+  max_shared_locks_ = max_shared_locks;
+  max_exclusive_locks_ = max_exclusive_locks;
   mutex_ = new mutex[num_nodes * num_objects];
 
   max_shared_lock_count_ = 0;

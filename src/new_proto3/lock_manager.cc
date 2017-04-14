@@ -16,7 +16,8 @@ map<uint32_t, uint32_t> LockManager::user_to_node_map_;
 
 // constructor
 LockManager::LockManager(const string& work_dir, uint32_t rank,
-    int num_manager, int num_lock_object, int lock_mode, int num_total_user, int num_client) {
+    int num_manager, int num_lock_object, int lock_mode, int num_total_user, int num_client,
+    int max_local_exclusive_locks, int max_local_shared_locks) {
   work_dir_                        = work_dir;
   rank_                            = rank;
   id_                              = (uint32_t)pow(2.0, rank_);
@@ -43,7 +44,8 @@ LockManager::LockManager(const string& work_dir, uint32_t rank,
   num_rdma_send_                   = 0;
   num_rdma_recv_                   = 0;
   terminate_                       = false;
-  llm_                             = new LocalLockManager(rank_, num_manager_, num_lock_object_);
+  llm_                             = new LocalLockManager(rank_, num_manager_, num_lock_object_,
+      max_local_exclusive_locks, max_local_shared_locks);
 
   local_e_e_lock_pass_count_ = 0;
 
@@ -433,8 +435,8 @@ int LockManager::HandleConnectRequest(struct rdma_cm_id* id) {
   struct rdma_conn_param connection_parameters;
   memset(&connection_parameters, 0x00, sizeof(connection_parameters));
   connection_parameters.initiator_depth =
-    connection_parameters.responder_resources = 7;
-  connection_parameters.rnr_retry_count = 7;
+    connection_parameters.responder_resources = 5;
+  connection_parameters.rnr_retry_count = 5;
 
   // accept connection
   if (rdma_accept(id, &connection_parameters)) {
@@ -685,6 +687,7 @@ int LockManager::Lock(int seq_no, uint32_t user_id, uint32_t manager_id, int loc
   int ret = 0;
   //ret = llm_->CheckLock(seq_no, user_id, manager_id, obj_index, lock_type);
   if (lock_mode_ == LOCK_REMOTE_QUEUE || lock_mode_ == LOCK_REMOTE_NOTIFY) {
+  //if (false) {
     ret = llm_->TryLock(manager_id, obj_index, user_id, lock_type);
     if (ret == LOCAL_LOCK_RETRY) {
       LockClient* lock_client = lock_clients_[manager_id];
@@ -1445,9 +1448,7 @@ int LockManager::NotifyLockRequestResult(int seq_no, uint32_t user_id, int lock_
 
   // keep the user id if it has been queued
   if (result == RESULT_QUEUED) {
-    //pthread_mutex_lock(lock_mutex_[obj_index]);
-    //queued_user_[obj_index] = user_id;
-    //pthread_mutex_unlock(lock_mutex_[obj_index]);
+    queued_user_[obj_index] = user_id;
   }
 
   return 0;
@@ -1462,9 +1463,7 @@ int LockManager::NotifyUnlockRequestResult(int seq_no, uint32_t user_id, int loc
 
   LockSimulator* user = user_map[user_id];
   user->NotifyResult(seq_no, LockManager::TASK_UNLOCK, lock_type, obj_index, result);
-    //pthread_mutex_lock(lock_mutex_[obj_index]);
-  //queued_user_[obj_index] = -1;
-    //pthread_mutex_unlock(lock_mutex_[obj_index]);
+  queued_user_[obj_index] = -1;
 
   return 0;
 }
@@ -1553,10 +1552,10 @@ void LockManager::BuildQueuePairAttr(Context* context,
   attributes->send_cq          = context->completion_queue;
   attributes->recv_cq          = context->completion_queue;
   attributes->qp_type          = IBV_QPT_RC;
-  attributes->cap.max_send_wr  = 4096;
-  attributes->cap.max_recv_wr  = 4096;
-  attributes->cap.max_send_sge = 4;
-  attributes->cap.max_recv_sge = 4;
+  attributes->cap.max_send_wr  = 2048;
+  attributes->cap.max_recv_wr  = 2048;
+  attributes->cap.max_send_sge = 2;
+  attributes->cap.max_recv_sge = 2;
   attributes->comp_mask        = IBV_EXP_QP_INIT_ATTR_PD |
     IBV_EXP_QP_INIT_ATTR_CREATE_FLAGS;
   attributes->max_atomic_arg   = sizeof(uint64_t);

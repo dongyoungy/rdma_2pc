@@ -18,6 +18,7 @@
 #include <map>
 #include <set>
 
+#include "tbb/concurrent_unordered_map.h"
 #include "local_lock_manager.h"
 #include "local_work_queue.h"
 #include "lock_wait_queue.h"
@@ -37,7 +38,8 @@ class LockManager {
 
   public:
     LockManager(const string& work_dir, uint32_t rank, int num_manager,
-        int num_lock_object, int lock_mode, int num_total_user = 0, int num_client = 1);
+        int num_lock_object, int lock_mode, int num_total_user = 0, int num_client = 1,
+        int max_local_exclusive_locks = 4, int max_local_shared_locks = 16);
     ~LockManager();
     int Initialize();
     int InitializeLockClients();
@@ -239,7 +241,7 @@ class LockManager {
     map<uint64_t, CommunicationClient*> communication_clients_;
     vector<pthread_t*> communication_client_threads_;
 
-    unordered_map<uint32_t, int> queued_user_; // map from obj index to the queued user
+    tbb::concurrent_unordered_map<uint32_t, int> queued_user_; // map from obj index to the queued user
 
     // vector for actual user/clients/simulators
     vector<LockSimulator*> users;

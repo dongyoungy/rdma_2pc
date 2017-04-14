@@ -23,7 +23,8 @@ namespace rdma { namespace proto {
  */
 class LocalLockManager {
   public:
-    LocalLockManager(int node_id, int num_nodes, int num_objects);
+    LocalLockManager(int node_id, int num_nodes, int num_objects, int max_exclusive_locks,
+        int max_shared_locks);
     ~LocalLockManager();
     int TryLock(int target_node_id, int target_obj_index, int owner_user_id, int lock_type);
     int TryUnlock(int target_node_id, int target_obj_index, int owner_user_id, int lock_type);

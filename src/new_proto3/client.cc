@@ -238,8 +238,8 @@ int Client::HandleRouteResolved(struct rdma_cm_id* id) {
   struct rdma_conn_param connection_parameters;
   memset(&connection_parameters, 0x00, sizeof(connection_parameters));
   connection_parameters.initiator_depth =
-    connection_parameters.responder_resources = 7;
-  connection_parameters.rnr_retry_count = 7;
+    connection_parameters.responder_resources = 5;
+  connection_parameters.rnr_retry_count = 5;
 
   // connect
   if (rdma_connect(id, &connection_parameters)) {
@@ -468,10 +468,10 @@ void Client::BuildQueuePairAttr(Context* context,
   attributes->send_cq          = context->completion_queue;
   attributes->recv_cq          = context->completion_queue;
   attributes->qp_type          = IBV_QPT_RC;
-  attributes->cap.max_send_wr  = 4096;
-  attributes->cap.max_recv_wr  = 4096;
-  attributes->cap.max_send_sge = 4;
-  attributes->cap.max_recv_sge = 4;
+  attributes->cap.max_send_wr  = 2048;
+  attributes->cap.max_recv_wr  = 2048;
+  attributes->cap.max_send_sge = 2;
+  attributes->cap.max_recv_sge = 2;
   attributes->comp_mask        = IBV_EXP_QP_INIT_ATTR_PD |
     IBV_EXP_QP_INIT_ATTR_CREATE_FLAGS;
   attributes->exp_create_flags = IBV_EXP_QP_CREATE_ATOMIC_BE_REPLY;

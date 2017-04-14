@@ -857,6 +857,8 @@ int LockClient::ReadRemotely(Context* context, int seq_no, uint32_t user_id, int
   send_work_request.wr.rdma.remote_addr =
       (uint64_t)context->lock_table_mr->addr + (obj_index*sizeof(uint64_t));
 
+  ++num_rdma_read_;
+  pthread_mutex_unlock(&lock_mutex_);
   clock_gettime(CLOCK_MONOTONIC, &start_rdma_read_);
 
   int ret = 0;
@@ -867,8 +869,6 @@ int LockClient::ReadRemotely(Context* context, int seq_no, uint32_t user_id, int
     return -1;
   }
 
-  ++num_rdma_read_;
-  pthread_mutex_unlock(&lock_mutex_);
   return 0;
 }
 

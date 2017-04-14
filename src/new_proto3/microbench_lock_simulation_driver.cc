@@ -34,7 +34,8 @@ int main(int argc, char** argv) {
       " <shared_exclusive_rule> <exclusive_shared_rule> <exclusive_exclusive_rule>" <<
       " <fail_retry> <poll_retry> <sleep_time_for_timeout> <think_time>"
       " <transaction_delay> <transaction_delay_min> " <<
-      "<transaction_delay_max> <miin_backoff_time> <max_backoff_time> <rand_seed>" << endl;
+      "<transaction_delay_max> <miin_backoff_time> <max_backoff_time> " <<
+      "<max_local_exclusive_locks> <max_local_shared_locks> <rand_seed>" << endl;
     cout << "current argc = " << argc << endl;
     exit(1);
   }
@@ -54,25 +55,27 @@ int main(int argc, char** argv) {
     }
   }
 
-  int k=2;
-  int num_manager_per_node     = atoi(argv[k++]);
-  int num_tx                   = atoi(argv[k++]);
-  double contention_index      = atof(argv[k++]);
-  int num_users                = atoi(argv[k++]);
-  int lock_mode                = atoi(argv[k++]);
-  int shared_exclusive_rule    = atoi(argv[k++]);
-  int exclusive_shared_rule    = atoi(argv[k++]);
-  int exclusive_exclusive_rule = atoi(argv[k++]);
-  int fail_retry               = atoi(argv[k++]);
-  int poll_retry               = atoi(argv[k++]);
-  int sleep_time               = atoi(argv[k++]);
-  int think_time               = atoi(argv[k++]);
-  int transaction_delay_num    = atoi(argv[k++]);
-  int transaction_delay_min    = atoi(argv[k++]);
-  int transaction_delay_max    = atoi(argv[k++]);
-  int min_backoff_time         = atoi(argv[k++]);
-  int max_backoff_time         = atoi(argv[k++]);
-  long seed                    = atol(argv[k++]);
+  int k = 2;
+  int num_manager_per_node      = atoi(argv[k++]);
+  int num_tx                    = atoi(argv[k++]);
+  double contention_index       = atof(argv[k++]);
+  int num_users                 = atoi(argv[k++]);
+  int lock_mode                 = atoi(argv[k++]);
+  int shared_exclusive_rule     = atoi(argv[k++]);
+  int exclusive_shared_rule     = atoi(argv[k++]);
+  int exclusive_exclusive_rule  = atoi(argv[k++]);
+  int fail_retry                = atoi(argv[k++]);
+  int poll_retry                = atoi(argv[k++]);
+  int sleep_time                = atoi(argv[k++]);
+  int think_time                = atoi(argv[k++]);
+  int transaction_delay_num     = atoi(argv[k++]);
+  int transaction_delay_min     = atoi(argv[k++]);
+  int transaction_delay_max     = atoi(argv[k++]);
+  int min_backoff_time          = atoi(argv[k++]);
+  int max_backoff_time          = atoi(argv[k++]);
+  int max_local_exclusive_locks = atoi(argv[k++]);
+  int max_local_shared_locks    = atoi(argv[k++]);
+  long seed                     = atol(argv[k++]);
 
   num_servers = num_nodes;
   num_clients = num_nodes;
@@ -175,7 +178,9 @@ int main(int argc, char** argv) {
   for (int i = 0; i < num_manager_per_node; ++i) {
     LockManager* lock_manager = new LockManager(argv[1], rank*num_manager_per_node+i,
         num_nodes*num_manager_per_node,
-        1000000, lock_mode, num_users, num_clients);
+        1000000, lock_mode, num_users, num_clients,
+        max_local_exclusive_locks,
+        max_local_shared_locks);
     managers.push_back(lock_manager);
 
     if (lock_manager->Initialize()) {
@@ -191,7 +196,7 @@ int main(int argc, char** argv) {
     }
 
     for (int j=0;j<num_users_per_manager;++j) {
-      uint32_t id = j + 1;
+      uint32_t id = (num_users*rank)+(j+1);
       bool verbose = false;
       MicrobenchLockSimulator* simulator = new MicrobenchLockSimulator(managers[i],
           id, // id
@@ -199,9 +204,9 @@ int main(int argc, char** argv) {
           0, // empty workload type
           num_nodes*num_manager_per_node,
           num_tx,
-          1000000,
+          1000000, // num objects
           contention_index,
-          seed+(num_users_per_manager*i)+(rank*num_manager_per_node*num_users_per_manager)+j,
+          seed+(rank*num_users)+j,
           verbose, // verbose
           true, // measure lock time
           lock_mode,
@@ -218,15 +223,9 @@ int main(int argc, char** argv) {
     }
   }
 
-  //for (int i = client_start_idx; i < num_nodes; ++i) {
-    //for (int j =0;j<num_users_per_client;++j) {
-      //uint32_t seq = (i-client_start_idx)*num_users_per_client+j;
-      //LockManager::user_to_node_map_[seq] = i;
-    //}
-  //}
-
   MPI_Barrier(MPI_COMM_WORLD);
 
+  #pragma omp parallel for num_threads(10)
   for (unsigned int i = 0; i < managers.size(); ++i) {
     if (managers[i]->InitializeLockClients()) {
       cerr << "InitializeLockClients() failed." << endl;
@@ -262,6 +261,11 @@ int main(int argc, char** argv) {
     exit(-1);
   }
 
+  uint64_t last_tx_done = 0;
+  int not_done_count = 0;
+  bool is_deadlock = false;
+  const int deadlock_threshold = 60;
+
   int min_time_taken = 0;
   int time_taken2 = 0;
   int time_taken3 = 0;
@@ -280,19 +284,44 @@ int main(int argc, char** argv) {
       }
     }
     cout << rank << "," << time_taken2 << ":" << tx_done[time_taken2] << endl;
+    if (tx_done[time_taken2] == last_tx_done) {
+      ++not_done_count;
+    } else {
+      last_tx_done = tx_done[time_taken2];
+      not_done_count = 0;
+    }
+    if (not_done_count >= deadlock_threshold) {
+      is_deadlock = true;
+      break;
+    }
     ++time_taken2;
     if (simulator_done) break;
     sleep(1);
   }
   time_taken3 = time_taken2;
 
-  for (unsigned int i=0;i<users.size();++i) {
-    LockSimulator* simulator = users[i];
-    while (simulator->GetState() != LockSimulator::STATE_DONE) {
-      ++time_taken2;
+  if (!is_deadlock) {
+    for (unsigned int i=0;i<users.size();++i) {
+      LockSimulator* simulator = users[i];
+      while (simulator->GetState() != LockSimulator::STATE_DONE) {
+        if (users[i]->GetCount() == last_tx_done) {
+          ++not_done_count;
+        } else {
+          last_tx_done = users[i]->GetCount();
+          not_done_count = 0;
+        }
+        if (not_done_count >= deadlock_threshold) {
+          is_deadlock = true;
+          break;
+        }
+        ++time_taken2;
         cout << rank << "," << users[i]->GetID() << "," << time_taken2 << " : " << users[i]->GetCount() <<
           "," << users[i]->GetCurrentBackoff() << endl;
-      sleep(1);
+        sleep(1);
+      }
+      if (is_deadlock) {
+        break;
+      }
     }
   }
 
@@ -693,6 +722,8 @@ int main(int argc, char** argv) {
       local_workload_ratio_str << "," << shared_lock_ratio_str << "," <<
       min_backoff_time << "," <<
       max_backoff_time << "," <<
+      max_local_exclusive_locks << "," <<
+      max_local_shared_locks << "," <<
       transaction_delay_str << ",";
     if (transaction_delay) {
       cerr << transaction_delay_min << "," << transaction_delay_max << ",";
@@ -724,8 +755,12 @@ int main(int argc, char** argv) {
       max_tx_throughput << "," << max_lock_throughput << "," <<
       global_rdma_send_count << "," << global_rdma_recv_count << "," <<
       global_rdma_write_count << "," << global_rdma_read_count << "," <<
-      global_rdma_atomic_count <<
-      endl;
+      global_rdma_atomic_count;
+    if (is_deadlock) {
+       cerr << ",DEADLOCK" << endl;
+    } else {
+      cerr << endl;
+    }
   }
 
   MPI_Finalize();

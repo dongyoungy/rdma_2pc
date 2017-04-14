@@ -26,15 +26,17 @@ struct CPUUsage {
 int main(int argc, char** argv) {
 
   int provided = 0;
-  MPI_Init_thread(&argc, &argv, MPI_THREAD_FUNNELED, &provided);
+  //MPI_Init_thread(&argc, &argv, MPI_THREAD_FUNNELED, &provided);
+  MPI_Init(&argc, &argv);
 
-  if (argc != 20) {
+  if (argc != 22) {
     cout << argv[0] << " <work_dir> <workload_type> <num_tx>" <<
       " <num_warehouses_per_node> <num_users> <lock_mode>" <<
       " <shared_exclusive_rule> <exclusive_shared_rule> <exclusive_exclusive_rule>" <<
       " <fail_retry> <poll_retry> <sleep_time_for_timeout> <think_time>"
       " <transaction_delay> <transaction_delay_min> " <<
-      "<transaction_delay_max> <miin_backoff_time> <max_backoff_time> <rand_seed>" << endl;
+      "<transaction_delay_max> <miin_backoff_time> <max_backoff_time> " <<
+      "<max_local_exclusive_locks> <max_local_shared_locks> <rand_seed>" << endl;
     exit(1);
   }
 
@@ -51,29 +53,31 @@ int main(int argc, char** argv) {
     } else {
       cout << "The current machine uses LITTLE ENDIAN" << endl;
     }
-    cout << "Desired level of thread support = " << MPI_THREAD_FUNNELED << endl;
-    cout << "Provided level of thread support = " << provided << endl;
+    //cout << "Desired level of thread support = " << MPI_THREAD_FUNNELED << endl;
+    //cout << "Provided level of thread support = " << provided << endl;
   }
 
   int k=2;
-  int workload_type            = atoi(argv[k++]);
-  long num_tx                  = atol(argv[k++]);
-  int num_warehouses_per_node  = atoi(argv[k++]);
-  int num_users                = atoi(argv[k++]);
-  int lock_mode                = atoi(argv[k++]);
-  int shared_exclusive_rule    = atoi(argv[k++]);
-  int exclusive_shared_rule    = atoi(argv[k++]);
-  int exclusive_exclusive_rule = atoi(argv[k++]);
-  int fail_retry               = atoi(argv[k++]);
-  int poll_retry               = atoi(argv[k++]);
-  int sleep_time               = atoi(argv[k++]);
-  int think_time               = atoi(argv[k++]);
-  int transaction_delay_num    = atoi(argv[k++]);
-  int transaction_delay_min    = atoi(argv[k++]);
-  int transaction_delay_max    = atoi(argv[k++]);
-  int min_backoff_time         = atoi(argv[k++]);
-  int max_backoff_time         = atoi(argv[k++]);
-  long seed                    = atol(argv[k++]);
+  int workload_type             = atoi(argv[k++]);
+  long num_tx                   = atol(argv[k++]);
+  int num_warehouses_per_node   = atoi(argv[k++]);
+  int num_users                 = atoi(argv[k++]);
+  int lock_mode                 = atoi(argv[k++]);
+  int shared_exclusive_rule     = atoi(argv[k++]);
+  int exclusive_shared_rule     = atoi(argv[k++]);
+  int exclusive_exclusive_rule  = atoi(argv[k++]);
+  int fail_retry                = atoi(argv[k++]);
+  int poll_retry                = atoi(argv[k++]);
+  int sleep_time                = atoi(argv[k++]);
+  int think_time                = atoi(argv[k++]);
+  int transaction_delay_num     = atoi(argv[k++]);
+  int transaction_delay_min     = atoi(argv[k++]);
+  int transaction_delay_max     = atoi(argv[k++]);
+  int min_backoff_time          = atoi(argv[k++]);
+  int max_backoff_time          = atoi(argv[k++]);
+  int max_local_exclusive_locks = atoi(argv[k++]);
+  int max_local_shared_locks    = atoi(argv[k++]);
+  long seed                     = atol(argv[k++]);
 
   //if (num_users != 1) {
      //cerr << "# of users must be 1." << endl;
@@ -214,7 +218,9 @@ int main(int argc, char** argv) {
   for (int i = 0; i < num_warehouses_per_node; ++i) {
     LockManager* lock_manager = new LockManager(argv[1], rank*num_warehouses_per_node+i,
         num_nodes*num_warehouses_per_node,
-        700000, lock_mode, num_users, num_clients);
+        700000, lock_mode, num_users, num_clients,
+        max_local_exclusive_locks,
+        max_local_shared_locks);
     managers.push_back(lock_manager);
 
     if (lock_manager->Initialize()) {
@@ -276,6 +282,7 @@ int main(int argc, char** argv) {
 
   MPI_Barrier(MPI_COMM_WORLD);
 
+  #pragma omp parallel for num_threads(10)
   for (unsigned int i = 0; i < managers.size(); ++i) {
     if (managers[i]->InitializeLockClients()) {
       cerr << "InitializeLockClients() failed." << endl;
@@ -785,6 +792,8 @@ int main(int argc, char** argv) {
       local_workload_ratio_str << "," << shared_lock_ratio_str << "," <<
       min_backoff_time << "," <<
       max_backoff_time << "," <<
+      max_local_exclusive_locks << "," <<
+      max_local_shared_locks << "," <<
       transaction_delay_str << ",";
     if (transaction_delay) {
       cerr << transaction_delay_min << "," << transaction_delay_max << ",";

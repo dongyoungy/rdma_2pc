@@ -176,6 +176,9 @@ void MicrobenchLockSimulator::CreateLockRequests() {
   struct timespec before, after;
 
   if (!is_tx_failed_) {
+    // enforce think time here
+    if (think_time_ > 0)
+      this_thread::sleep_for (chrono::microseconds(think_time_));
     Generate();
     if (measure_lock_time_)
       clock_gettime(CLOCK_MONOTONIC, &start_lock_);
@@ -216,7 +219,7 @@ void MicrobenchLockSimulator::SubmitLockRequest() {
   pthread_mutex_unlock(&time_mutex_);
 
   // enforce think time
-  usleep(think_time_);
+  //usleep(think_time_);
 
   int ret = 0;
   pthread_mutex_lock(&lock_mutex_);
@@ -277,6 +280,14 @@ void MicrobenchLockSimulator::SubmitUnlockRequest() {
   measure_time_out_ = false;
 
   restart_ = false;
+
+  if (current_request_idx_ == request_size_ - 1 && !is_tx_failed_) {
+    // simulate transaction time
+    if (transaction_delay_) {
+      // uses transaction_delay_min_ for now.
+      this_thread::sleep_for (chrono::microseconds((int)transaction_delay_min_));
+    }
+  }
 
   int ret = 0;
   pthread_mutex_lock(&lock_mutex_);

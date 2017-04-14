@@ -169,7 +169,7 @@ int main(int argc, char** argv) {
       TPCCLockSimulator* simulator = new TPCCLockSimulator(managers[i],
           //(uint32_t)pow(2.0, rank*num_users+i), // id
           id,
-          j%num_managers,
+          0, //j%num_managers,
           WORKLOAD_UNIFORM,
           num_managers,
           num_tx,
@@ -190,7 +190,7 @@ int main(int argc, char** argv) {
   }
   cout << "Initialzing Clients..." << endl;
 
-  #pragma omp parallel for num_threads(20)
+  #pragma omp parallel for num_threads(10)
   for (int i = 0; i < num_managers; ++i) {
     if (managers[i]->InitializeLockClients()) {
       cerr << "InitializeLockClients() failed." << endl;

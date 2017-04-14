@@ -5,7 +5,10 @@ SetOption('num_jobs', 8)
 debug = ARGUMENTS.get('debug', 0)
 pedantic = ARGUMENTS.get('pedantic', 0)
 env.Append(CCFLAGS='-std=c++11')
-env.Append(CCFLAGS='-Wall -Wextra -Werror -Wno-unused-variable -Wno-unused-parameter -pedantic')
+#env.Append(CCFLAGS='-Wall -Wextra -Werror -Wno-unused-variable -Wno-unused-parameter -pedantic')
+env.Append(CPPPATH='#/include/')
+env.Append(LIBS=['tbb', 'tbbmalloc'])
+env.Append(LIBPATH='#/lib/')
 
 if int(debug):
     env.Append(CCFLAGS='-g')

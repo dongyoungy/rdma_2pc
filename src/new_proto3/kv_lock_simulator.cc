@@ -112,26 +112,6 @@ void KVLockSimulator::StartLockRequests() {
     if (state_ == STATE_DONE)
       break;
   }
-  //state_ = STATE_IDLE;
-  //while (state_ != STATE_DONE) {
-    //switch (state_) {
-      //case STATE_IDLE:
-        //state_ = STATE_WAIT;
-        //CreateLockRequests();
-        //break;
-      //case STATE_LOCKING:
-        //state_ = STATE_WAIT;
-        //SubmitLockRequest();
-        //break;
-      //case STATE_UNLOCKING:
-        //state_ = STATE_WAIT;
-        //SubmitUnlockRequest();
-        //break;
-      //default:
-        //break;
-    //}
-  //}
-  //cout << "STATE DONE" << endl;
 }
 
 void KVLockSimulator::Generate() {
@@ -200,6 +180,9 @@ void KVLockSimulator::CreateLockRequests() {
   struct timespec before, after;
 
   if (!is_tx_failed_) {
+    // enforce think time here
+    if (think_time_ > 0)
+      this_thread::sleep_for (chrono::microseconds(think_time_));
     Generate();
     if (measure_lock_time_)
       clock_gettime(CLOCK_MONOTONIC, &start_lock_);
@@ -240,7 +223,7 @@ void KVLockSimulator::SubmitLockRequest() {
   pthread_mutex_unlock(&time_mutex_);
 
   // enforce think time
-  usleep(think_time_);
+  //usleep(think_time_);
 
   int ret = 0;
   pthread_mutex_lock(&lock_mutex_);
@@ -302,6 +285,13 @@ void KVLockSimulator::SubmitUnlockRequest() {
 
   restart_ = false;
 
+  if (current_request_idx_ == request_size_ - 1 && !is_tx_failed_) {
+    // simulate transaction time
+    if (transaction_delay_) {
+      // uses transaction_delay_min_ for now.
+      this_thread::sleep_for (chrono::microseconds((int)transaction_delay_min_));
+    }
+  }
   int ret = 0;
   pthread_mutex_lock(&lock_mutex_);
   if (current_request_idx_ >= 0) {

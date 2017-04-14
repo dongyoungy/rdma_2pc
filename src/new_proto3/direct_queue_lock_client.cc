@@ -297,7 +297,7 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
           //this->UndoLocking(context_, request, true);
         } else {
           ++total_lock_contention_;
-          user_waiters_[request->user_id] = exclusive;
+          user_all_waiters_[request->user_id] = exclusive;
           this->HandleShared(request);
         }
       }
@@ -338,7 +338,14 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
     //uint64_t prev;
     //uint32_t value, exclusive, shared;
     LockRequest* request = (LockRequest *)work_completion->wr_id;
-    uint64_t all_value = *request->read_buffer2;
+    //uint64_t all_value = *request->read_buffer2;
+    uint64_t prev_value = *request->read_buffer2;
+    uint64_t all_value = prev_value;
+//#if __BYTE_ORDER == __LITTLE_ENDIAN
+    //all_value = __bswap_constant_64(prev_value);  // Compiler builtin
+//#else
+    //all_value = prev_value;
+//#endif
 
     // polling result
     //if (request->read_target == ALL) {
@@ -399,8 +406,8 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
 
     if (request->lock_type == SHARED) {
       // Polling on X -> proceed if value is zero
-      if (remaining == 0 || (remaining >> 32) == 0) {
-        user_waiters_[request->user_id] = 0;
+      if ((remaining >> 32) == 0) {
+        user_all_waiters_[request->user_id] = 0;
         ++total_lock_success_with_poll_;
         sum_poll_when_success_ += user_retry_count_[request->user_id];
         local_manager_->NotifyLockRequestResult(

@@ -1,0 +1,11 @@
+#define __TBB_VERSION_STRINGS(N) \
+#N": BUILD_HOST\t\tln001 (ppc64le)" ENDL \
+#N": BUILD_OS\t\tNAME=Red Hat Enterprise Linux Server" ENDL \
+#N": BUILD_KERNEL\tLinux 3.10.0-327.el7.ppc64le #1 SMP Thu Oct 29 17:31:13 EDT 2015" ENDL \
+#N": BUILD_GCC\t\tg++ (GCC) 4.8.5 20150623 (Red Hat 4.8.5-4)" ENDL \
+#N": BUILD_LIBC\t2.17" ENDL \
+#N": BUILD_LD\t\tGNU ld version 2.23.52.0.1-55.el7 20130226" ENDL \
+#N": BUILD_TARGET\tppc64le on cc4.8.5_libc2.17_kernel3.10.0" ENDL \
+#N": BUILD_COMMAND\tg++ -g -O2 -DUSE_PTHREAD -fPIC -D__TBB_BUILD=1 -Wall -Wno-parentheses -Wno-non-virtual-dtor -I../../src -I../../src/rml/include -I../../include -I." ENDL \
+
+#define __TBB_DATETIME "Wed Apr 12 22:12:37 UTC 2017"
