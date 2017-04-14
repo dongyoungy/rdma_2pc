@@ -1,0 +1,4 @@
+Import("env")
+driver = env.Program(target = 'zipf_test_main', source = ['zipf_test_main.cc'], LIBS=['rdmacm', 'ibverbs', 'pthread' ,'rt'])
+binaries = [driver]
+Return("binaries")
