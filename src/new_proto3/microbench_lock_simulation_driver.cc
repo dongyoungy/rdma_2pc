@@ -28,7 +28,7 @@ int main(int argc, char** argv) {
 
   MPI_Init(&argc, &argv);
 
-  if (argc != 20) {
+  if (argc != 22) {
     cout << argv[0] << " <work_dir> <num_manager_per_node> <num_tx> <contention_index>" <<
       " <num_users> <lock_mode>" <<
       " <shared_exclusive_rule> <exclusive_shared_rule> <exclusive_exclusive_rule>" <<
@@ -194,33 +194,33 @@ int main(int argc, char** argv) {
       cerr << "pthread_create() error." << endl;
       exit(-1);
     }
+  }
 
-    for (int j=0;j<num_users_per_manager;++j) {
-      uint32_t id = (num_users*rank)+(j+1);
-      bool verbose = false;
-      MicrobenchLockSimulator* simulator = new MicrobenchLockSimulator(managers[i],
-          id, // id
-          managers[i]->GetRank(),
-          0, // empty workload type
-          num_nodes*num_manager_per_node,
-          num_tx,
-          1000000, // num objects
-          contention_index,
-          seed+(rank*num_users)+j,
-          verbose, // verbose
-          true, // measure lock time
-          lock_mode,
-          transaction_delay,
-          transaction_delay_min,
-          transaction_delay_max,
-          min_backoff_time,
-          max_backoff_time,
-          sleep_time,
-          think_time
-          );
-      managers[i]->RegisterUser(id, simulator);
-      users.push_back(simulator);
-    }
+  for (int j=0;j<num_users_per_manager;++j) {
+    uint32_t id = (num_users*rank)+(j+1);
+    bool verbose = false;
+    MicrobenchLockSimulator* simulator = new MicrobenchLockSimulator(managers[j%num_manager_per_node],
+        id, // id
+        j%(num_servers*num_manager_per_node), // home_id
+        0, // empty workload type
+        num_nodes*num_manager_per_node,
+        num_tx,
+        1000000, // num objects
+        contention_index,
+        seed+(rank*num_users)+j,
+        verbose, // verbose
+        true, // measure lock time
+        lock_mode,
+        transaction_delay,
+        transaction_delay_min,
+        transaction_delay_max,
+        min_backoff_time,
+        max_backoff_time,
+        sleep_time,
+        think_time
+        );
+    managers[j % num_manager_per_node]->RegisterUser(id, simulator);
+    users.push_back(simulator);
   }
 
   MPI_Barrier(MPI_COMM_WORLD);
@@ -513,9 +513,7 @@ int main(int argc, char** argv) {
   usage.terminate = true;
   pthread_join(cpu_measure_thread, NULL);
   double local_cpu_usage_local = usage.total_cpu / usage.num_sample;
-  if (rank < client_start_idx) {
-    local_cpu_usage = local_cpu_usage_local;
-  }
+  local_cpu_usage = local_cpu_usage_local;
   MPI_Barrier(MPI_COMM_WORLD);
 
   MPI_Reduce(&local_sum, &global_sum, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
@@ -602,13 +600,16 @@ int main(int argc, char** argv) {
   MPI_Barrier(MPI_COMM_WORLD);
 
   // Get standard deviation for cpu usage
-  if (rank < client_start_idx) {
-    global_cpu_usage_avg = global_cpu_usage / (double)num_servers;
-  }
-  if (rank < client_start_idx) {
-    local_cpu_diff = (global_cpu_usage_avg - local_cpu_usage) *
-      (global_cpu_usage_avg - local_cpu_usage);
-  }
+  //if (rank < client_start_idx) {
+    //global_cpu_usage_avg = global_cpu_usage / (double)num_servers;
+  //}
+  //if (rank < client_start_idx) {
+    //local_cpu_diff = (global_cpu_usage_avg - local_cpu_usage) *
+      //(global_cpu_usage_avg - local_cpu_usage);
+  //}
+  global_cpu_usage_avg = global_cpu_usage / (double)num_servers;
+  local_cpu_diff = (global_cpu_usage_avg - local_cpu_usage) *
+    (global_cpu_usage_avg - local_cpu_usage);
   MPI_Reduce(&local_cpu_diff, &global_cpu_diff, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
   global_cpu_usage_std = sqrt(global_cpu_diff / (double)num_servers);
 

@@ -78,6 +78,17 @@ class LockSimulator {
        verbose_ = verbose;
     }
 
+    // new profiling
+    uint64_t GetNumLocalLockSuccess() const;
+    uint64_t GetNumLocalLockFailure() const;
+    uint64_t GetNumGlobalLockSuccess() const;
+    uint64_t GetNumGlobalLockFailure() const;
+    uint64_t GetTotalTimeForLocalLockSuccess() const;
+    uint64_t GetTotalTimeForLocalLockFailure() const;
+    uint64_t GetTotalTimeForGlobalLockSuccess() const;
+    uint64_t GetTotalTimeForGlobalLockFailure() const;
+    uint64_t GetTotalTimeForTxCompletion() const;
+
     static void* CheckTimeOut(void* arg);
 
     static const int STATE_IDLE      = 0;
@@ -174,6 +185,7 @@ class LockSimulator {
     int local_manager_id_;
     int workload_type_;
     bool is_all_local_;
+    bool is_local_lock_;
     double* cdf_;
     double local_percentage_;
     double shared_lock_ratio_;
@@ -182,6 +194,21 @@ class LockSimulator {
     int local_unlock_count_;
     uint64_t count_limit_;
     uint64_t num_tx_;
+
+    // for profiling
+    chrono::steady_clock::time_point before_lock_;
+    chrono::steady_clock::time_point after_lock_;
+    chrono::steady_clock::time_point before_tx_;
+    uint64_t num_local_lock_success_;
+    uint64_t num_local_lock_failure_;
+    uint64_t time_taken_to_local_lock_success_;
+    uint64_t time_taken_to_local_lock_failure_;
+    uint64_t num_global_lock_success_;
+    uint64_t num_global_lock_failure_;
+    uint64_t time_taken_to_global_lock_success_;
+    uint64_t time_taken_to_global_lock_failure_;
+    uint64_t time_taken_to_tx_complete_;
+
   private:
     void SubmitLockRequestLocal();
     void SubmitUnlockRequestLocal();

@@ -165,7 +165,7 @@ int main(int argc, char** argv) {
         //id = (num_users*i)+(j+1);
       //}
       id = (num_users*i)+(j+1);
-      bool verbose = false;
+      bool verbose = true;
       TPCCLockSimulator* simulator = new TPCCLockSimulator(managers[i],
           //(uint32_t)pow(2.0, rank*num_users+i), // id
           id,

@@ -166,6 +166,13 @@ class LockManager {
     // temp
     long local_e_e_lock_pass_count_;
 
+    uint64_t GetNumLocalLockDirectPass() const;
+    uint64_t GetNumLocalLockDirectFail() const;
+    uint64_t GetNumLocalLockWaitPass() const;
+    uint64_t GetNumLocalLockWaitFail() const;
+
+    uint64_t GetRequestLockCallTime() const;
+    uint64_t GetRequestLockCallCount() const;
 
     static const int EXCLUSIVE = 1;
     static const int SHARED = 2;
@@ -302,6 +309,14 @@ class LockManager {
 
     static int poll_retry_;
     static int fail_retry_;
+
+    uint64_t num_local_lock_direct_pass_;
+    uint64_t num_local_lock_direct_fail_;
+    uint64_t num_local_lock_wait_pass_;
+    uint64_t num_local_lock_wait_fail_;
+
+    uint64_t request_lock_call_time_;
+    uint64_t request_lock_call_count_;
 };
 
 }}

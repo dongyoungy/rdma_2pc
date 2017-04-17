@@ -1,6 +1,7 @@
 #include "lock_client.h"
 #include "lock_request.h"
 
+
 namespace rdma { namespace proto {
 
 // constructor
@@ -188,7 +189,7 @@ int Client::HandleAddressResolved(struct rdma_cm_id* id) {
   context_ = BuildContext(id);
   if (context_ == NULL) {
     cerr << "Client: BuildContext() failed." << endl;
-    return -1;
+    exit(-1);
   }
 
   struct ibv_exp_qp_init_attr queue_pair_attributes;
@@ -238,8 +239,8 @@ int Client::HandleRouteResolved(struct rdma_cm_id* id) {
   struct rdma_conn_param connection_parameters;
   memset(&connection_parameters, 0x00, sizeof(connection_parameters));
   connection_parameters.initiator_depth =
-    connection_parameters.responder_resources = 5;
-  connection_parameters.rnr_retry_count = 5;
+    connection_parameters.responder_resources = 7;
+  connection_parameters.rnr_retry_count = 7;
 
   // connect
   if (rdma_connect(id, &connection_parameters)) {
@@ -470,8 +471,8 @@ void Client::BuildQueuePairAttr(Context* context,
   attributes->qp_type          = IBV_QPT_RC;
   attributes->cap.max_send_wr  = 2048;
   attributes->cap.max_recv_wr  = 2048;
-  attributes->cap.max_send_sge = 2;
-  attributes->cap.max_recv_sge = 2;
+  attributes->cap.max_send_sge = 4;
+  attributes->cap.max_recv_sge = 4;
   attributes->comp_mask        = IBV_EXP_QP_INIT_ATTR_PD |
     IBV_EXP_QP_INIT_ATTR_CREATE_FLAGS;
   attributes->exp_create_flags = IBV_EXP_QP_CREATE_ATOMIC_BE_REPLY;
@@ -488,7 +489,7 @@ Context* Client::BuildContext(struct rdma_cm_id* id) {
   new_context->device_context = id->verbs;
   if ((new_context->protection_domain =
         ibv_alloc_pd(new_context->device_context)) == NULL) {
-    cerr << "Client: ibv_alloc_pd() failed." << endl;
+    cerr << "Client: ibv_alloc_pd() failed: " << strerror(errno) << endl;
     return NULL;
   }
   if ((new_context->completion_channel =
@@ -499,7 +500,7 @@ Context* Client::BuildContext(struct rdma_cm_id* id) {
   if ((new_context->completion_queue =
         ibv_create_cq(new_context->device_context, 64,
           NULL, new_context->completion_channel, 0)) == NULL) {
-    cerr << "Client: ibv_create_cq() failed." << endl;
+    cerr << "Client: ibv_create_cq() failed: " << strerror(errno) << endl;
     return NULL;
   }
   if (ibv_req_notify_cq(new_context->completion_queue, 0)) {

@@ -4,8 +4,27 @@ namespace rdma { namespace proto {
 
 LockSimulator::LockSimulator() {
 
+  total_num_locks_ = 0;
+  total_num_unlocks_            = 0;
+  total_num_lock_success_       = 0;
+  total_num_lock_failure_       = 0;
+  total_num_local_lock_failure_ = 0;
+  total_num_timeouts_           = 0;
+  total_time_taken_to_lock_     = 0;
   total_num_local_lock_failure_ = 0;
   num_lock_acquired_till_timeout_ = 0;
+
+  num_local_lock_success_ = 0;
+  num_local_lock_failure_ = 0;
+  time_taken_to_local_lock_success_ = 0;
+  time_taken_to_local_lock_failure_ = 0;
+  num_global_lock_success_ = 0;
+  num_global_lock_failure_ = 0;
+  time_taken_to_global_lock_success_ = 0;
+  time_taken_to_global_lock_failure_ = 0;
+  time_taken_to_tx_complete_ = 0;
+  is_local_lock_ = false;
+
   lock_times_ = new double[MAX_LOCK_REQUESTS];
   single_lock_times_ = new double[MAX_LOCK_REQUESTS];
 
@@ -773,6 +792,10 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
     }
     ChangeState(STATE_QUEUED);
     //pthread_mutex_unlock(&mutex_);
+    after_lock_ = chrono::steady_clock::now();
+    auto diff = after_lock_ - before_lock_;
+    time_taken_to_global_lock_success_ += chrono::duration_cast<chrono::nanoseconds>(diff).count();
+    ++num_global_lock_success_;
     pthread_mutex_unlock(&lock_mutex_);
     return 0;
   }
@@ -795,7 +818,16 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
           " for object " << requests_[last_request_idx_]->obj_index << endl;
         pthread_mutex_unlock(&PRINT_MUTEX);
       }
+      after_lock_ = chrono::steady_clock::now();
+      auto diff = after_lock_ - before_lock_;
       ++total_num_lock_success_;
+      if (is_local_lock_) {
+        ++num_local_lock_success_;
+        time_taken_to_local_lock_success_ += chrono::duration_cast<chrono::nanoseconds>(diff).count();
+      } else {
+        ++num_global_lock_success_;
+        time_taken_to_global_lock_success_ += chrono::duration_cast<chrono::nanoseconds>(diff).count();
+      }
       if (retry_ > 0) {
         ++total_num_lock_success_with_retry_;
         sum_retry_when_success_ += retry_;
@@ -837,6 +869,10 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
       if (retry_ > LockManager::GetFailRetry()) {
         current_request_idx_ = last_request_idx_ - 1;
         ++total_num_lock_failure_;
+        ++num_global_lock_failure_;
+        after_lock_ = chrono::steady_clock::now();
+        auto diff = after_lock_ - before_lock_;
+        time_taken_to_global_lock_failure_ += chrono::duration_cast<chrono::nanoseconds>(diff).count();
         retry_ = 0;
         num_lock_acquired_till_timeout_ = last_request_idx_;
         is_tx_failed_ = true;
@@ -853,6 +889,10 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
         requests_[last_request_idx_]->obj_index == obj_index) {
       ++retry_;
       current_request_idx_ = last_request_idx_;
+      ++num_local_lock_failure_;
+      after_lock_ = chrono::steady_clock::now();
+      auto diff = after_lock_ - before_lock_;
+      time_taken_to_local_lock_failure_ += chrono::duration_cast<chrono::nanoseconds>(diff).count();
       if (verbose_) {
         pthread_mutex_lock(&PRINT_MUTEX);
         cout << "Simulator " << local_manager_id_ << "@" << id_ << ": " <<
@@ -864,9 +904,8 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
       }
       // retry
       if (retry_ > LockManager::GetFailRetry()) {
-      //if (retry_ > 3000) {
         current_request_idx_ = last_request_idx_ - 1;
-        ++total_num_local_lock_failure_;
+        ++total_num_lock_failure_;
         retry_ = 0;
         num_lock_acquired_till_timeout_ = last_request_idx_;
         is_tx_failed_ = true;
@@ -878,26 +917,6 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
       } else {
         ChangeState(STATE_LOCKING);
       }
-      //current_request_idx_ = last_request_idx_ - 1;
-      //++total_num_lock_failure_;
-      //if (verbose_) {
-        //pthread_mutex_lock(&PRINT_MUTEX);
-        //cout << "Simulator " << local_manager_id_ << "@" << id_ << ": " <<
-          //"(Local Fail) Unsuccessful lock request at LM " <<
-          //requests_[last_request_idx_]->lm_id <<
-          //" of type " << requests_[last_request_idx_]->lock_type <<
-          //" for object " << requests_[last_request_idx_]->obj_index <<
-          //" (" << lock_type << "," << obj_index << ")" << endl;
-        //pthread_mutex_unlock(&PRINT_MUTEX);
-      //}
-      //num_lock_acquired_till_timeout_ = last_request_idx_;
-      //is_tx_failed_ = true;
-      //// retry upon failure
-      //if (last_request_idx_ == 0) {
-        //ChangeState(STATE_IDLE);
-      //} else {
-        //ChangeState(STATE_UNLOCKING);
-      //}
     } else if (result == RESULT_FAILURE &&
         requests_[last_request_idx_]->lock_type == lock_type &&
         requests_[last_request_idx_]->obj_index == obj_index) {
@@ -913,6 +932,10 @@ int LockSimulator::NotifyResult(int seq_no, int task, int lock_type, int obj_ind
         pthread_mutex_unlock(&PRINT_MUTEX);
       }
       ++total_num_lock_failure_;
+      ++num_global_lock_failure_;
+      after_lock_ = chrono::steady_clock::now();
+      auto diff = after_lock_ - before_lock_;
+      time_taken_to_global_lock_failure_ += chrono::duration_cast<chrono::nanoseconds>(diff).count();
       num_lock_acquired_till_timeout_ = last_request_idx_;
       is_tx_failed_ = true;
       // retry upon failure
@@ -1134,6 +1157,41 @@ bool LockSimulator::IsBackingOff() const {
   return is_backing_off_;
 }
 
+uint64_t LockSimulator::GetNumLocalLockSuccess() const {
+  return num_local_lock_success_;
+}
+
+uint64_t LockSimulator::GetNumLocalLockFailure() const {
+  return num_local_lock_failure_;
+}
+
+uint64_t LockSimulator::GetNumGlobalLockSuccess() const {
+  return num_global_lock_success_;
+}
+
+uint64_t LockSimulator::GetNumGlobalLockFailure() const {
+  return num_global_lock_failure_;
+}
+
+uint64_t LockSimulator::GetTotalTimeForLocalLockSuccess() const {
+  return time_taken_to_local_lock_success_;
+}
+
+uint64_t LockSimulator::GetTotalTimeForLocalLockFailure() const {
+  return time_taken_to_local_lock_failure_;
+}
+
+uint64_t LockSimulator::GetTotalTimeForGlobalLockSuccess() const {
+  return time_taken_to_global_lock_success_;
+}
+
+uint64_t LockSimulator::GetTotalTimeForGlobalLockFailure() const {
+  return time_taken_to_global_lock_failure_;
+}
+
+uint64_t LockSimulator::GetTotalTimeForTxCompletion() const {
+  return time_taken_to_tx_complete_;
+}
 
 void* LockSimulator::CheckTimeOut(void* arg) {
   LockSimulator* simulator = (LockSimulator*)arg;

@@ -265,6 +265,13 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
           // exclusive lock acquisition successful
           //wait_after_me_[request->obj_index] = 0;
           ++total_lock_success_;
+          clock_gettime(CLOCK_MONOTONIC, &end_remote_exclusive_lock_);
+          double time_taken = ((double)end_remote_exclusive_lock_.tv_sec * 1e+9 +
+              (double)end_remote_exclusive_lock_.tv_nsec) -
+            ((double)start_remote_exclusive_lock_.tv_sec * 1e+9 +
+             (double)start_remote_exclusive_lock_.tv_nsec);
+          total_exclusive_lock_remote_time_ += time_taken;
+          ++num_exclusive_lock_;
           local_manager_->NotifyLockRequestResult(
               request->seq_no,
               request->user_id,
@@ -285,6 +292,13 @@ int DirectQueueLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) 
         if (exclusive == 0) {
           // it should have been successful since exclusive and shared was 0
           ++total_lock_success_;
+          clock_gettime(CLOCK_MONOTONIC, &end_remote_shared_lock_);
+          double time_taken = ((double)end_remote_shared_lock_.tv_sec * 1e+9 +
+              (double)end_remote_shared_lock_.tv_nsec) -
+            ((double)start_remote_shared_lock_.tv_sec * 1e+9 +
+             (double)start_remote_shared_lock_.tv_nsec);
+          total_shared_lock_remote_time_ += time_taken;
+          ++num_shared_lock_;
           local_manager_->NotifyLockRequestResult(
               request->seq_no,
               request->user_id,

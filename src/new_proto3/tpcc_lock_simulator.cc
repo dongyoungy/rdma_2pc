@@ -107,6 +107,12 @@ void TPCCLockSimulator::StartLockRequests() {
 
 void TPCCLockSimulator::CreateLockRequests() {
 
+  if (count_ > 0 && !is_tx_failed_) {
+    auto now = chrono::steady_clock::now();
+    auto diff = now - before_tx_;
+    time_taken_to_tx_complete_ += chrono::duration_cast<chrono::nanoseconds>(diff).count();
+  }
+
   if (count_ >= num_tx_) {
     if (verbose_)
       cout << "Tx count of " << num_tx_ << " has reached. Terminating.";
@@ -128,7 +134,20 @@ void TPCCLockSimulator::CreateLockRequests() {
     // enforce think time here
     if (think_time_ > 0)
       this_thread::sleep_for (chrono::microseconds(think_time_));
+
     request_size_ = tpcc_lock_gen_->Generate(requests_);
+
+    //int val = rand_r(&seed_) % 100;
+    //int type = 0;
+    //if (val < -1) type = SHARED;
+    //else type = EXCLUSIVE;
+    //// temporary testing of all EXCLUSIVE
+    //for (int i = 0; i < request_size_; ++i) {
+      //requests_[i]->obj_index = id_*100 + i;
+      //requests_[i]->lock_type = type;
+    //}
+
+    before_tx_ = chrono::steady_clock::now();
     if (measure_lock_time_)
       clock_gettime(CLOCK_MONOTONIC, &start_lock_);
   } else {
@@ -167,9 +186,6 @@ void TPCCLockSimulator::SubmitLockRequest() {
   clock_gettime(CLOCK_MONOTONIC, &last_lock_time_);
   pthread_mutex_unlock(&time_mutex_);
 
-  // enforce think time
-  //usleep(transaction_delay_min_);
-
   int ret = 0;
   pthread_mutex_lock(&lock_mutex_);
   if (current_request_idx_ < request_size_) {
@@ -184,8 +200,6 @@ void TPCCLockSimulator::SubmitLockRequest() {
         " for object " << requests_[current_request_idx_]->obj_index << endl;
       pthread_mutex_unlock(&PRINT_MUTEX);
     }
-    //if (measure_lock_time_)
-      //clock_gettime(CLOCK_MONOTONIC, &start_lock_);
     requests_[current_request_idx_]->task = TASK_LOCK;
     requests_[current_request_idx_]->seq_no = seq_count_;
     last_task_ = TASK_LOCK;
@@ -193,6 +207,9 @@ void TPCCLockSimulator::SubmitLockRequest() {
     ++seq_count_;
     last_request_idx_ = current_request_idx_;
     ++current_request_idx_;
+
+    // mesasure lock time
+    before_lock_ = chrono::steady_clock::now();
     ret = manager_->Lock(
         requests_[last_request_idx_]->seq_no,
         id_,
@@ -205,7 +222,9 @@ void TPCCLockSimulator::SubmitLockRequest() {
     SimulateTransactionDelay();
   }
   pthread_mutex_unlock(&lock_mutex_);
+  is_local_lock_ = false;
   if (ret == LOCAL_LOCK_PASS) {
+    is_local_lock_ = true;
     this->NotifyResult(
         requests_[last_request_idx_]->seq_no,
         LockManager::TASK_LOCK,
@@ -214,6 +233,7 @@ void TPCCLockSimulator::SubmitLockRequest() {
         LockManager::RESULT_SUCCESS
         );
   } else if (ret == LOCAL_LOCK_FAIL) {
+    is_local_lock_ = true;
     this->NotifyResult(
         requests_[last_request_idx_]->seq_no,
         LockManager::TASK_LOCK,

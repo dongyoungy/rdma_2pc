@@ -49,6 +49,14 @@ LockManager::LockManager(const string& work_dir, uint32_t rank,
 
   local_e_e_lock_pass_count_ = 0;
 
+  num_local_lock_direct_pass_ = 0;
+  num_local_lock_direct_fail_ = 0;
+  num_local_lock_wait_pass_   = 0;
+  num_local_lock_wait_fail_   = 0;
+
+  request_lock_call_time_ = 0;
+  request_lock_call_count_ = 0;
+
   if (lock_mode_ == LOCK_ADAPTIVE) {
     current_lock_mode_ = LOCK_REMOTE_POLL;
   } else {
@@ -123,7 +131,7 @@ int LockManager::Initialize() {
     cerr << "Run(): rdma_bind_addr() failed: " << strerror(errno) << endl;
     return -1;
   }
-  if (rdma_listen(listener_, 128)) {
+  if (rdma_listen(listener_, 2048)) {
     cerr << "Run(): rdma_listen() failed: " << strerror(errno) << endl;
     return -1;
   }
@@ -435,8 +443,8 @@ int LockManager::HandleConnectRequest(struct rdma_cm_id* id) {
   struct rdma_conn_param connection_parameters;
   memset(&connection_parameters, 0x00, sizeof(connection_parameters));
   connection_parameters.initiator_depth =
-    connection_parameters.responder_resources = 5;
-  connection_parameters.rnr_retry_count = 5;
+    connection_parameters.responder_resources = 7;
+  connection_parameters.rnr_retry_count = 7;
 
   // accept connection
   if (rdma_accept(id, &connection_parameters)) {
@@ -691,11 +699,18 @@ int LockManager::Lock(int seq_no, uint32_t user_id, uint32_t manager_id, int loc
     ret = llm_->TryLock(manager_id, obj_index, user_id, lock_type);
     if (ret == LOCAL_LOCK_RETRY) {
       LockClient* lock_client = lock_clients_[manager_id];
+      auto before = chrono::steady_clock::now();
       ret = lock_client->RequestLock(seq_no, user_id, lock_type, obj_index,
           lock_mode_table_[manager_id]);
+      auto after = chrono::steady_clock::now();
+      auto diff = after - before;
+      request_lock_call_time_ += chrono::duration_cast<chrono::nanoseconds>(diff).count();
+      ++request_lock_call_count_;
     } else if (ret == LOCAL_LOCK_PASS) {
+      ++num_local_lock_direct_pass_;
       ret = LOCAL_LOCK_PASS;
     } else if (ret == LOCAL_LOCK_FAIL) {
+      ++num_local_lock_direct_fail_;
       ret = LOCAL_LOCK_FAIL;
     } else if (ret == LOCAL_LOCK_WAIT) {
       // Ex -> Ex case
@@ -703,7 +718,7 @@ int LockManager::Lock(int seq_no, uint32_t user_id, uint32_t manager_id, int loc
       while (wait_count < poll_retry_) {
         usleep(100);
         if (llm_->GetCurrentExclusiveOwner(manager_id, obj_index) == (int)user_id) {
-          ++local_e_e_lock_pass_count_;
+          ++num_local_lock_wait_pass_;
           ret = LOCAL_LOCK_PASS;
           break;
         }
@@ -711,14 +726,21 @@ int LockManager::Lock(int seq_no, uint32_t user_id, uint32_t manager_id, int loc
       }
       if (ret == LOCAL_LOCK_WAIT) {
         llm_->LeaveExclusive(manager_id, obj_index, user_id);
-        if (ret != LOCAL_LOCK_PASS)
+        if (ret != LOCAL_LOCK_PASS) {
+          ++num_local_lock_wait_fail_;
           ret = LOCAL_LOCK_FAIL;
+        }
       }
     }
   } else {
       LockClient* lock_client = lock_clients_[manager_id];
+      auto before = chrono::steady_clock::now();
       ret = lock_client->RequestLock(seq_no, user_id, lock_type, obj_index,
           lock_mode_table_[manager_id]);
+      auto after = chrono::steady_clock::now();
+      auto diff = after - before;
+      request_lock_call_time_ += chrono::duration_cast<chrono::nanoseconds>(diff).count();
+      ++request_lock_call_count_;
   }
   return ret;
 }
@@ -1554,8 +1576,8 @@ void LockManager::BuildQueuePairAttr(Context* context,
   attributes->qp_type          = IBV_QPT_RC;
   attributes->cap.max_send_wr  = 2048;
   attributes->cap.max_recv_wr  = 2048;
-  attributes->cap.max_send_sge = 2;
-  attributes->cap.max_recv_sge = 2;
+  attributes->cap.max_send_sge = 4;
+  attributes->cap.max_recv_sge = 4;
   attributes->comp_mask        = IBV_EXP_QP_INIT_ATTR_PD |
     IBV_EXP_QP_INIT_ATTR_CREATE_FLAGS;
   attributes->max_atomic_arg   = sizeof(uint64_t);
@@ -1688,6 +1710,30 @@ int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
 int LockManager::RegisterContext(Context* context) {
   context_set_.insert(context);
   return 0;
+}
+
+uint64_t LockManager::GetNumLocalLockDirectPass() const {
+  return num_local_lock_direct_pass_;
+}
+
+uint64_t LockManager::GetNumLocalLockDirectFail() const {
+  return num_local_lock_direct_fail_;
+}
+
+uint64_t LockManager::GetNumLocalLockWaitPass() const {
+  return num_local_lock_wait_pass_;
+}
+
+uint64_t LockManager::GetNumLocalLockWaitFail() const {
+  return num_local_lock_wait_fail_;
+}
+
+uint64_t LockManager::GetRequestLockCallTime() const {
+  return request_lock_call_time_;
+}
+
+uint64_t LockManager::GetRequestLockCallCount() const {
+  return request_lock_call_count_;
 }
 
 uint64_t LockManager::GetTotalLockContention() const {

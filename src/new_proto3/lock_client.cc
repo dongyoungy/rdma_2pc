@@ -155,8 +155,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
         (double)end_remote_exclusive_lock_.tv_nsec) -
       ((double)start_remote_exclusive_lock_.tv_sec * 1e+9 +
           (double)start_remote_exclusive_lock_.tv_nsec);
-    total_exclusive_lock_remote_time_ += time_taken;
-    ++num_exclusive_lock_;
+    total_rdma_atomic_time_ += time_taken;
 
     uint64_t prev_value = *request->original_value;
 #if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -169,6 +168,9 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     if (request->task == TASK_LOCK) {
       // it should have been successful since exclusive and shared was 0
       if (exclusive == 0 && shared == 0) {
+        ++total_lock_success_;
+        total_exclusive_lock_remote_time_ += time_taken;
+        ++num_exclusive_lock_;
         local_manager_->NotifyLockRequestResult(
             request->seq_no,
             request->user_id,
@@ -183,7 +185,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             request->lock_type,
             remote_lm_id_,
             request->obj_index,
-            LockManager::RESULT_FAILURE);
+            LockManager::RESULT_RETRY);
       }
     } else if (request->task == LockManager::TASK_UNLOCK) {
       if (exclusive == request->user_id && shared == 0) {
@@ -240,6 +242,8 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       if (exclusive == 0) {
         // it should have been successful since exclusive and shared was 0
         ++total_lock_success_;
+        total_shared_lock_remote_time_ += time_taken;
+        ++num_shared_lock_;
         local_manager_->NotifyLockRequestResult(
             request->seq_no,
             request->user_id,
@@ -857,8 +861,6 @@ int LockClient::ReadRemotely(Context* context, int seq_no, uint32_t user_id, int
   send_work_request.wr.rdma.remote_addr =
       (uint64_t)context->lock_table_mr->addr + (obj_index*sizeof(uint64_t));
 
-  ++num_rdma_read_;
-  pthread_mutex_unlock(&lock_mutex_);
   clock_gettime(CLOCK_MONOTONIC, &start_rdma_read_);
 
   int ret = 0;
@@ -868,6 +870,8 @@ int LockClient::ReadRemotely(Context* context, int seq_no, uint32_t user_id, int
     pthread_mutex_unlock(&lock_mutex_);
     return -1;
   }
+  ++num_rdma_read_;
+  pthread_mutex_unlock(&lock_mutex_);
 
   return 0;
 }

@@ -388,51 +388,85 @@ int main(int argc, char** argv) {
   time(&end_time);
   double time_taken = difftime(end_time, start_time);
 
-  long local_sum                           = 0;
-  long global_sum                          = 0;
-  long local_unlock_sum                    = 0;
-  long global_unlock_sum                   = 0;
-  long local_lock_success                  = 0;
-  long global_lock_success                 = 0;
-  long local_lock_contention               = 0;
-  long global_lock_contention              = 0;
-  long local_lock_success_with_retry       = 0;
-  long global_lock_success_with_retry      = 0;
-  long local_lock_success_with_poll        = 0;
-  long global_lock_success_with_poll       = 0;
-  long local_sum_poll_when_success         = 0;
-  long global_sum_poll_when_success        = 0;
-  long local_sum_retry_when_success        = 0;
-  long global_sum_retry_when_success       = 0;
-  long local_sum_index_when_timeout        = 0;
-  long global_sum_index_when_timeout       = 0;
-  long local_lock_failure                  = 0;
-  long global_lock_failure                 = 0;
-  long local_local_lock_failure            = 0;
-  long global_local_lock_failure           = 0;
-  long local_timeout                       = 0;
-  long global_timeout                      = 0;
-  double local_lock_time                   = 0;
-  double global_lock_time                  = 0;
-  double local_cpu_usage                   = 0;
-  double global_cpu_usage                  = 0;
-  double global_cpu_usage_avg              = 0;
-  double local_remote_exclusive_lock_time  = 0;
-  double global_remote_exclusive_lock_time = 0;
-  double local_remote_shared_lock_time     = 0;
-  double global_remote_shared_lock_time    = 0;
-  double local_local_exclusive_lock_time   = 0;
-  double global_local_exclusive_lock_time  = 0;
-  double local_local_shared_lock_time      = 0;
-  double global_local_shared_lock_time     = 0;
-  double local_send_message_time           = 0;
-  double global_send_message_time          = 0;
-  double local_receive_message_time        = 0;
-  double global_receive_message_time       = 0;
-  double local_99_lock_time                = 0;
-  double global_99_lock_time               = 0;
-  double local_95_lock_time                = 0;
-  double global_95_lock_time               = 0;
+  long local_sum                             = 0;
+  long global_sum                            = 0;
+  long local_unlock_sum                      = 0;
+  long global_unlock_sum                     = 0;
+  long local_lock_success                    = 0;
+  long global_lock_success                   = 0;
+  long local_lock_contention                 = 0;
+  long global_lock_contention                = 0;
+  long local_lock_success_with_retry         = 0;
+  long global_lock_success_with_retry        = 0;
+  long local_lock_success_with_poll          = 0;
+  long global_lock_success_with_poll         = 0;
+  long local_sum_poll_when_success           = 0;
+  long global_sum_poll_when_success          = 0;
+  long local_sum_retry_when_success          = 0;
+  long global_sum_retry_when_success         = 0;
+  long local_sum_index_when_timeout          = 0;
+  long global_sum_index_when_timeout         = 0;
+  long local_lock_failure                    = 0;
+  long global_lock_failure                   = 0;
+  long local_local_lock_success              = 0;
+  long global_local_lock_success             = 0;
+  long local_local_lock_failure              = 0;
+  long global_local_lock_failure             = 0;
+  long local_global_lock_success             = 0;
+  long global_global_lock_success            = 0;
+  long local_global_lock_failure             = 0;
+  long global_global_lock_failure            = 0;
+  long local_timeout                         = 0;
+  long global_timeout                        = 0;
+  double local_lock_time                     = 0;
+  double global_lock_time                    = 0;
+  double local_cpu_usage                     = 0;
+  double global_cpu_usage                    = 0;
+  double global_cpu_usage_avg                = 0;
+  double local_remote_exclusive_lock_time    = 0;
+  double global_remote_exclusive_lock_time   = 0;
+  double local_remote_shared_lock_time       = 0;
+  double global_remote_shared_lock_time      = 0;
+  double local_local_exclusive_lock_time     = 0;
+  double global_local_exclusive_lock_time    = 0;
+  double local_local_shared_lock_time        = 0;
+  double global_local_shared_lock_time       = 0;
+  double local_send_message_time             = 0;
+  double global_send_message_time            = 0;
+  double local_receive_message_time          = 0;
+  double global_receive_message_time         = 0;
+  double local_99_lock_time                  = 0;
+  double global_99_lock_time                 = 0;
+  double local_95_lock_time                  = 0;
+  double global_95_lock_time                 = 0;
+
+  uint64_t local_time_for_local_lock_success   = 0;
+  uint64_t global_time_for_local_lock_success  = 0;
+  uint64_t local_time_for_local_lock_failure   = 0;
+  uint64_t global_time_for_local_lock_failure  = 0;
+  uint64_t local_time_for_global_lock_success  = 0;
+  uint64_t global_time_for_global_lock_success = 0;
+  uint64_t local_time_for_global_lock_failure  = 0;
+  uint64_t global_time_for_global_lock_failure = 0;
+
+  uint64_t local_time_for_tx_completion  = 0;
+  uint64_t global_time_for_tx_completion = 0;
+
+  uint64_t local_lock_direct_pass = 0;
+  uint64_t local_lock_direct_fail = 0;
+  uint64_t local_lock_wait_pass = 0;
+  uint64_t local_lock_wait_fail = 0;
+
+  uint64_t global_lock_direct_pass = 0;
+  uint64_t global_lock_direct_fail = 0;
+  uint64_t global_lock_wait_pass = 0;
+  uint64_t global_lock_wait_fail = 0;
+
+  uint64_t local_request_lock_call_time = 0;
+  uint64_t local_request_lock_call_count = 0;
+
+  uint64_t global_request_lock_call_time = 0;
+  uint64_t global_request_lock_call_count = 0;
 
   double local_avg_rdma_read_count = 0;
   double global_avg_rdma_read_count = 0;
@@ -520,28 +554,36 @@ int main(int argc, char** argv) {
     }
   }
 
-  if (rank >= client_start_idx) {
-    for (unsigned int j=0;j<users.size();++j) {
-      LockSimulator* simulator = users[j];
-      local_sum += simulator->GetTotalNumLocks();
-      local_unlock_sum += simulator->GetTotalNumUnlocks();
-      local_lock_success += simulator->GetTotalNumLockSuccess();
-      local_lock_success_with_retry += simulator->GetTotalNumLockSuccessWithRetry();
-      local_sum_retry_when_success += simulator->GetSumRetryWhenSuccess();
-      local_sum_index_when_timeout += simulator->GetSumIndexWhenTimeout();
-      local_lock_failure += simulator->GetTotalNumLockFailure();
-      local_local_lock_failure += simulator->GetTotalNumLocalLockFailure();
-      local_timeout += simulator->GetTotalNumTimeout();
-      if (simulator->IsLockTimeMeasured()) {
-        local_lock_time += simulator->GetAverageTimeTakenToLock();
-        local_99_lock_time += simulator->Get99PercentileLockTime();
-        local_95_lock_time += simulator->Get95PercentileLockTime();
-      }
+  for (unsigned int j=0;j<users.size();++j) {
+
+    LockSimulator* simulator = users[j];
+    local_sum += simulator->GetTotalNumLocks();
+    local_unlock_sum += simulator->GetTotalNumUnlocks();
+    local_lock_success += simulator->GetTotalNumLockSuccess();
+    local_lock_success_with_retry += simulator->GetTotalNumLockSuccessWithRetry();
+    local_sum_retry_when_success += simulator->GetSumRetryWhenSuccess();
+    local_sum_index_when_timeout += simulator->GetSumIndexWhenTimeout();
+    local_lock_failure += simulator->GetTotalNumLockFailure();
+    local_local_lock_failure += simulator->GetTotalNumLocalLockFailure();
+    local_timeout += simulator->GetTotalNumTimeout();
+    if (simulator->IsLockTimeMeasured()) {
+      local_lock_time += simulator->GetAverageTimeTakenToLock();
+      local_99_lock_time += simulator->Get99PercentileLockTime();
+      local_95_lock_time += simulator->Get95PercentileLockTime();
     }
-    for (unsigned int j=0;j<users.size();++j) {
-      LockSimulator* simulator = users[j];
-      local_time_taken_sum += simulator->GetTimeTaken();
-    }
+    local_time_taken_sum += simulator->GetTimeTaken();
+
+    local_local_lock_success += simulator->GetNumLocalLockSuccess();
+    local_local_lock_failure += simulator->GetNumLocalLockFailure();
+    local_global_lock_success += simulator->GetNumGlobalLockSuccess();
+    local_global_lock_failure += simulator->GetNumGlobalLockFailure();
+
+    local_time_for_local_lock_success += simulator->GetTotalTimeForLocalLockSuccess();
+    local_time_for_local_lock_failure += simulator->GetTotalTimeForLocalLockFailure();
+    local_time_for_global_lock_success += simulator->GetTotalTimeForGlobalLockSuccess();
+    local_time_for_global_lock_failure += simulator->GetTotalTimeForGlobalLockFailure();
+
+    local_time_for_tx_completion += simulator->GetTotalTimeForTxCompletion();
   }
 
   for (int i = 0; i < num_warehouses_per_node; ++i) {
@@ -571,7 +613,16 @@ int main(int argc, char** argv) {
 
     local_rdma_read_time += lock_manager->GetTotalRDMAReadTime();
     local_rdma_atomic_time += lock_manager->GetTotalRDMAAtomicTime();
+
+    local_lock_direct_pass += lock_manager->GetNumLocalLockDirectPass();
+    local_lock_direct_fail += lock_manager->GetNumLocalLockDirectFail();
+    local_lock_wait_pass += lock_manager->GetNumLocalLockWaitPass();
+    local_lock_wait_fail += lock_manager->GetNumLocalLockWaitFail();
+
+    local_request_lock_call_time += lock_manager->GetRequestLockCallTime();
+    local_request_lock_call_count += lock_manager->GetRequestLockCallCount();
   }
+
   MPI_Barrier(MPI_COMM_WORLD);
   usage.terminate = true;
   pthread_join(cpu_measure_thread, NULL);
@@ -658,6 +709,38 @@ int main(int argc, char** argv) {
       MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Reduce(&local_sum_index_when_timeout, &global_sum_index_when_timeout, 1, MPI_LONG,
       MPI_SUM, 0, MPI_COMM_WORLD);
+
+  MPI_Reduce(&local_local_lock_success, &global_local_lock_success, 1, MPI_LONG_LONG, MPI_SUM, 0,
+      MPI_COMM_WORLD);
+  MPI_Reduce(&local_local_lock_failure, &global_local_lock_failure, 1, MPI_LONG_LONG, MPI_SUM, 0,
+      MPI_COMM_WORLD);
+  MPI_Reduce(&local_global_lock_success, &global_global_lock_success, 1, MPI_LONG_LONG, MPI_SUM, 0,
+      MPI_COMM_WORLD);
+  MPI_Reduce(&local_global_lock_failure, &global_global_lock_failure, 1, MPI_LONG_LONG, MPI_SUM, 0,
+      MPI_COMM_WORLD);
+  MPI_Reduce(&local_time_for_local_lock_success, &global_time_for_local_lock_success, 1,
+      MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_time_for_local_lock_failure, &global_time_for_local_lock_failure, 1,
+      MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_time_for_global_lock_success, &global_time_for_global_lock_success, 1,
+      MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_time_for_global_lock_failure, &global_time_for_global_lock_failure, 1,
+      MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&local_time_for_tx_completion, &global_time_for_tx_completion, 1,
+      MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+
+  MPI_Reduce(&local_lock_direct_pass, &global_lock_direct_pass, 1, MPI_LONG_LONG, MPI_SUM, 0,
+      MPI_COMM_WORLD);
+  MPI_Reduce(&local_lock_direct_fail, &global_lock_direct_fail, 1, MPI_LONG_LONG, MPI_SUM, 0,
+      MPI_COMM_WORLD);
+  MPI_Reduce(&local_lock_wait_pass, &global_lock_wait_pass, 1, MPI_LONG_LONG, MPI_SUM, 0,
+      MPI_COMM_WORLD);
+  MPI_Reduce(&local_lock_wait_fail, &global_lock_wait_fail, 1, MPI_LONG_LONG, MPI_SUM, 0,
+      MPI_COMM_WORLD);
+  MPI_Reduce(&local_request_lock_call_time, &global_request_lock_call_time, 1, MPI_LONG_LONG, MPI_SUM, 0,
+      MPI_COMM_WORLD);
+  MPI_Reduce(&local_request_lock_call_count, &global_request_lock_call_count, 1, MPI_LONG_LONG, MPI_SUM, 0,
+      MPI_COMM_WORLD);
 
     cout << "Local Avg CPU Usage = " << local_cpu_usage_local << "% "
       "(" << "ID = " << rank <<  " ,# nodes: " << num_servers <<
@@ -782,6 +865,31 @@ int main(int argc, char** argv) {
       "(# nodes: " << num_servers <<
       ", mode: " << lock_mode_str << ")" << endl;
     cout << "Local Time Taken Sum = " << local_time_taken_sum << endl;
+
+
+    cout << endl << "<New Lock Stats>" << endl;
+    cout << "# of Local Lock Success = " << global_local_lock_success << endl;
+    cout << "# of Global Lock Success = " << global_global_lock_success << endl;
+    cout << "# of Local Lock Failure = " << global_local_lock_failure << endl;
+    cout << "# of Global Lock Failure = " << global_global_lock_failure << endl;
+    cout << "# of Local Lock Direct Pass = " << global_lock_direct_pass << endl;
+    cout << "# of Local Lock Direct Fail = " << global_lock_direct_fail << endl;
+    cout << "# of Local Lock Wait Pass = " << global_lock_wait_pass << endl;
+    cout << "# of Local Lock Wait Fail = " << global_lock_wait_fail << endl;
+    cout << "Avg Time for Local Lock Success = " <<
+      (double)global_time_for_local_lock_success / (double) global_local_lock_success << endl;
+    cout << "Avg Time for Local Lock Failure = " <<
+      (double)global_time_for_local_lock_failure / (double) global_local_lock_failure << endl;
+    cout << "Avg Time for Global Lock Success = " <<
+      (double)global_time_for_global_lock_success / (double) global_global_lock_success << endl;
+    cout << "Avg Time for Global Lock Failure = " <<
+      (double)global_time_for_global_lock_failure / (double) global_global_lock_failure <<
+      " (" << global_time_for_global_lock_failure << "," << global_global_lock_failure << ")"
+      << endl;
+    cout << "Avg Time for Tx Completion = " <<
+      (double)global_time_for_tx_completion / (double) (num_nodes*num_users*num_tx) << endl;
+    cout << "Avg Time Taken for RequestLock() = " <<
+      (double)global_request_lock_call_time / (double) global_request_lock_call_count << endl;
 
     cerr << lock_mode_str << "," << workload_type_str <<
       "," << shared_exclusive_rule_str << "," << exclusive_shared_rule_str << "," <<

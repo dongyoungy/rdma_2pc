@@ -16,6 +16,7 @@ class MessageBuffer;
 struct Context {
   LockManager* server;
   Client* client;
+  DirectQueueLockClient* dqc;
 
   bool connected;
   //bool fail;

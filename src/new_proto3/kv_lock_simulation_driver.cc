@@ -34,7 +34,7 @@ int main(int argc, char** argv) {
       " <shared_exclusive_rule> <exclusive_shared_rule> <exclusive_exclusive_rule>" <<
       " <fail_retry> <poll_retry> <sleep_time_for_timeout> <think_time>" <<
       " <transaction_delay> <transaction_delay_min>" <<
-      " <transaction_delay_max> <miin_backoff_time> <max_backoff_time>" <<
+      " <transaction_delay_max> <min_backoff_time> <max_backoff_time>" <<
       " <max_local_exclusive_locks> <max_local_shared_locks> <rand_seed>" << endl;
     cout << "current argc = " << argc << endl;
     exit(1);
@@ -203,33 +203,33 @@ int main(int argc, char** argv) {
       exit(-1);
     }
 
-    for (int j=0;j<num_users_per_manager;++j) {
-      uint32_t id = (num_users*rank)+(j+1);
-      bool verbose = false;
-      KVLockSimulator* simulator = new KVLockSimulator(managers[i],
-          id, // id
-          managers[i]->GetRank(),
-          workload_type, // empty workload type
-          num_nodes*num_manager_per_node,
-          num_tx,
-          num_objects,
-          update_ratio,
-          alpha,
-          seed+(num_users*rank)+j,
-          verbose, // verbose
-          true, // measure lock time
-          lock_mode,
-          transaction_delay,
-          transaction_delay_min,
-          transaction_delay_max,
-          min_backoff_time,
-          max_backoff_time,
-          sleep_time,
-          think_time
-          );
-      managers[i]->RegisterUser(id, simulator);
-      users.push_back(simulator);
-    }
+  }
+  for (int j=0;j<num_users_per_manager;++j) {
+    uint32_t id = (num_users*rank)+(j+1);
+    bool verbose = false;
+    KVLockSimulator* simulator = new KVLockSimulator(managers[j%num_manager_per_node],
+        id, // id
+        j%(num_servers*num_manager_per_node), // home_id
+        workload_type, // empty workload type
+        num_nodes*num_manager_per_node,
+        num_tx,
+        num_objects,
+        update_ratio,
+        alpha,
+        seed+(num_users*rank)+j,
+        verbose, // verbose
+        true, // measure lock time
+        lock_mode,
+        transaction_delay,
+        transaction_delay_min,
+        transaction_delay_max,
+        min_backoff_time,
+        max_backoff_time,
+        sleep_time,
+        think_time
+        );
+    managers[j % num_manager_per_node]->RegisterUser(id, simulator);
+    users.push_back(simulator);
   }
 
   MPI_Barrier(MPI_COMM_WORLD);
@@ -522,9 +522,7 @@ int main(int argc, char** argv) {
   usage.terminate = true;
   pthread_join(cpu_measure_thread, NULL);
   double local_cpu_usage_local = usage.total_cpu / usage.num_sample;
-  if (rank < client_start_idx) {
-    local_cpu_usage = local_cpu_usage_local;
-  }
+  local_cpu_usage = local_cpu_usage_local;
   MPI_Barrier(MPI_COMM_WORLD);
 
   MPI_Reduce(&local_sum, &global_sum, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
@@ -611,13 +609,16 @@ int main(int argc, char** argv) {
   MPI_Barrier(MPI_COMM_WORLD);
 
   // Get standard deviation for cpu usage
-  if (rank < client_start_idx) {
-    global_cpu_usage_avg = global_cpu_usage / (double)num_servers;
-  }
-  if (rank < client_start_idx) {
-    local_cpu_diff = (global_cpu_usage_avg - local_cpu_usage) *
-      (global_cpu_usage_avg - local_cpu_usage);
-  }
+  //if (rank < client_start_idx) {
+    //global_cpu_usage_avg = global_cpu_usage / (double)num_servers;
+  //}
+  //if (rank < client_start_idx) {
+    //local_cpu_diff = (global_cpu_usage_avg - local_cpu_usage) *
+      //(global_cpu_usage_avg - local_cpu_usage);
+  //}
+  global_cpu_usage_avg = global_cpu_usage / (double)num_servers;
+  local_cpu_diff = (global_cpu_usage_avg - local_cpu_usage) *
+    (global_cpu_usage_avg - local_cpu_usage);
   MPI_Reduce(&local_cpu_diff, &global_cpu_diff, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
   global_cpu_usage_std = sqrt(global_cpu_diff / (double)num_servers);
 
