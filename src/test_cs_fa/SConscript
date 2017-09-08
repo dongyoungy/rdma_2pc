@@ -1,0 +1,4 @@
+Import("env")
+driver = env.Program(target = 'test_cs_fa', source = ['test_driver.cc','test_server.cc', 'test_client.cc'])
+binaries = [driver]
+Return("binaries")
