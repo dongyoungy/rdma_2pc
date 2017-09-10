@@ -1,0 +1,5 @@
+#!/bin/bash
+mpirun --mca btl self,sm,openib /home/dyoon/work/rdma_2pc/bin/test_cs_fa $work_dir$job_counter $op $num_thread $duration
+
+# end of bsub
+
