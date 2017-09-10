@@ -802,7 +802,6 @@ void* TestClient::PollCompletionQueue(void* arg) {
 void* TestClient::PollSendCompletionQueue(void* arg) {
   struct ibv_cq* cq;
   struct ibv_wc wc;
-  Context* queue_context;
   Context* context = static_cast<Context*>(arg);
   cq = context->send_cq;
 
