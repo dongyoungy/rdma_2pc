@@ -27,15 +27,16 @@ env.Append(CCFLAGS='-Wall -Wextra -Werror -pedantic')
 #env.Append(CCFLAGS='-Wall -Wextra -Werror -Wno-unused-variable -Wno-unused-parameter -pedantic')
 #env.Append(CPPPATH='include')
 #env.Append(CPPPATH='{0}/poco/include/'.format(root_dir))
-env.Append(LIBS=['PocoXML', 'PocoJSON', 'PocoFoundation', 'PocoNet', 'PocoUtil', 'rdmacm', 'ibverbs', 'pthread', 'rt'])
 #env.Append(LIBPATH='{0}/lib/'.format(root_dir))
 #env.Append(LIBPATH='{0}/poco/lib/'.format(root_dir))
 
 if int(debug):
     env.Append(CCFLAGS='-g -pg')
     env.Append(LINKFLAGS='-pg')
+    env.Append(LIBS=['PocoXMLd', 'PocoJSONd', 'PocoFoundationd', 'PocoNetd', 'PocoUtild', 'rdmacm', 'ibverbs', 'pthread', 'rt'])
 else:
     env.Append(CCFLAGS='-O2')
+    env.Append(LIBS=['PocoXML', 'PocoJSON', 'PocoFoundation', 'PocoNet', 'PocoUtil', 'rdmacm', 'ibverbs', 'pthread', 'rt'])
 
 print "running with -j", GetOption('num_jobs')
 binaries = []
