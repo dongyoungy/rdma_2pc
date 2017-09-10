@@ -9,7 +9,7 @@ root_dir = Dir('#').abspath
 poco_dir = "{0}/lib/poco-1.7.8p3".format(root_dir)
 lib_dir = '--prefix=' + root_dir + '/lib'
 
-env = Environment(ENV = os.environ, CC = 'mpicc', CXX = 'mpic++', CPPPATH='{0}/include:{0}/poco/include'.format(root_dir), LIBPATH='{0}/lib:{0}/poco/lib'.format(root_dir))
+env = Environment(ENV = os.environ, CC = 'mpicc', CXX = 'mpic++', CPPPATH='{0}/include:{0}/poco/include'.format(root_dir), LIBPATH='{0}/lib:{0}/poco/lib'.format(root_dir), RPATH='{0}/lib:{0}/poco/lib'.format(root_dir))
 
 # build POCO library
 #pococonfig = env.Command("pococonfig", "", "cd lib/poco-1.7.8p3 && ./configure --prefix={0}/poco".format(root_dir))
