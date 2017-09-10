@@ -211,7 +211,7 @@ int TestClient::HandleAddressResolved(struct rdma_cm_id* id) {
   }
 
   context_ = context;
-  struct ibv_exp_qp_init_attr queue_pair_attributes;
+  struct ibv_qp_init_attr queue_pair_attributes;
   BuildQueuePairAttr(context, &queue_pair_attributes);
 
   // if (rdma_create_qp(id, context->protection_domain, &queue_pair_attributes))
@@ -220,9 +220,9 @@ int TestClient::HandleAddressResolved(struct rdma_cm_id* id) {
   //}
 
   struct ibv_qp* queue_pair =
-      ibv_exp_create_qp(id->verbs, &queue_pair_attributes);
+      ibv_create_qp(context->protection_domain, &queue_pair_attributes);
   if (queue_pair == NULL) {
-    cerr << "ibv_exp_create_qp() failed." << endl;
+    cerr << "ibv_create_qp() failed: " << strerror(errno) << endl;
     return -1;
   }
   id->qp = queue_pair;
@@ -427,6 +427,28 @@ void TestClient::BuildQueuePairAttr(Context* context,
   }
 }
 
+// Builds queue pair attributes
+void TestClient::BuildQueuePairAttr(Context* context,
+                                    struct ibv_qp_init_attr* attributes) {
+  memset(attributes, 0x00, sizeof(*attributes));
+
+  attributes->send_cq = context->completion_queue;
+  attributes->recv_cq = context->completion_queue;
+  if (test_mode_ == "uc_write") {
+    attributes->qp_type = IBV_QPT_UC;
+    attributes->cap.max_send_wr = 16;
+    attributes->cap.max_recv_wr = 1;
+    attributes->cap.max_send_sge = 1;
+    attributes->cap.max_recv_sge = 1;
+  } else {
+    attributes->qp_type = IBV_QPT_RC;
+    attributes->cap.max_send_wr = 16;
+    attributes->cap.max_recv_wr = 16;
+    attributes->cap.max_send_sge = 1;
+    attributes->cap.max_recv_sge = 1;
+  }
+}
+
 Context* TestClient::BuildContext(struct rdma_cm_id* id) {
   // create new context for the connection
   Context* new_context = new Context;
@@ -495,21 +517,21 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       } else if (test_mode_ == "cas") {
         this->SwapSemaphore(context);
       }
-    } else {
-      Poco::Timestamp::TimeDiff diff = start_timestamp_.elapsed();
-      total_time_taken_ += diff;  // in microseconds
-      ++count_;
+    }
+  } else {
+    Poco::Timestamp::TimeDiff diff = start_timestamp_.elapsed();
+    total_time_taken_ += diff;  // in microseconds
+    ++count_;
 
-      if (!is_done_) {
-        if (work_completion->opcode == IBV_WC_RDMA_READ) {
-          this->ReadSemaphore(context);
-        } else if (work_completion->opcode == IBV_WC_RDMA_WRITE) {
-          this->WriteSemaphore(context);
-        } else if (work_completion->opcode == IBV_WC_FETCH_ADD) {
-          this->AddSemaphore(context);
-        } else if (work_completion->opcode == IBV_WC_COMP_SWAP) {
-          this->SwapSemaphore(context);
-        }
+    if (!is_done_) {
+      if (work_completion->opcode == IBV_WC_RDMA_READ) {
+        this->ReadSemaphore(context);
+      } else if (work_completion->opcode == IBV_WC_RDMA_WRITE) {
+        this->WriteSemaphore(context);
+      } else if (work_completion->opcode == IBV_WC_FETCH_ADD) {
+        this->AddSemaphore(context);
+      } else if (work_completion->opcode == IBV_WC_COMP_SWAP) {
+        this->SwapSemaphore(context);
       }
     }
   }
@@ -519,8 +541,8 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
 // Requests semaphore MR region of the server via IBV_WR_SEND op.
 int TestClient::RequestBuffer(Context* context) {
   context->send_message->type = Message::MR_BUFFER_REQUEST;
-  memcpy(&context->send_message->memory_region, context->rdma_client_buffer,
-         sizeof(context->send_message->memory_region));
+  // memcpy(&context->send_message->memory_region, context->rdma_client_buffer,
+  // sizeof(context->send_message->memory_region));
 
   struct ibv_send_wr send_work_request;
   struct ibv_send_wr* bad_work_request;
@@ -591,7 +613,7 @@ int TestClient::AddSemaphore(Context* context) {
   memset(&send_work_request, 0x00, sizeof(send_work_request));
 
   sge.addr = (uint64_t)context->send_message;
-  sge.length = sizeof(*context->send_message);
+  sge.length = sizeof(uint64_t);
   sge.lkey = context->send_mr->lkey;
 
   send_work_request.wr_id = (uint64_t)context;
@@ -605,8 +627,9 @@ int TestClient::AddSemaphore(Context* context) {
   send_work_request.wr.atomic.rkey = context->rdma_server_buffer->rkey;
   send_work_request.wr.atomic.compare_add = 1;
 
+  start_timestamp_.update();
+
   int ret = 0;
-  clock_gettime(CLOCK_MONOTONIC, &now_);
   if ((ret = ibv_exp_post_send(context->queue_pair, &send_work_request,
                                &bad_work_request))) {
     cerr << "AddSemaphore(): ibv_exp_post_send() failed: " << strerror(ret)
@@ -627,7 +650,7 @@ int TestClient::SwapSemaphore(Context* context) {
   memset(&send_work_request, 0x00, sizeof(send_work_request));
 
   sge.addr = (uint64_t)context->send_message;
-  sge.length = sizeof(*context->send_message);
+  sge.length = sizeof(uint64_t);
   sge.lkey = context->send_mr->lkey;
 
   send_work_request.wr_id = (uint64_t)context;
@@ -642,18 +665,15 @@ int TestClient::SwapSemaphore(Context* context) {
   send_work_request.wr.atomic.compare_add = 0;
   send_work_request.wr.atomic.swap = 0;
 
+  start_timestamp_.update();
+
   int ret = 0;
-  clock_gettime(CLOCK_MONOTONIC, &now_);
   if ((ret = ibv_exp_post_send(context->queue_pair, &send_work_request,
                                &bad_work_request))) {
-    cerr << "AddSemaphore(): ibv_exp_post_send() failed: " << strerror(ret)
+    cerr << "SwapSemaphore(): ibv_exp_post_send() failed: " << strerror(ret)
          << endl;
     return -1;
   }
-
-  ++num_added_sem_;
-
-  // cout << "SetSmaphore(): message sent." << endl;
 
   return 0;
 }

@@ -38,14 +38,16 @@ int main(int argc, char** argv) {
 
   if (rank == 0) {
     server.reset(std::move(new TestServer(work_dir, mode)));
+    cout << "# nodes = " << num_nodes << endl;
     cout << "Testing mode: " << mode << endl;
+    cout << "Server PID: " << getpid() << endl;
 
     Poco::Thread server_thread;
     server_thread.start(*server);
   }
   MPI_Barrier(MPI_COMM_WORLD);
   if (rank != 0) {
-    sleep(1);
+    sleep(2);
     for (int i = 0; i < num_thread; ++i) {
       std::unique_ptr<TestClient> client(new TestClient(work_dir, mode));
       std::unique_ptr<Poco::Thread> client_thread(new Poco::Thread);
@@ -53,16 +55,20 @@ int main(int argc, char** argv) {
       clients.push_back(std::move(client));
       client_threads.push_back(std::move(client_thread));
     }
+    cout << "client " << rank << " successfully started." << endl;
+    cout << "PID: " << getpid() << endl;
   }
 
   MPI_Barrier(MPI_COMM_WORLD);
 
   Poco::Thread::sleep(duration * 1000);
-  for (int i = 0; i < num_thread; ++i) {
-    clients[i]->Stop();
-  }
-  for (int i = 0; i < num_thread; ++i) {
-    client_threads[i]->tryJoin(5 * 1000);
+  if (rank != 0) {
+    for (int i = 0; i < num_thread; ++i) {
+      clients[i]->Stop();
+    }
+    for (int i = 0; i < num_thread; ++i) {
+      client_threads[i]->tryJoin(5 * 1000);
+    }
   }
 
   MPI_Barrier(MPI_COMM_WORLD);
@@ -78,6 +84,8 @@ int main(int argc, char** argv) {
           (clients[i]->GetTotalTimeTaken() / (double)clients[i]->GetCount());
     }
     average_latency /= num_thread;
+    cout << "count = " << count << endl;
+    cout << "average latency = " << average_latency << endl;
   }
 
   MPI_Reduce(&count, &total_count, 1, MPI_LONG_LONG_INT, MPI_SUM, 0,
@@ -86,12 +94,11 @@ int main(int argc, char** argv) {
              0, MPI_COMM_WORLD);
 
   if (rank == 0) {
-    total_average_latency /= (num_nodes - 1);
+    total_average_latency /= (double)(num_nodes - 1);
     cout << "# of Clients = " << (num_nodes - 1) * num_thread << endl;
     cout << "Duration = " << duration << " s" << endl;
     cout << "Total Throughput = " << total_count << endl;
-    cout << "Overall Average Latency = "
-         << average_latency / (double)(num_nodes - 1) << endl;
+    cout << "Overall Average Latency = " << total_average_latency << endl;
     if (server) server->SetDone(true);
   }
 

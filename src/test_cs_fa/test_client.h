@@ -61,6 +61,8 @@ class TestClient : public Poco::Runnable {
   Context* BuildContext(struct rdma_cm_id* id);
   void BuildQueuePairAttr(Context* context,
                           struct ibv_exp_qp_init_attr* attributes);
+  void BuildQueuePairAttr(Context* context,
+                          struct ibv_qp_init_attr* attributes);
   int BuildConnectionManagerParams(struct rdma_conn_param* params);
   int RegisterMemoryRegion(Context* context);
   int ReceiveMessage(Context* context);

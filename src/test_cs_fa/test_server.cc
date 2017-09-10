@@ -26,6 +26,7 @@ TestServer::~TestServer() {
 }
 
 int TestServer::Run() {
+  // sleep(10);
   memset(&address_, 0x00, sizeof(address_));
   address_.sin6_family = AF_INET6;
 
@@ -205,7 +206,7 @@ int TestServer::PrintInfo() {
 }
 
 int TestServer::GetInfinibandIP(string& ip_address) {
-  struct ifaddrs *ifaddr, *ifa;
+  struct ifaddrs* ifaddr, *ifa;
   int s, n;
   char host[NI_MAXHOST];
 
@@ -320,12 +321,12 @@ int TestServer::HandleConnectRequest(struct rdma_cm_id* id) {
       return -1;
     }
   } else {
-    struct ibv_exp_qp_init_attr queue_pair_attributes;
+    struct ibv_qp_init_attr queue_pair_attributes;
     BuildQueuePairAttr(context, &queue_pair_attributes);
     struct ibv_qp* queue_pair =
-        ibv_exp_create_qp(id->verbs, &queue_pair_attributes);
+        ibv_create_qp(context->protection_domain, &queue_pair_attributes);
     if (queue_pair == NULL) {
-      cerr << "ibv_exp_create_qp() failed." << endl;
+      cerr << "ibv_create_qp() failed." << endl;
       return -1;
     }
     id->qp = queue_pair;
@@ -595,12 +596,10 @@ int TestServer::HandleWorkCompletion(struct ibv_wc* work_completion) {
   if (work_completion->opcode & IBV_WC_RECV) {
     // if client is requesting buffer
     if (context->receive_message->type == Message::MR_BUFFER_REQUEST) {
-      ReceiveEightBytes(context);
-      context->receive_message->type = Message::SEND;
-      context->rdma_client_buffer = new ibv_mr;
-      memcpy(context->rdma_client_buffer,
-             &context->receive_message->memory_region,
-             sizeof(*context->rdma_client_buffer));
+      if (ReceiveMessage(context)) {
+        cerr << "ReceiveMessage() failed." << endl;
+        return -1;
+      }
       SendBuffer(context);
     } else if (context->receive_message->type == Message::SEND) {
       context->receive_message->type = Message::SEND;
