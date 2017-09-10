@@ -25,8 +25,8 @@ do
           -R "$resource_str" -J $job_name \
           -q $job_queue \
           -m "$node_list" \
-          -eo /gpfs/gpfs0/groups/mozafari/dyoon/work/lsf_log/rdma_perf_test/microbench-$op-nn$num_node-th$num_thread-op$num_op.e \
-          -oo /gpfs/gpfs0/groups/mozafari/dyoon/work/lsf_log/rdma_perf_test/microbench-$op-nn$num_node-th$num_thread-op$num_op.o \
+          -eo /gpfs/gpfs0/groups/mozafari/dyoon/work/lsf_log/rdma_perf_test/microbench-$op-nn$num_node-th$num_thread-${duration}s.e \
+          -oo /gpfs/gpfs0/groups/mozafari/dyoon/work/lsf_log/rdma_perf_test/microbench-$op-nn$num_node-th$num_thread-${duration}s.o \
           "sh test_cs_fa.lsf $work_dir$job_counter $op $num_thread $duration"
       done
     done
