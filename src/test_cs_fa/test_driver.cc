@@ -64,7 +64,40 @@ int main(int argc, char** argv) {
 
   MPI_Barrier(MPI_COMM_WORLD);
 
-  Poco::Thread::sleep(duration * 1000);
+  uint64_t max_throughput = 0;
+  uint64_t current_count = 0;
+  uint64_t current_total_count = 0;
+  uint64_t last_total_count = 0;
+  uint64_t* current_counts = NULL;
+
+  if (rank == 0) {
+    current_counts = new uint64_t[num_nodes];
+  }
+
+  // Get max throughput.
+  for (int i = 0; i < duration; ++i) {
+    if (rank != 0) {
+      current_count = 0;
+      for (int i = 0; i < num_thread; ++i) {
+        current_count += clients[i]->GetCount();
+      }
+    }
+    MPI_Gather(&current_count, 1, MPI_LONG_LONG_INT, current_counts, 1,
+               MPI_LONG_LONG_INT, 0, MPI_COMM_WORLD);
+    if (rank == 0) {
+      current_total_count = 0;
+      for (int i = 0; i < num_nodes; ++i) {
+        current_total_count += current_counts[i];
+      }
+      uint64_t current_throughput = current_total_count - last_total_count;
+      if (current_throughput > max_throughput) {
+        max_throughput = current_throughput;
+      }
+      last_total_count = current_total_count;
+    }
+    Poco::Thread::sleep(1000);
+  }
+
   if (rank != 0) {
     for (int i = 0; i < num_thread; ++i) {
       clients[i]->Stop();
@@ -102,8 +135,9 @@ int main(int argc, char** argv) {
     total_average_latency /= (double)(num_nodes - 1);
     cout << "# of Clients = " << (num_nodes - 1) * num_thread << endl;
     cout << "Duration = " << duration << " s" << endl;
-    cout << "Total Throughput = " << total_count << endl;
-    cout << "Overall Average Latency = " << total_average_latency << endl;
+    cout << "Total Op Count = " << total_count << endl;
+    cout << "Max Throughput (op/s) = " << max_throughput << endl;
+    cout << "Overall Average Latency (us) = " << total_average_latency << endl;
     if (server) server->SetDone(true);
   }
 

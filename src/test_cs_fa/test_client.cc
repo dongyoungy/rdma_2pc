@@ -512,6 +512,9 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
         this->AddSemaphore(context);
       } else if (test_mode_ == "cas") {
         this->SwapSemaphore(context);
+      } else {
+        cerr << "Invalid operation: " << test_mode_ << endl;
+        exit(-1);
       }
     }
   } else if (work_completion->opcode == IBV_WC_SEND) {
@@ -564,7 +567,6 @@ int TestClient::RequestBuffer(Context* context) {
     cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
     return -1;
   }
-  cout << "TestClient: RequestBuffer()" << endl;
 
   return 0;
 }
@@ -572,9 +574,6 @@ int TestClient::RequestBuffer(Context* context) {
 // do empty send op
 int TestClient::SendSemaphore(Context* context) {
   context->send_message->type = Message::SEND;
-  // memcpy(&context->send_message->memory_region,
-  // context->rdma_client_semaphore,
-  // sizeof(context->send_message->memory_region));
 
   struct ibv_send_wr send_work_request;
   struct ibv_send_wr* bad_work_request;
