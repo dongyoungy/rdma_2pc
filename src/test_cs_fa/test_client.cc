@@ -211,18 +211,14 @@ int TestClient::HandleAddressResolved(struct rdma_cm_id* id) {
   }
 
   context_ = context;
-  struct ibv_qp_init_attr queue_pair_attributes;
+  struct ibv_exp_qp_init_attr queue_pair_attributes;
   BuildQueuePairAttr(context, &queue_pair_attributes);
 
-  // if (rdma_create_qp(id, context->protection_domain, &queue_pair_attributes))
-  // {  cerr << "rdma_create_qp() failed: " << strerror(errno) << endl;  return
-  // -1;
-  //}
-
   struct ibv_qp* queue_pair =
-      ibv_create_qp(context->protection_domain, &queue_pair_attributes);
+      ibv_exp_create_qp(id->verbs, &queue_pair_attributes);
   if (queue_pair == NULL) {
-    cerr << "ibv_create_qp() failed: " << strerror(errno) << endl;
+    cerr << "TestClient: ibv_exp_create_qp() failed: " << strerror(errno)
+         << endl;
     return -1;
   }
   id->qp = queue_pair;
@@ -444,8 +440,8 @@ void TestClient::BuildQueuePairAttr(Context* context,
     attributes->qp_type = IBV_QPT_RC;
     attributes->cap.max_send_wr = 16;
     attributes->cap.max_recv_wr = 16;
-    attributes->cap.max_send_sge = 1;
-    attributes->cap.max_recv_sge = 1;
+    attributes->cap.max_send_sge = 4;
+    attributes->cap.max_recv_sge = 4;
   }
 }
 
@@ -518,6 +514,8 @@ int TestClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
         this->SwapSemaphore(context);
       }
     }
+  } else if (work_completion->opcode == IBV_WC_SEND) {
+    // no-op for now.
   } else {
     Poco::Timestamp::TimeDiff diff = start_timestamp_.elapsed();
     total_time_taken_ += diff;  // in microseconds
@@ -566,6 +564,7 @@ int TestClient::RequestBuffer(Context* context) {
     cerr << "ibv_post_send() failed: " << strerror(ret) << endl;
     return -1;
   }
+  cout << "TestClient: RequestBuffer()" << endl;
 
   return 0;
 }
@@ -637,10 +636,44 @@ int TestClient::AddSemaphore(Context* context) {
     return -1;
   }
 
-  ++num_added_sem_;
-
   return 0;
 }
+
+// int TestClient::AddSemaphore(Context* context) {
+// struct ibv_send_wr send_work_request;
+// struct ibv_send_wr* bad_work_request;
+// struct ibv_sge sge;
+
+// memset(&send_work_request, 0x00, sizeof(send_work_request));
+// memset(&sge, 0x00, sizeof(sge));
+
+// sge.addr = (uintptr_t)context->read_value;
+// sge.length = sizeof(uint64_t);
+// sge.lkey = context->read_value_mr->lkey;
+
+// send_work_request.wr_id = (uint64_t)context;
+// send_work_request.opcode = IBV_WR_ATOMIC_FETCH_AND_ADD;
+// send_work_request.num_sge = 1;
+// send_work_request.sg_list = &sge;
+// send_work_request.send_flags = IBV_SEND_SIGNALED;
+
+// send_work_request.wr.atomic.remote_addr =
+//(uint64_t)context->rdma_server_buffer->addr;
+// send_work_request.wr.atomic.rkey = context->rdma_server_buffer->rkey;
+// send_work_request.wr.atomic.compare_add = 1;
+
+// start_timestamp_.update();
+
+// int ret = 0;
+// if ((ret = ibv_post_send(context->queue_pair, &send_work_request,
+//&bad_work_request))) {
+// cerr << "AddSemaphore(): ibv_post_send() failed: " << strerror(ret) << endl;
+// return -1;
+//}
+// cerr << "AddSemaphore(): successful." << endl;
+
+// return 0;
+//}
 
 int TestClient::SwapSemaphore(Context* context) {
   struct ibv_exp_send_wr send_work_request;
@@ -662,8 +695,8 @@ int TestClient::SwapSemaphore(Context* context) {
   send_work_request.wr.atomic.remote_addr =
       (uint64_t)context->rdma_server_buffer->addr;
   send_work_request.wr.atomic.rkey = context->rdma_server_buffer->rkey;
-  send_work_request.wr.atomic.compare_add = 0;
-  send_work_request.wr.atomic.swap = 0;
+  send_work_request.wr.atomic.compare_add = count_;
+  send_work_request.wr.atomic.swap = (count_ + 1);
 
   start_timestamp_.update();
 

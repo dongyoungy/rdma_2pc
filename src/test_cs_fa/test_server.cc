@@ -179,7 +179,6 @@ int TestServer::PrintInfo() {
          << endl;
     return -1;
   }
-  // cout << "ip address: " << ip_address << endl;
   if (fprintf(ip_file, "%s\n", ip_address.c_str()) < 0) {
     cerr << "Run(): fprintf() error while writing ip." << endl;
     return -1;
@@ -188,15 +187,6 @@ int TestServer::PrintInfo() {
     cerr << "Run(): fprintf() error while writing port." << endl;
     return -1;
   }
-  // char* job_id = getenv("LSB_JOBID");
-  // if (job_id == NULL) {
-  // cerr << "Run(): LSB_JOBID not available." << endl;
-  // return -1;
-  //}
-  // if (fprintf(job_id_file, "%s\n", job_id) < 0) {
-  // cerr << "Run(): fprintf() error while writing LSF job id." << endl;
-  // return -1;
-  //}
 
   fclose(ip_file);
   fclose(port_file);
@@ -206,7 +196,7 @@ int TestServer::PrintInfo() {
 }
 
 int TestServer::GetInfinibandIP(string& ip_address) {
-  struct ifaddrs* ifaddr, *ifa;
+  struct ifaddrs *ifaddr, *ifa;
   int s, n;
   char host[NI_MAXHOST];
 
@@ -233,6 +223,8 @@ int TestServer::GetInfinibandIP(string& ip_address) {
 
       ip_found = true;
       ip_address = host;
+      cout << "IP = " << ip_address << endl;
+      break;
     }
   }
 
@@ -252,6 +244,13 @@ void TestServer::DestroyListener() {
 void TestServer::Stop() {
   DestroyListener();
   exit(0);
+}
+
+void TestServer::PrintData() {
+  int count = 1;
+  for (const auto& buffer : buffers_) {
+    cout << "Data " << count++ << " = " << buffer->data << endl;
+  }
 }
 
 // Currently the server registers same memory region for each client.
@@ -321,10 +320,10 @@ int TestServer::HandleConnectRequest(struct rdma_cm_id* id) {
       return -1;
     }
   } else {
-    struct ibv_qp_init_attr queue_pair_attributes;
+    struct ibv_exp_qp_init_attr queue_pair_attributes;
     BuildQueuePairAttr(context, &queue_pair_attributes);
     struct ibv_qp* queue_pair =
-        ibv_create_qp(context->protection_domain, &queue_pair_attributes);
+        ibv_exp_create_qp(id->verbs, &queue_pair_attributes);
     if (queue_pair == NULL) {
       cerr << "ibv_create_qp() failed." << endl;
       return -1;
@@ -524,8 +523,8 @@ void TestServer::BuildQueuePairAttr(Context* context,
   }
   attributes->cap.max_send_wr = 16;
   attributes->cap.max_recv_wr = 16;
-  attributes->cap.max_send_sge = 1;
-  attributes->cap.max_recv_sge = 1;
+  attributes->cap.max_send_sge = 4;
+  attributes->cap.max_recv_sge = 4;
 }
 
 Context* TestServer::BuildContext(struct rdma_cm_id* id) {

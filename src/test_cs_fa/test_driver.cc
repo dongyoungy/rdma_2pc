@@ -42,12 +42,15 @@ int main(int argc, char** argv) {
     cout << "Testing mode: " << mode << endl;
     cout << "Server PID: " << getpid() << endl;
 
-    Poco::Thread server_thread;
-    server_thread.start(*server);
+    try {
+      Poco::Thread server_thread;
+      server_thread.start(*server);
+    } catch (Poco::Exception& e) {
+      cerr << e.displayText() << endl;
+    }
   }
-  MPI_Barrier(MPI_COMM_WORLD);
   if (rank != 0) {
-    sleep(2);
+    sleep(10);
     for (int i = 0; i < num_thread; ++i) {
       std::unique_ptr<TestClient> client(new TestClient(work_dir, mode));
       std::unique_ptr<Poco::Thread> client_thread(new Poco::Thread);
@@ -93,7 +96,9 @@ int main(int argc, char** argv) {
   MPI_Reduce(&average_latency, &total_average_latency, 1, MPI_DOUBLE, MPI_SUM,
              0, MPI_COMM_WORLD);
 
+  MPI_Barrier(MPI_COMM_WORLD);
   if (rank == 0) {
+    sleep(3);
     total_average_latency /= (double)(num_nodes - 1);
     cout << "# of Clients = " << (num_nodes - 1) * num_thread << endl;
     cout << "Duration = " << duration << " s" << endl;

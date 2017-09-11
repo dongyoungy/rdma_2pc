@@ -42,6 +42,7 @@ class TestServer : public Poco::Runnable {
   inline void SetDone(bool done) { is_done_ = done; }
   inline bool IsDone() const { return is_done_; }
   virtual void run() { this->Run(); }
+  void PrintData();
 
  private:
   Context* BuildContext(struct rdma_cm_id* id);
