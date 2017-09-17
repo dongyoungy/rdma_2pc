@@ -21,8 +21,6 @@
 #include "lock_manager.h"
 #include "lock_request.h"
 
-const uint64_t kTransactionMax = 100000000;
-
 using namespace std;
 
 namespace rdma {
@@ -43,6 +41,8 @@ class LockSimulator : public Poco::Runnable {
   void SortLatency();
   double GetAverageLatency() const;
   double Get99PercentileLatency() const;
+  double Get999PercentileLatency() const;
+  uint64_t GetMaxLatency() const;
 
  protected:
   virtual void CreateRequest();

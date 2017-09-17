@@ -2,6 +2,7 @@
 #define RDMA_PROTO_CONSTANTS_H
 
 #include <pthread.h>
+#include <unistd.h>
 
 namespace rdma {
 namespace proto {
@@ -19,6 +20,8 @@ enum LockMode {
 };
 enum Task { LOCK, UNLOCK, READ, READ_UNLOCK, READ_LOCK };
 // enum LockConflictRule { FAIL, POLL, QUEUE, NOTIFY };
+
+const uint64_t kTransactionMax = 100000000;
 
 static const int WORKLOAD_UNIFORM = 0;
 static const int WORKLOAD_HOTSPOT = 1;

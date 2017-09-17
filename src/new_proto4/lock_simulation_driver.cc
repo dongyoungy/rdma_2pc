@@ -5,6 +5,7 @@
 #include <sys/times.h>
 #include <cmath>
 #include <iostream>
+#include <numeric>
 #include <vector>
 
 #include "Poco/Thread.h"
@@ -16,8 +17,6 @@
 using namespace std;
 using namespace rdma::proto;
 
-void* RunLockManager(void* args);
-void* RunLockSimulator(void* args);
 void* MeasureCPUUsage(void* args);
 
 struct CPUUsage {
@@ -32,8 +31,8 @@ int main(int argc, char** argv) {
   if (argc != 13) {
     cout << argv[0] << " <work_dir> <num_lock_object> <duration>"
          << " <request_size> <num_users> <lock_mode>"
-         << " <shared_exclusive_rule> <exclusive_shared_rule> "
-         << "<exclusive_exclusive_rule>"
+         << " <shared_exclusive_rule> <exclusive_shared_rule>"
+         << " <exclusive_exclusive_rule>"
          << " <fail_retry> <poll_retry>"
          << " <workload_type> " << endl;
     exit(1);
@@ -82,6 +81,9 @@ int main(int argc, char** argv) {
     lock_mode = REMOTE_NOTIFY;
   } else if (lock_mode_str == "remote-queue") {
     lock_mode = REMOTE_QUEUE;
+  } else {
+    cerr << "Invalid Lock Mode: " << lock_mode_str << endl;
+    exit(-1);
   }
 
   if (lock_mode == REMOTE_NOTIFY || lock_mode == PROXY_RETRY ||
@@ -99,7 +101,7 @@ int main(int argc, char** argv) {
     cout << "Duration = " << duration << " s" << endl;
     cout << "# Requests per Tx = " << request_size << endl;
     cout << "# Lock Objects = " << num_lock_object << endl;
-    cout << "Lock Mode = " << lock_mode << endl;
+    cout << "Lock Mode = " << lock_mode_str << endl;
   }
 
   LockManager::SetSharedExclusiveRule(shared_exclusive_rule);
@@ -139,7 +141,7 @@ int main(int argc, char** argv) {
 
   // wait till all clients are initialized
   while (!lock_manager->IsClientsInitialized()) {
-    usleep(250000);
+    Poco::Thread::sleep(250);
   }
 
   // measure cpu usage
@@ -149,6 +151,18 @@ int main(int argc, char** argv) {
                      (void*)&usage)) {
     cerr << "pthread_create() error." << endl;
     exit(-1);
+  }
+
+  uint64_t* current_counts = NULL;
+  uint64_t current_count = 0;
+  uint64_t current_total_count = 0;
+  uint64_t last_total_count = 0;
+  uint64_t max_throughput = 0;
+  std::vector<uint64_t> throughputs;
+  if (rank == 0) {
+    current_counts = new uint64_t[num_managers];
+    throughputs.clear();
+    throughputs.reserve(duration);
   }
 
   MPI_Barrier(MPI_COMM_WORLD);
@@ -161,14 +175,6 @@ int main(int argc, char** argv) {
     user_threads.push_back(std::move(user_thread));
   }
 
-  uint64_t* current_counts = NULL;
-  uint64_t current_count = 0;
-  uint64_t current_total_count = 0;
-  uint64_t last_total_count = 0;
-  uint64_t max_throughput = 0;
-  if (rank == 0) {
-    current_counts = new uint64_t[num_managers];
-  }
   for (int i = 0; i < duration; ++i) {
     for (int j = 0; j < num_users; ++j) {
       current_count += users[j]->GetCount();
@@ -182,6 +188,7 @@ int main(int argc, char** argv) {
         current_total_count += current_counts[j];
       }
       uint64_t current_throughput = current_total_count - last_total_count;
+      throughputs.push_back(current_throughput);
       if (current_throughput > max_throughput) {
         max_throughput = current_throughput;
       }
@@ -205,12 +212,23 @@ int main(int argc, char** argv) {
 
   double total_average_latency = 0;
   double total_average_99pct_latency = 0;
+  double total_average_999pct_latency = 0;
   double average_latency = 0;
   double average_99pct_latency = 0;
+  double average_999pct_latency = 0;
+  uint64_t total_max_latency = 0;
+  uint64_t max_latency = 0;
+  uint64_t total_throughput = 0;
+  double average_throughput = 0;
+  uint64_t throughput_99pct = 0;
   for (int i = 0; i < num_users; ++i) {
     users[i]->SortLatency();
     average_latency += users[i]->GetAverageLatency();
     average_99pct_latency += users[i]->Get99PercentileLatency();
+    average_999pct_latency += users[i]->Get999PercentileLatency();
+    max_latency = (max_latency < users[i]->GetMaxLatency())
+                      ? users[i]->GetMaxLatency()
+                      : max_latency;
   }
   average_latency /= num_users;
   average_99pct_latency /= num_users;
@@ -219,23 +237,31 @@ int main(int argc, char** argv) {
              0, MPI_COMM_WORLD);
   MPI_Reduce(&average_99pct_latency, &total_average_99pct_latency, 1,
              MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-
-  total_average_latency /= num_managers;
-  total_average_99pct_latency /= num_managers;
+  MPI_Reduce(&average_999pct_latency, &total_average_999pct_latency, 1,
+             MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&max_latency, &total_max_latency, 1, MPI_LONG_LONG_INT, MPI_MAX, 0,
+             MPI_COMM_WORLD);
 
   if (rank == 0) {
+    total_average_latency /= num_managers;
+    total_average_99pct_latency /= num_managers;
+    // Sort throughputs.
+    std::sort(throughputs.begin(), throughputs.end());
+    total_throughput =
+        std::accumulate(throughputs.begin(), throughputs.end(), 0);
+    average_throughput = (double)total_throughput / (double)throughputs.size();
+    throughput_99pct = throughputs[floor(throughputs.size() * 0.99)];
+    cout << "Avg. Throughput = " << average_throughput << endl;
+    cout << "99pct Throughput = " << throughput_99pct << endl;
     cout << "Max Throughput = " << max_throughput << endl;
     cout << "Avg. Latency = " << total_average_latency << " us" << endl;
     cout << "Avg. 99pct Latency = " << total_average_99pct_latency << " us"
          << endl;
+    cout << "Avg. 99.9pct Latency = " << total_average_999pct_latency << " us"
+         << endl;
+    cout << "Max Latency = " << total_max_latency << " us" << endl;
   }
   MPI_Finalize();
-}
-
-void* RunLockManager(void* args) {
-  LockManager* lock_manager = (LockManager*)args;
-  lock_manager->Run();
-  return NULL;
 }
 
 void* MeasureCPUUsage(void* args) {

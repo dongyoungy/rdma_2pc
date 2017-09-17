@@ -43,8 +43,6 @@ bool DirectQueueLockClient::LockRemotely(Context* context,
   current_request->task = LOCK;
   lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
-  cout << "owner_node_id = " << current_request->owner_node_id << endl;
-
   sge.addr = (uint64_t)&current_request->original_value;
   sge.length = sizeof(uint64_t);
   sge.lkey = current_request->original_value_mr->lkey;
@@ -235,8 +233,6 @@ int DirectQueueLockClient::HandleWorkCompletion(
     request->exclusive = exclusive;
     request->shared = shared;
 
-    cout << "value = " << value << endl;
-
     if (request->task == LOCK) {
       if (request->lock_type == EXCLUSIVE) {
         if (exclusive == 0 && shared == 0) {
@@ -259,7 +255,6 @@ int DirectQueueLockClient::HandleWorkCompletion(
           // (wait_after_me_[request->obj_index] & value);
           // this->UndoLocking(context_, request, true);
         } else {
-          std::cout << "Lock Conflict." << std::endl;
           ++total_lock_contention_;
           user_all_waiters_[request->user_id] = value;
           this->HandleExclusive(request);
@@ -284,7 +279,6 @@ int DirectQueueLockClient::HandleWorkCompletion(
           // (wait_after_me_[request->obj_index] & value);
           // this->UndoLocking(context_, request, true);
         } else {
-          std::cout << "Lock Conflict." << std::endl;
           ++total_lock_contention_;
           user_all_waiters_[request->user_id] = exclusive;
           this->HandleShared(request);

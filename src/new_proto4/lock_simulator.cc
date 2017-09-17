@@ -60,7 +60,7 @@ void LockSimulator::Stop() { is_done_ = true; }
 uint64_t LockSimulator::GetCount() const { return count_; }
 
 void LockSimulator::SortLatency() {
-  std::sort(latency_.begin(), latency_.begin() + latency_.size());
+  std::sort(latency_.begin(), latency_.end());
 }
 
 double LockSimulator::GetAverageLatency() const {
@@ -72,7 +72,18 @@ double LockSimulator::GetAverageLatency() const {
 }
 
 double LockSimulator::Get99PercentileLatency() const {
+  // Assumes that latency_ has been sorted.
   return latency_[floor(latency_.size() * 0.99)];
+}
+
+double LockSimulator::Get999PercentileLatency() const {
+  // Assumes that latency_ has been sorted.
+  return latency_[floor(latency_.size() * 0.999)];
+}
+
+uint64_t LockSimulator::GetMaxLatency() const {
+  // Assumes that latency_ has been sorted.
+  return latency_.back();
 }
 
 // Create requests.
