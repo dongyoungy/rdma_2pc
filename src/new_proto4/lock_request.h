@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <cstddef>
+#include "constants.h"
 
 namespace rdma {
 namespace proto {
@@ -14,9 +15,9 @@ struct LockRequest {
   uintptr_t user_id;
   int lm_id;
   int obj_index;
-  int lock_type;  // shared, exclusive
-  int task;       // lock, unlock
-  int read_target;
+  LockType lock_type;  // shared, exclusive
+  Task task;           // lock, unlock
+  ReadType read_target;
   int retry;
   bool is_retry;
   uint64_t original_value;

@@ -12,6 +12,8 @@ namespace proto {
 class LockManager;
 // forward declaration of LockClient
 class Client;
+// forward declaration of DirectQueueLockClient
+class DirectQueueLockClient;
 // forward declaration of MessageBuffer
 class MessageBuffer;
 

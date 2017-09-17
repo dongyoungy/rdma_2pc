@@ -20,10 +20,11 @@
 #include <vector>
 
 #include "Poco/Optional.h"
+#include "Poco/Runnable.h"
 
 #include "client.h"
+#include "constants.h"
 #include "context.h"
-#include "local_lock_manager.h"
 #include "local_work_queue.h"
 #include "lock_simulator.h"
 #include "lock_wait_queue.h"
@@ -37,41 +38,44 @@ class LockSimulator;
 class LockClient;
 class CommunicationClient;
 
-class LockManager {
+class LockManager : public Poco::Runnable {
  public:
   LockManager(const string& work_dir, uint32_t rank, int num_manager,
-              int num_lock_object, int lock_mode, int num_total_user = 0,
-              int num_client = 1, int max_local_exclusive_locks = 4,
-              int max_local_shared_locks = 16);
+              int num_lock_object, LockMode lock_mode, int num_total_user = 0,
+              int num_client = 1);
   ~LockManager();
+  virtual void run();
+
   int Initialize();
   int InitializeLockClients();
   int RegisterUser(uint32_t user_id, LockSimulator* user);
   int Run();
-  const Poco::Optional<std::promise<LockResult>>& Lock(
+  const Poco::Optional<std::promise<LockResult>*> Lock(
       const LockRequest& request);
-  const Poco::Optional<std::promise<LockResult>>& Unlock(
+  const Poco::Optional<std::promise<LockResult>*> Unlock(
       const LockRequest& request);
-  int LockLocalDirect(uint32_t user_id, int lock_type, int obj_index);
-  int UnlockLocalDirect(uint32_t user_id, int lock_type, int obj_index);
+  int LockLocalDirect(uint32_t user_id, LockType lock_type, int obj_index);
+  int UnlockLocalDirect(uint32_t user_id, LockType lock_type, int obj_index);
   int GrantLock(int seq_no, int target_node_id, int owner_node_id,
-                int obj_index, int lock_type);
-  int RejectLock(int seq_no, uint32_t user_id, uint32_t manager_id,
-                 int lock_type, int obj_index);
-  int UpdateLockModeTable(int manager_id, int mode);
-  int NotifyLockRequestResult(int seq_no, uint32_t user_id, int lock_type,
-                              int target_node_id, int obj_index, int result);
-  int NotifyUnlockRequestResult(int seq_no, uint32_t user_id, int lock_type,
-                                int target_node_id, int obj_index, int result);
+                LockType lock_type, int obj_index);
+  int RejectLock(int seq_no, uintptr_t user_id, uint32_t manager_id,
+                 LockType lock_type, int obj_index);
+  int UpdateLockModeTable(int manager_id, LockMode mode);
+  int NotifyLockRequestResult(int seq_no, uintptr_t user_id, LockType lock_type,
+                              int target_node_id, int obj_index,
+                              LockResult result);
+  int NotifyUnlockRequestResult(int seq_no, uintptr_t user_id,
+                                LockType lock_type, int target_node_id,
+                                int obj_index, LockResult result);
   int GetID() const;
   int GetRank() const;
-  int GetLockMode() const;
+  LockMode GetLockMode() const;
   void SetTerminate(bool terminate);
   inline int GetNumManager() const { return num_manager_; }
   inline int GetNumUser() const { return num_user_; }
   inline int GetNumTotalUser() const { return num_total_user_; }
   inline int GetNumClient() const { return num_client_; }
-  inline int GetCurrentLockMode() const { return current_lock_mode_; }
+  inline LockMode GetCurrentLockMode() const { return current_lock_mode_; }
   inline LocalWorkQueue<Message>* GetLocalWorkQueue() {
     return local_work_queue_;
   }
@@ -105,20 +109,24 @@ class LockManager {
   static void* PollLocalWorkQueue(void* arg);
   static void* RunLockClient(void* args);
 
-  inline static int GetSharedExclusiveRule() { return shared_exclusive_rule_; }
-  inline static int GetExclusiveSharedRule() { return exclusive_shared_rule_; }
-  inline static int GetExclusiveExclusiveRule() {
+  inline static string GetSharedExclusiveRule() {
+    return shared_exclusive_rule_;
+  }
+  inline static string GetExclusiveSharedRule() {
+    return exclusive_shared_rule_;
+  }
+  inline static string GetExclusiveExclusiveRule() {
     return exclusive_exclusive_rule_;
   }
   inline static int GetPollRetry() { return poll_retry_; }
   inline static int GetFailRetry() { return fail_retry_; }
-  inline static void SetSharedExclusiveRule(int rule) {
+  inline static void SetSharedExclusiveRule(const string& rule) {
     shared_exclusive_rule_ = rule;
   }
-  inline static void SetExclusiveSharedRule(int rule) {
+  inline static void SetExclusiveSharedRule(const string& rule) {
     exclusive_shared_rule_ = rule;
   }
-  inline static void SetExclusiveExclusiveRule(int rule) {
+  inline static void SetExclusiveExclusiveRule(const string& rule) {
     exclusive_exclusive_rule_ = rule;
   }
   inline static void SetPollRetry(int retry) { poll_retry_ = retry; }
@@ -129,21 +137,21 @@ class LockManager {
     uint32_t exclusive = (uint32_t)(value >> 32);
     cout << rank_ << " = " << shared << "," << exclusive << endl;
   }
-  inline long GetLocalExclusiveToExclusiveFailCount() {
-    return llm_->GetExclusiveToExclusiveFailCount();
-  }
-  inline long GetLocalSharedToExclusiveFailCount() {
-    return llm_->GetSharedToExclusiveFailCount();
-  }
-  inline long GetLocalExclusiveToSharedFailCount() {
-    return llm_->GetExclusiveToSharedFailCount();
-  }
-  inline long GetLocalMaxSharedLockCount() {
-    return llm_->GetMaxSharedLockCount();
-  }
-  inline long GetLocalMaxExclusiveLockCount() {
-    return llm_->GetMaxExclusiveLockCount();
-  }
+  // inline long GetLocalExclusiveToExclusiveFailCount() {
+  // return llm_->GetExclusiveToExclusiveFailCount();
+  //}
+  // inline long GetLocalSharedToExclusiveFailCount() {
+  // return llm_->GetSharedToExclusiveFailCount();
+  //}
+  // inline long GetLocalExclusiveToSharedFailCount() {
+  // return llm_->GetExclusiveToSharedFailCount();
+  //}
+  // inline long GetLocalMaxSharedLockCount() {
+  // return llm_->GetMaxSharedLockCount();
+  //}
+  // inline long GetLocalMaxExclusiveLockCount() {
+  // return llm_->GetMaxExclusiveLockCount();
+  //}
   // temp
   long local_e_e_lock_pass_count_;
 
@@ -155,28 +163,6 @@ class LockManager {
   uint64_t GetRequestLockCallTime() const;
   uint64_t GetRequestLockCallCount() const;
 
-  static const int EXCLUSIVE = 1;
-  static const int SHARED = 2;
-
-  static const int LOCK_LOCAL = 0;
-  static const int LOCK_REMOTE = 1;
-  static const int LOCK_ADAPTIVE = 2;
-
-  static const int TASK_LOCK = 0;
-  static const int TASK_UNLOCK = 1;
-
-  static const int RESULT_SUCCESS = 0;
-  static const int RESULT_FAILURE = 1;
-  static const int RESULT_RETRY = 2;
-  static const int RESULT_QUEUED = 3;
-
-  static const int RULE_FAIL = 0;
-  static const int RULE_POLL = 1;
-  static const int RULE_QUEUE = 2;
-
-  static const int MAX_USER = 65536;
-  static const int NUM_LOCK_HISTORY = 10000;
-  static constexpr double ADAPT_THRESHOLD = 0.8;
   static map<uint32_t, uint32_t> user_to_node_map_;
   uint64_t* lock_table_;
 
@@ -195,11 +181,13 @@ class LockManager {
   int SendMessage(Context* context);
   int SendLockTableMemoryRegion(Context* context);
   int SendGrantLockAck(Context* context, int seq_no, uint32_t user_id,
-                       int lock_type, int obj_index);
+                       LockType lock_type, int obj_index);
   int SendLockRequestResult(Context* context, int seq_no, uint32_t user_id,
-                            int lock_type, int obj_index, int result);
+                            LockType lock_type, int obj_index,
+                            LockResult result);
   int SendUnlockRequestResult(Context* context, int seq_no, uint32_t user_id,
-                              int lock_type, int obj_index, int result);
+                              LockType lock_type, int obj_index,
+                              LockResult result);
 
   int LockLocallyWithRetry(Context* context, Message* message);
   int LockLocallyWithQueue(Context* context, Message* message);
@@ -229,8 +217,9 @@ class LockManager {
   map<uint64_t, CommunicationClient*> communication_clients_;
   vector<pthread_t*> communication_client_threads_;
 
-  tbb::concurrent_unordered_map<uint32_t, int>
-      queued_user_;  // map from obj index to the queued user
+  std::unordered_map<uint32_t, uintptr_t> queued_user_;
+  // tbb::concurrent_unordered_map<uint32_t, int>
+  // queued_user_;  // map from obj index to the queued user
 
   // vector for actual user/clients/simulators
   vector<LockSimulator*> users;
@@ -248,7 +237,7 @@ class LockManager {
   std::unordered_map<uintptr_t, std::promise<LockResult>> lock_result_map_;
 
   // local lock manager
-  LocalLockManager* llm_;
+  // LocalLockManager* llm_;
 
   string work_dir_;
   bool terminate_;
@@ -256,11 +245,11 @@ class LockManager {
   uint64_t num_rdma_recv_;
   uint64_t* last_lock_table_;
   uint64_t* fail_count_;
-  int* lock_mode_table_;
+  LockMode* lock_mode_table_;
   uint32_t rank_;
   uint32_t id_;
-  int lock_mode_;
-  int current_lock_mode_;
+  LockMode lock_mode_;
+  LockMode current_lock_mode_;
   int proxy_fail_rule_;
   int num_manager_;
   int num_client_;
@@ -287,9 +276,9 @@ class LockManager {
   pthread_mutex_t poll_mutex_;
   pthread_mutex_t seq_mutex_;
 
-  static int shared_exclusive_rule_;
-  static int exclusive_shared_rule_;
-  static int exclusive_exclusive_rule_;
+  static string shared_exclusive_rule_;
+  static string exclusive_shared_rule_;
+  static string exclusive_exclusive_rule_;
 
   static int poll_retry_;
   static int fail_retry_;

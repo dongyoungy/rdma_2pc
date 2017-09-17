@@ -48,7 +48,8 @@ Client::Client(const string& work_dir, LockManager* local_manager,
 
   lock_requests_.reserve(MAX_LOCAL_THREADS);
   for (int i = 0; i < MAX_LOCAL_THREADS; ++i) {
-    lock_requests_[i] = new LockRequest;
+    std::unique_ptr<LockRequest> request(new LockRequest);
+    lock_requests_.push_back(std::move(request));
   }
   lock_request_idx_ = 0;
 }
@@ -253,9 +254,6 @@ int Client::HandleConnection(Context* context) {
 int Client::HandleDisconnect(Context* context) {
   if (context->original_value_mr) ibv_dereg_mr(context->original_value_mr);
 
-  delete context->send_message_buffer;
-  delete context->receive_message_buffer;
-
   delete context;
 
   return 0;
@@ -370,7 +368,7 @@ int Client::RegisterMemoryRegion(Context* context) {
     return -1;
   }
   for (int i = 0; i < MAX_LOCAL_THREADS; ++i) {
-    LockRequest* request = lock_requests_[i];
+    LockRequest* request = lock_requests_[i].get();
     request->original_value_mr =
         ibv_reg_mr(context->protection_domain, &request->original_value,
                    sizeof(request->original_value),

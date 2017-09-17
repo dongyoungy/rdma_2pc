@@ -13,33 +13,20 @@ DirectQueueLockClient::DirectQueueLockClient(const string& work_dir,
 // destructor
 DirectQueueLockClient::~DirectQueueLockClient() {}
 
-int DirectQueueLockClient::RequestLock(int seq_no, uint32_t user_id,
-                                       int lock_type, int obj_index,
-                                       int lock_mode) {
-  user_retry_count_[user_id] = 0;
-  user_fail_[user_id] = false;
-  user_polling_[user_id] = false;
-  user_waiters_[user_id] = 0;
-  user_all_waiters_[user_id] = 0;
-
+bool DirectQueueLockClient::RequestLock(const LockRequest& request,
+                                        LockMode lock_mode) {
   // try locking remotely
-  return this->LockRemotely(context_, seq_no, user_id, lock_type, obj_index);
+  return this->LockRemotely(context_, request);
 }
 
-int DirectQueueLockClient::RequestUnlock(int seq_no, uint32_t user_id,
-                                         int lock_type, int obj_index,
-                                         int lock_mode) {
-  return this->UnlockRemotely(context_, seq_no, user_id, lock_type, obj_index);
+bool DirectQueueLockClient::RequestUnlock(const LockRequest& request,
+                                          LockMode lock_mode) {
+  return this->UnlockRemotely(context_, request);
 }
 
-int DirectQueueLockClient::LockRemotely(Context* context, int seq_no,
-                                        uint32_t user_id, int lock_type,
-                                        int obj_index) {
-  if (lock_type == LockManager::SHARED) {
-    clock_gettime(CLOCK_MONOTONIC, &start_remote_shared_lock_);
-  } else if (lock_type == LockManager::EXCLUSIVE) {
-    clock_gettime(CLOCK_MONOTONIC, &start_remote_exclusive_lock_);
-  }
+bool DirectQueueLockClient::LockRemotely(Context* context,
+                                         const LockRequest& request) {
+  Poco::Mutex::ScopedLock lock(lock_mutex_);
 
   uint32_t exclusive, shared;
   struct ibv_exp_send_wr send_work_request;
@@ -48,68 +35,67 @@ int DirectQueueLockClient::LockRemotely(Context* context, int seq_no,
 
   memset(&send_work_request, 0x00, sizeof(send_work_request));
 
-  pthread_mutex_lock(&lock_mutex_);
-  LockRequest* request = lock_requests_[lock_request_idx_];
-  request->seq_no = seq_no;
-  request->owner_node_id = local_owner_bitvector_id_;
-  request->user_id = user_id;
-  request->lock_type = lock_type;
-  request->obj_index = obj_index;
-  request->task = TASK_LOCK;
+  LockRequest* current_request = lock_requests_[lock_request_idx_].get();
+  current_request->owner_node_id = local_owner_bitvector_id_;
+  current_request->user_id = request.user_id;
+  current_request->lock_type = request.lock_type;
+  current_request->obj_index = request.obj_index;
+  current_request->task = LOCK;
   lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
-  sge.addr = (uint64_t)request->original_value;
-  sge.length = sizeof(uint64_t);
-  sge.lkey = request->original_value_mr->lkey;
+  cout << "owner_node_id = " << current_request->owner_node_id << endl;
 
-  send_work_request.wr_id = (uint64_t)request;
+  sge.addr = (uint64_t)&current_request->original_value;
+  sge.length = sizeof(uint64_t);
+  sge.lkey = current_request->original_value_mr->lkey;
+
+  send_work_request.wr_id = (uintptr_t)current_request;
   send_work_request.num_sge = 1;
   send_work_request.sg_list = &sge;
   send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
   send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
 
-  if (lock_type == LockManager::SHARED) {
-    exclusive = 0;
-    shared = local_owner_bitvector_id_;
-    uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
-    send_work_request.wr.atomic.compare_add = new_value;
-  } else if (lock_type == LockManager::EXCLUSIVE) {
-    exclusive = local_owner_bitvector_id_;
-    shared = 0;
-    uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
-    send_work_request.wr.atomic.compare_add = new_value;
+  switch (current_request->lock_type) {
+    case SHARED: {
+      exclusive = 0;
+      shared = local_owner_bitvector_id_;
+      uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
+      send_work_request.wr.atomic.compare_add = new_value;
+      break;
+    }
+    case EXCLUSIVE: {
+      exclusive = local_owner_bitvector_id_;
+      shared = 0;
+      uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
+      send_work_request.wr.atomic.compare_add = new_value;
+      break;
+    }
+    default:
+      break;
   }
 
   send_work_request.wr.atomic.remote_addr =
-      (uint64_t)context->lock_table_mr->addr + (obj_index * sizeof(uint64_t));
+      (uint64_t)context->lock_table_mr->addr +
+      (current_request->obj_index * sizeof(uint64_t));
   send_work_request.wr.atomic.rkey = context->lock_table_mr->rkey;
-
-  clock_gettime(CLOCK_MONOTONIC, &start_rdma_atomic_);
 
   int ret = 0;
   if ((ret = ibv_exp_post_send(context->queue_pair, &send_work_request,
                                &bad_work_request))) {
     cerr << "LockRemotely(): ibv_exp_post_send() failed: " << strerror(ret)
          << endl;
-    pthread_mutex_unlock(&lock_mutex_);
-    return -1;
+    return false;
   }
 
   ++num_rdma_atomic_;
-  pthread_mutex_unlock(&lock_mutex_);
 
-  return 0;
+  return true;
 }
 
-int DirectQueueLockClient::UnlockRemotely(Context* context, int seq_no,
-                                          uint32_t user_id, int lock_type,
-                                          int obj_index, bool is_undo,
-                                          bool retry) {
-  if (lock_type == LockManager::SHARED) {
-    clock_gettime(CLOCK_MONOTONIC, &start_remote_shared_lock_);
-  } else if (lock_type == LockManager::EXCLUSIVE) {
-    clock_gettime(CLOCK_MONOTONIC, &start_remote_exclusive_lock_);
-  }
+bool DirectQueueLockClient::UnlockRemotely(Context* context,
+                                           const LockRequest& request,
+                                           bool is_undo, bool retry) {
+  Poco::Mutex::ScopedLock lock(lock_mutex_);
 
   uint32_t exclusive, shared;
   struct ibv_exp_send_wr send_work_request;
@@ -118,59 +104,61 @@ int DirectQueueLockClient::UnlockRemotely(Context* context, int seq_no,
 
   memset(&send_work_request, 0x00, sizeof(send_work_request));
 
-  pthread_mutex_lock(&lock_mutex_);
-  LockRequest* request = lock_requests_[lock_request_idx_];
-  request->seq_no = seq_no;
-  request->user_id = user_id;
-  request->lock_type = lock_type;
-  request->obj_index = obj_index;
-  request->is_undo = is_undo;
-  request->is_retry = retry;
-  request->task = TASK_UNLOCK;
+  LockRequest* current_request = lock_requests_[lock_request_idx_].get();
+  current_request->user_id = request.user_id;
+  current_request->owner_node_id = local_owner_bitvector_id_;
+  current_request->lock_type = request.lock_type;
+  current_request->obj_index = request.obj_index;
+  current_request->is_undo = is_undo;
+  current_request->is_retry = retry;
+  current_request->task = UNLOCK;
   lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
-  sge.addr = (uint64_t)request->original_value;
+  sge.addr = (uintptr_t)&current_request->original_value;
   sge.length = sizeof(uint64_t);
-  sge.lkey = request->original_value_mr->lkey;
+  sge.lkey = current_request->original_value_mr->lkey;
 
-  send_work_request.wr_id = (uint64_t)request;
+  send_work_request.wr_id = (uintptr_t)current_request;
   send_work_request.num_sge = 1;
   send_work_request.sg_list = &sge;
   send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
-  // send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED |
-  // IBV_EXP_SEND_INLINE;
   send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
 
-  if (lock_type == LockManager::SHARED) {
-    exclusive = 0;
-    shared = local_owner_bitvector_id_;
-    uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
-    new_value = (-1) * new_value;  // need to subtract for unlock
-    send_work_request.wr.atomic.compare_add = new_value;
-  } else if (lock_type == LockManager::EXCLUSIVE) {
-    exclusive = 0;
-    shared = 0;
-    uint64_t new_value = ((uint64_t)local_owner_bitvector_id_) << 32 | shared;
-    new_value = (-1) * new_value;  // need to subtract for unlock
-    send_work_request.wr.atomic.compare_add = new_value;
+  switch (current_request->lock_type) {
+    case SHARED: {
+      exclusive = 0;
+      shared = local_owner_bitvector_id_;
+      uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
+      new_value = (-1) * new_value;  // need to subtract for unlock
+      send_work_request.wr.atomic.compare_add = new_value;
+      break;
+    }
+    case EXCLUSIVE: {
+      exclusive = 0;
+      shared = 0;
+      uint64_t new_value = ((uint64_t)local_owner_bitvector_id_) << 32 | shared;
+      new_value = (-1) * new_value;  // need to subtract for unlock
+      send_work_request.wr.atomic.compare_add = new_value;
+      break;
+    }
+    default:
+      break;
   }
-  send_work_request.wr.atomic.remote_addr =
-      (uint64_t)context->lock_table_mr->addr + (obj_index * sizeof(uint64_t));
-  send_work_request.wr.atomic.rkey = context->lock_table_mr->rkey;
 
-  clock_gettime(CLOCK_MONOTONIC, &start_rdma_atomic_);
+  send_work_request.wr.atomic.remote_addr =
+      (uint64_t)context->lock_table_mr->addr +
+      (current_request->obj_index * sizeof(uint64_t));
+  send_work_request.wr.atomic.rkey = context->lock_table_mr->rkey;
 
   int ret = 0;
   if ((ret = ibv_exp_post_send(context->queue_pair, &send_work_request,
                                &bad_work_request))) {
     cerr << "UnlockRemotely(): ibv_exp_post_send() failed: " << strerror(ret)
          << endl;
-    pthread_mutex_unlock(&lock_mutex_);
-    return -1;
+    return false;
   }
   ++num_rdma_atomic_;
-  pthread_mutex_unlock(&lock_mutex_);
-  return 0;
+  return true;
 }
 
 int DirectQueueLockClient::HandleWorkCompletion(
@@ -236,7 +224,7 @@ int DirectQueueLockClient::HandleWorkCompletion(
                          (double)start_rdma_atomic_.tv_nsec);
     total_rdma_atomic_time_ += time_taken;
 
-    uint64_t prev_value = *request->original_value;
+    uint64_t prev_value = request->original_value;
 #if __BYTE_ORDER == __LITTLE_ENDIAN
     uint64_t value = __bswap_constant_64(prev_value);  // Compiler builtin
 #endif
@@ -247,8 +235,10 @@ int DirectQueueLockClient::HandleWorkCompletion(
     request->exclusive = exclusive;
     request->shared = shared;
 
-    if (request->task == LockManager::TASK_LOCK) {
-      if (request->lock_type == LockManager::EXCLUSIVE) {
+    cout << "value = " << value << endl;
+
+    if (request->task == LOCK) {
+      if (request->lock_type == EXCLUSIVE) {
         if (exclusive == 0 && shared == 0) {
           // exclusive lock acquisition successful
           // wait_after_me_[request->obj_index] = 0;
@@ -263,12 +253,13 @@ int DirectQueueLockClient::HandleWorkCompletion(
           ++num_exclusive_lock_;
           local_manager_->NotifyLockRequestResult(
               request->seq_no, request->user_id, request->lock_type,
-              remote_lm_id_, request->obj_index, LockManager::RESULT_SUCCESS);
+              remote_lm_id_, request->obj_index, SUCCESS);
           //} else if ((wait_after_me_[request->obj_index] & value) != 0) {
           // wait_after_me_[request->obj_index] =
           // (wait_after_me_[request->obj_index] & value);
           // this->UndoLocking(context_, request, true);
         } else {
+          std::cout << "Lock Conflict." << std::endl;
           ++total_lock_contention_;
           user_all_waiters_[request->user_id] = value;
           this->HandleExclusive(request);
@@ -287,31 +278,28 @@ int DirectQueueLockClient::HandleWorkCompletion(
           ++num_shared_lock_;
           local_manager_->NotifyLockRequestResult(
               request->seq_no, request->user_id, request->lock_type,
-              remote_lm_id_, request->obj_index, LockManager::RESULT_SUCCESS);
+              remote_lm_id_, request->obj_index, SUCCESS);
           //} else if ((wait_after_me_[request->obj_index] & value) != 0) {
           // wait_after_me_[request->obj_index] =
           // (wait_after_me_[request->obj_index] & value);
           // this->UndoLocking(context_, request, true);
         } else {
+          std::cout << "Lock Conflict." << std::endl;
           ++total_lock_contention_;
           user_all_waiters_[request->user_id] = exclusive;
           this->HandleShared(request);
         }
       }
-    } else if (request->task == TASK_UNLOCK) {
+    } else if (request->task == UNLOCK) {
       if (request->is_undo) {
-        int result = RESULT_FAILURE;
-        // if (request->is_retry) {
-        // result = RESULT_RETRY;
-        //}
         local_manager_->NotifyLockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
-            remote_lm_id_, request->obj_index, result);
+            remote_lm_id_, request->obj_index, FAILURE);
       } else {
         // wait_after_me_[request->obj_index] = value;
         local_manager_->NotifyUnlockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
-            remote_lm_id_, request->obj_index, LockManager::RESULT_SUCCESS);
+            remote_lm_id_, request->obj_index, SUCCESS);
       }
     }
   } else if (work_completion->opcode == IBV_WC_RDMA_READ) {
@@ -327,7 +315,7 @@ int DirectQueueLockClient::HandleWorkCompletion(
     // uint32_t value, exclusive, shared;
     LockRequest* request = (LockRequest*)work_completion->wr_id;
     // uint64_t all_value = *request->read_buffer2;
-    uint64_t prev_value = *request->read_buffer2;
+    uint64_t prev_value = request->read_buffer2;
     uint64_t all_value = prev_value;
     //#if __BYTE_ORDER == __LITTLE_ENDIAN
     // all_value = __bswap_constant_64(prev_value);  // Compiler builtin
@@ -400,7 +388,7 @@ int DirectQueueLockClient::HandleWorkCompletion(
         sum_poll_when_success_ += user_retry_count_[request->user_id];
         local_manager_->NotifyLockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
-            remote_lm_id_, request->obj_index, LockManager::RESULT_SUCCESS);
+            remote_lm_id_, request->obj_index, SUCCESS);
       } else {
         // otherwise, read/poll again (shared -> exclusive)
         this->HandleShared(request);
@@ -412,7 +400,7 @@ int DirectQueueLockClient::HandleWorkCompletion(
         sum_poll_when_success_ += user_retry_count_[request->user_id];
         local_manager_->NotifyLockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
-            remote_lm_id_, request->obj_index, LockManager::RESULT_SUCCESS);
+            remote_lm_id_, request->obj_index, SUCCESS);
       } else {
         this->HandleExclusive(request);
       }
@@ -428,6 +416,7 @@ int DirectQueueLockClient::HandleShared(LockRequest* request) {
     return 0;
   }
   ++user_retry_count_[request->user_id];
+  request->read_target = READ_ALL;
   // request->read_target = EXCLUSIVE;
   // this->ReadRemotely(context_,
   // request->seq_no,
@@ -435,8 +424,7 @@ int DirectQueueLockClient::HandleShared(LockRequest* request) {
   // request->read_target,
   // request->lock_type,
   // request->obj_index);
-  this->ReadRemotely(context_, request->seq_no, request->user_id,
-                     request->lock_type, request->obj_index);
+  this->ReadRemotely(context_, *request);
 
   return FUNC_SUCCESS;
 }
@@ -447,8 +435,7 @@ int DirectQueueLockClient::HandleExclusive(LockRequest* request) {
     return 0;
   }
   ++user_retry_count_[request->user_id];
-  this->ReadRemotely(context_, request->seq_no, request->user_id,
-                     request->lock_type, request->obj_index);
+  this->ReadRemotely(context_, *request);
 
   return FUNC_SUCCESS;
 }

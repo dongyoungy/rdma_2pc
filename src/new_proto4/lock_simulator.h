@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <future>
 #include <iostream>
 #include <thread>
@@ -36,6 +37,13 @@ class LockSimulator : public Poco::Runnable {
   ~LockSimulator();
   virtual void run();  // for Poco::Runnable
 
+  void Stop();
+  uint64_t GetCount() const;
+
+  void SortLatency();
+  double GetAverageLatency() const;
+  double Get99PercentileLatency() const;
+
  protected:
   virtual void CreateRequest();
 
@@ -47,7 +55,7 @@ class LockSimulator : public Poco::Runnable {
   int num_objects_;
   int request_size_;
   uint64_t count_;
-  bool is_done_;
+  volatile bool is_done_;
 };
 
 }  // namespace proto

@@ -15,8 +15,8 @@ class LockClient : public Client {
   LockClient(const string& work_dir, LockManager* local_manager,
              uint32_t local_user_count, uint32_t remote_lm_id);
   ~LockClient();
-  virtual bool RequestLock(const LockRequest& request, int lock_mode);
-  virtual bool RequestUnlock(const LockRequest& request, int lock_mode);
+  virtual bool RequestLock(const LockRequest& request, LockMode lock_mode);
+  virtual bool RequestUnlock(const LockRequest& request, LockMode lock_mode);
   double GetAverageRemoteExclusiveLockTime() const;
   double GetAverageRemoteSharedLockTime() const;
 
@@ -24,10 +24,9 @@ class LockClient : public Client {
   virtual bool LockRemotely(Context* context, const LockRequest& request);
   virtual bool UnlockRemotely(Context* context, const LockRequest& request,
                               bool is_undo = false, bool retry = false);
-  virtual int ReadRemotely(Context* context, int seq_no, uint32_t user_id,
-                           int read_target, int lock_type, int obj_index);
-  virtual int ReadRemotely(Context* context, int seq_no, uint32_t user_id,
-                           int lock_type, int obj_index);
+  virtual int ReadRemotely(Context* context, const LockRequest& request);
+  virtual int ReadRemotely(Context* context, int seq_no, uintptr_t user_id,
+                           LockType lock_type, int obj_index);
   int SendLockTableRequest(Context* context);
   int SendLockModeRequest(Context* context);
   bool SendLockRequest(Context* context, const LockRequest& request);
@@ -47,11 +46,11 @@ class LockClient : public Client {
 
   int UndoLocking(Context* context, LockRequest* request, bool polling = false);
 
-  int* user_retry_count_;
-  bool* user_fail_;
-  bool* user_polling_;
-  uint32_t* user_waiters_;
-  uint64_t* user_all_waiters_;
+  std::map<uintptr_t, bool> user_retry_count_;
+  std::map<uintptr_t, bool> user_fail_;
+  std::map<uintptr_t, bool> user_polling_;
+  std::map<uintptr_t, uint32_t> user_waiters_;
+  std::map<uintptr_t, uint64_t> user_all_waiters_;
 
   Poco::Mutex lock_mutex_;
 

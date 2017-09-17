@@ -1,11 +1,12 @@
 #include "lock_wait_queue.h"
 
-namespace rdma { namespace proto {
+namespace rdma {
+namespace proto {
 
 // constructor
 LockWaitQueue::LockWaitQueue(int max_size) {
   max_size_ = max_size;
-  size_     = 0;
+  size_ = 0;
 
   // initialize the memory pool
   for (int i = 0; i < max_size_; ++i) {
@@ -32,17 +33,18 @@ LockWaitQueue::~LockWaitQueue() {
 }
 
 // insert new element into the queue
-int LockWaitQueue::Insert(int seq_no, uint32_t target_node_id, uint32_t owner_node_id,
-    uint32_t owner_user_id, int type) {
+int LockWaitQueue::Insert(int seq_no, uint32_t target_node_id,
+                          uint32_t owner_node_id, uint32_t owner_user_id,
+                          LockType type) {
   pthread_mutex_lock(&mutex_);
   LockWaitElement* elem = pool_.front();
   pool_.pop_front();
 
-  elem->seq_no         = seq_no;
+  elem->seq_no = seq_no;
   elem->target_node_id = target_node_id;
-  elem->owner_node_id  = owner_node_id;
-  elem->owner_user_id  = owner_user_id;
-  elem->type           = type;
+  elem->owner_node_id = owner_node_id;
+  elem->owner_user_id = owner_user_id;
+  elem->type = type;
 
   queue_.push_back(elem);
   ++size_;
@@ -84,7 +86,7 @@ int LockWaitQueue::RemoveAllElements(uint32_t owner_node_id, int type) {
   int num_elem = 0;
   list<LockWaitElement*>::iterator it;
   pthread_mutex_lock(&mutex_);
-  for (it = queue_.begin();it != queue_.end();) {
+  for (it = queue_.begin(); it != queue_.end();) {
     LockWaitElement* elem = *it;
     if (elem->type == type && elem->owner_node_id == owner_node_id) {
       // erase it from the queue
@@ -104,10 +106,11 @@ int LockWaitQueue::RemoveAllElements(uint32_t owner_node_id, int type) {
 void LockWaitQueue::PrintAll() {
   list<LockWaitElement*>::iterator it;
   int cnt = 0;
-  for (it = queue_.begin();it != queue_.end();++it) {
+  for (it = queue_.begin(); it != queue_.end(); ++it) {
     LockWaitElement* elem = *it;
-    cout << "queue elem #" << cnt << " = " << elem->seq_no << "," << elem->target_node_id << "," <<
-      elem->owner_node_id << "," << elem->owner_user_id << "," << elem->type << endl;
+    cout << "queue elem #" << cnt << " = " << elem->seq_no << ","
+         << elem->target_node_id << "," << elem->owner_node_id << ","
+         << elem->owner_user_id << "," << elem->type << endl;
     ++cnt;
   }
 }
@@ -115,7 +118,7 @@ void LockWaitQueue::PrintAll() {
 void LockWaitQueue::RemoveAll() {
   list<LockWaitElement*>::iterator it;
   pthread_mutex_lock(&mutex_);
-  for (it = queue_.begin();it != queue_.end();) {
+  for (it = queue_.begin(); it != queue_.end();) {
     LockWaitElement* elem = *it;
     // erase it from the queue
     it = queue_.erase(it);
@@ -126,4 +129,5 @@ void LockWaitQueue::RemoveAll() {
   pthread_mutex_unlock(&mutex_);
 }
 
-}}
+}  // namespace proto
+}  // namespace rdma
