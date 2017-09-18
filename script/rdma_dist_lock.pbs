@@ -1,0 +1,5 @@
+#!/bin/bash
+mpiexec -np $num_node -map-by node --mca btl_openib_warn_nonexistent_if 0 --mca orte_base_help_aggregate 0 --mca btl ^tcp /home/dyoon/work/rdma_2pc/bin/lock_simulation $work_dir$job_counter $num_lock_object $duration $request_per_tx $num_user $lock_mode $se_rule $es_rule $ee_rule $num_retry $num_retry $workload $think_time_type
+
+# end of bsub
+
