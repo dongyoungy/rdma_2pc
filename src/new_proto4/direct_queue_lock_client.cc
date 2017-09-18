@@ -36,10 +36,8 @@ bool DirectQueueLockClient::LockRemotely(Context* context,
   memset(&send_work_request, 0x00, sizeof(send_work_request));
 
   LockRequest* current_request = lock_requests_[lock_request_idx_].get();
+  *current_request = request;
   current_request->owner_node_id = local_owner_bitvector_id_;
-  current_request->user_id = request.user_id;
-  current_request->lock_type = request.lock_type;
-  current_request->obj_index = request.obj_index;
   current_request->task = LOCK;
   lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
@@ -103,10 +101,8 @@ bool DirectQueueLockClient::UnlockRemotely(Context* context,
   memset(&send_work_request, 0x00, sizeof(send_work_request));
 
   LockRequest* current_request = lock_requests_[lock_request_idx_].get();
-  current_request->user_id = request.user_id;
+  *current_request = request;
   current_request->owner_node_id = local_owner_bitvector_id_;
-  current_request->lock_type = request.lock_type;
-  current_request->obj_index = request.obj_index;
   current_request->is_undo = is_undo;
   current_request->is_retry = retry;
   current_request->task = UNLOCK;
@@ -195,7 +191,7 @@ int DirectQueueLockClient::HandleWorkCompletion(
       // cout << "received lock request result." << endl;
       local_manager_->NotifyLockRequestResult(
           message->seq_no, message->owner_user_id, message->lock_type,
-          remote_lm_id_, message->obj_index, message->lock_result);
+          remote_lm_id_, message->obj_index, 0, message->lock_result);
     } else if (message->type == Message::UNLOCK_REQUEST_RESULT) {
       // cout << "received unlock request result" << endl;
       local_manager_->NotifyUnlockRequestResult(
@@ -249,13 +245,15 @@ int DirectQueueLockClient::HandleWorkCompletion(
           ++num_exclusive_lock_;
           local_manager_->NotifyLockRequestResult(
               request->seq_no, request->user_id, request->lock_type,
-              remote_lm_id_, request->obj_index, SUCCESS);
+              remote_lm_id_, request->obj_index, request->contention_count,
+              SUCCESS);
           //} else if ((wait_after_me_[request->obj_index] & value) != 0) {
           // wait_after_me_[request->obj_index] =
           // (wait_after_me_[request->obj_index] & value);
           // this->UndoLocking(context_, request, true);
         } else {
           ++total_lock_contention_;
+          ++request->contention_count;
           user_all_waiters_[request->user_id] = value;
           this->HandleExclusive(request);
         }
@@ -273,13 +271,15 @@ int DirectQueueLockClient::HandleWorkCompletion(
           ++num_shared_lock_;
           local_manager_->NotifyLockRequestResult(
               request->seq_no, request->user_id, request->lock_type,
-              remote_lm_id_, request->obj_index, SUCCESS);
+              remote_lm_id_, request->obj_index, request->contention_count,
+              SUCCESS);
           //} else if ((wait_after_me_[request->obj_index] & value) != 0) {
           // wait_after_me_[request->obj_index] =
           // (wait_after_me_[request->obj_index] & value);
           // this->UndoLocking(context_, request, true);
         } else {
           ++total_lock_contention_;
+          ++request->contention_count;
           user_all_waiters_[request->user_id] = exclusive;
           this->HandleShared(request);
         }
@@ -288,7 +288,8 @@ int DirectQueueLockClient::HandleWorkCompletion(
       if (request->is_undo) {
         local_manager_->NotifyLockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
-            remote_lm_id_, request->obj_index, FAILURE);
+            remote_lm_id_, request->obj_index, request->contention_count,
+            FAILURE);
       } else {
         // wait_after_me_[request->obj_index] = value;
         local_manager_->NotifyUnlockRequestResult(
@@ -375,16 +376,18 @@ int DirectQueueLockClient::HandleWorkCompletion(
     // cout << "remaining3 = " << (context_->all_waiters & prev) << endl;
 
     if (request->lock_type == SHARED) {
-      // Polling on X -> proceed if value is zero
+      // Polling on Ex -> proceed if value is zero
       if ((remaining >> 32) == 0) {
         user_all_waiters_[request->user_id] = 0;
         ++total_lock_success_with_poll_;
         sum_poll_when_success_ += user_retry_count_[request->user_id];
         local_manager_->NotifyLockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
-            remote_lm_id_, request->obj_index, SUCCESS);
+            remote_lm_id_, request->obj_index, request->contention_count,
+            SUCCESS);
       } else {
         // otherwise, read/poll again (shared -> exclusive)
+        ++request->contention_count;
         this->HandleShared(request);
       }
     } else {
@@ -394,8 +397,10 @@ int DirectQueueLockClient::HandleWorkCompletion(
         sum_poll_when_success_ += user_retry_count_[request->user_id];
         local_manager_->NotifyLockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
-            remote_lm_id_, request->obj_index, SUCCESS);
+            remote_lm_id_, request->obj_index, request->contention_count,
+            SUCCESS);
       } else {
+        ++request->contention_count;
         this->HandleExclusive(request);
       }
     }
@@ -406,7 +411,7 @@ int DirectQueueLockClient::HandleWorkCompletion(
 
 int DirectQueueLockClient::HandleShared(LockRequest* request) {
   if (user_retry_count_[request->user_id] >= LockManager::GetPollRetry()) {
-    this->UndoLocking(context_, request);
+    this->UndoLocking(context_, *request);
     return 0;
   }
   ++user_retry_count_[request->user_id];
@@ -425,7 +430,7 @@ int DirectQueueLockClient::HandleShared(LockRequest* request) {
 
 int DirectQueueLockClient::HandleExclusive(LockRequest* request) {
   if (user_retry_count_[request->user_id] >= LockManager::GetPollRetry()) {
-    this->UndoLocking(context_, request);
+    this->UndoLocking(context_, *request);
     return 0;
   }
   ++user_retry_count_[request->user_id];

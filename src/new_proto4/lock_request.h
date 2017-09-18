@@ -9,6 +9,18 @@ namespace rdma {
 namespace proto {
 
 struct LockRequest {
+  LockRequest& operator=(const LockRequest& other) {
+    if (this != &other) {
+      seq_no = other.seq_no;
+      user_id = other.user_id;
+      read_target = other.read_target;
+      obj_index = other.obj_index;
+      lock_type = other.lock_type;
+      contention_count = other.contention_count;
+      task = other.task;
+    }
+    return *this;
+  }
   int seq_no;  // sequence no (id)
   bool is_undo;
   uint32_t owner_node_id;
@@ -19,6 +31,7 @@ struct LockRequest {
   Task task;           // lock, unlock
   ReadType read_target;
   int retry;
+  int contention_count;
   bool is_retry;
   uint64_t original_value;
   struct ibv_mr* original_value_mr;

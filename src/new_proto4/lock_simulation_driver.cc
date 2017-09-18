@@ -10,6 +10,7 @@
 
 #include "Poco/Thread.h"
 
+#include "hotspot_lock_simulator.h"
 #include "lock_manager.h"
 #include "lock_simulator.h"
 #include "mpi.h"
@@ -28,13 +29,13 @@ struct CPUUsage {
 int main(int argc, char** argv) {
   MPI_Init(&argc, &argv);
 
-  if (argc != 13) {
+  if (argc != 14) {
     cout << argv[0] << " <work_dir> <num_lock_object> <duration>"
          << " <request_size> <num_users> <lock_mode>"
          << " <shared_exclusive_rule> <exclusive_shared_rule>"
          << " <exclusive_exclusive_rule>"
          << " <fail_retry> <poll_retry>"
-         << " <workload_type> " << endl;
+         << " <workload_type> <think_time_type> " << endl;
     exit(1);
   }
 
@@ -64,6 +65,7 @@ int main(int argc, char** argv) {
   int fail_retry = atoi(argv[k++]);
   int poll_retry = atoi(argv[k++]);
   string workload_type = argv[k++];
+  string think_time_type = argv[k++];
 
   if (num_managers > 32) {
     cerr << "# of nodes must be less than 33" << endl;
@@ -95,6 +97,7 @@ int main(int argc, char** argv) {
 
   if (rank == 0) {
     cout << "Type of Workload = " << workload_type << endl;
+    cout << "Type of Think Time = " << think_time_type << endl;
     cout << "SHARED -> EXCLUSIVE = " << shared_exclusive_rule << endl;
     cout << "EXCLUSIVE -> SHARED = " << exclusive_shared_rule << endl;
     cout << "EXCLUSIVE -> EXCLUSIVE = " << exclusive_exclusive_rule << endl;
@@ -123,13 +126,22 @@ int main(int argc, char** argv) {
 
   std::vector<std::unique_ptr<LockSimulator>> users;
   for (int i = 0; i < num_users; ++i) {
+    std::unique_ptr<LockSimulator> simulator;
     // TODO: Add other simulators.
     if (workload_type == "simple") {
-      std::unique_ptr<LockSimulator> simulator(new LockSimulator(
-          lock_manager.get(), num_managers, num_lock_object, request_size));
-      lock_manager->RegisterUser(i + 1, simulator.get());
-      users.push_back(std::move(simulator));
+      simulator.reset(new LockSimulator(lock_manager.get(), num_managers,
+                                        num_lock_object, request_size,
+                                        think_time_type));
+    } else if (workload_type == "hotspot") {
+      simulator.reset(new HotspotLockSimulator(lock_manager.get(), num_managers,
+                                               num_lock_object, request_size,
+                                               think_time_type));
+    } else {
+      cerr << "Unknown workload: " << workload_type << endl;
+      exit(-2);
     }
+    lock_manager->RegisterUser(i + 1, simulator.get());
+    users.push_back(std::move(simulator));
   }
 
   sleep(3);
@@ -147,6 +159,7 @@ int main(int argc, char** argv) {
   // measure cpu usage
   pthread_t cpu_measure_thread;
   CPUUsage usage;
+  usage.terminate = false;
   if (pthread_create(&cpu_measure_thread, NULL, &MeasureCPUUsage,
                      (void*)&usage)) {
     cerr << "pthread_create() error." << endl;
@@ -208,31 +221,63 @@ int main(int argc, char** argv) {
       std::cerr << e.displayText() << std::endl;
     }
   }
+
+  // Get CPU usage.
+  usage.terminate = true;
+  pthread_join(cpu_measure_thread, NULL);
+  double cpu_usage = usage.total_cpu / usage.num_sample;
+
   MPI_Barrier(MPI_COMM_WORLD);
 
+  double average_cpu_usage = 0;
   double total_average_latency = 0;
   double total_average_99pct_latency = 0;
   double total_average_999pct_latency = 0;
   double average_latency = 0;
   double average_99pct_latency = 0;
   double average_999pct_latency = 0;
+  double total_average_latency_with_contention = 0;
+  double total_average_99pct_latency_with_contention = 0;
+  double total_average_999pct_latency_with_contention = 0;
+  double average_latency_with_contention = 0;
+  double average_99pct_latency_with_contention = 0;
+  double average_999pct_latency_with_contention = 0;
   uint64_t total_max_latency = 0;
   uint64_t max_latency = 0;
   uint64_t total_throughput = 0;
-  double average_throughput = 0;
+  uint64_t average_throughput = 0;
   uint64_t throughput_99pct = 0;
+  uint64_t count = 0;
+  uint64_t total_count = 0;
+  uint64_t count_with_contention = 0;
+  uint64_t total_count_with_contention = 0;
   for (int i = 0; i < num_users; ++i) {
     users[i]->SortLatency();
+    count += users[i]->GetCount();
+    count_with_contention += users[i]->GetCountWithContention();
     average_latency += users[i]->GetAverageLatency();
     average_99pct_latency += users[i]->Get99PercentileLatency();
     average_999pct_latency += users[i]->Get999PercentileLatency();
+    average_latency_with_contention +=
+        users[i]->GetAverageLatencyWithContention();
+    average_99pct_latency_with_contention +=
+        users[i]->Get99PercentileLatencyWithContention();
+    average_999pct_latency_with_contention +=
+        users[i]->Get999PercentileLatencyWithContention();
     max_latency = (max_latency < users[i]->GetMaxLatency())
                       ? users[i]->GetMaxLatency()
                       : max_latency;
   }
   average_latency /= num_users;
   average_99pct_latency /= num_users;
+  average_999pct_latency /= num_users;
 
+  average_latency_with_contention /= num_users;
+  average_99pct_latency_with_contention /= num_users;
+  average_999pct_latency_with_contention /= num_users;
+
+  MPI_Reduce(&cpu_usage, &average_cpu_usage, 1, MPI_DOUBLE, MPI_SUM, 0,
+             MPI_COMM_WORLD);
   MPI_Reduce(&average_latency, &total_average_latency, 1, MPI_DOUBLE, MPI_SUM,
              0, MPI_COMM_WORLD);
   MPI_Reduce(&average_99pct_latency, &total_average_99pct_latency, 1,
@@ -242,15 +287,39 @@ int main(int argc, char** argv) {
   MPI_Reduce(&max_latency, &total_max_latency, 1, MPI_LONG_LONG_INT, MPI_MAX, 0,
              MPI_COMM_WORLD);
 
+  MPI_Reduce(&average_latency_with_contention,
+             &total_average_latency_with_contention, 1, MPI_DOUBLE, MPI_SUM, 0,
+             MPI_COMM_WORLD);
+  MPI_Reduce(&average_99pct_latency_with_contention,
+             &total_average_99pct_latency_with_contention, 1, MPI_DOUBLE,
+             MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&average_999pct_latency_with_contention,
+             &total_average_999pct_latency_with_contention, 1, MPI_DOUBLE,
+             MPI_SUM, 0, MPI_COMM_WORLD);
+
+  MPI_Reduce(&count, &total_count, 1, MPI_LONG_LONG_INT, MPI_SUM, 0,
+             MPI_COMM_WORLD);
+  MPI_Reduce(&count_with_contention, &total_count_with_contention, 1,
+             MPI_LONG_LONG_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+
   if (rank == 0) {
+    average_cpu_usage /= num_managers;
     total_average_latency /= num_managers;
     total_average_99pct_latency /= num_managers;
+    total_average_999pct_latency /= num_managers;
+    total_average_latency_with_contention /= num_managers;
+    total_average_99pct_latency_with_contention /= num_managers;
+    total_average_999pct_latency_with_contention /= num_managers;
     // Sort throughputs.
     std::sort(throughputs.begin(), throughputs.end());
     total_throughput =
-        std::accumulate(throughputs.begin(), throughputs.end(), 0);
-    average_throughput = (double)total_throughput / (double)throughputs.size();
+        std::accumulate(throughputs.begin(), throughputs.end(), 0ULL);
+    average_throughput = total_throughput / throughputs.size();
     throughput_99pct = throughputs[floor(throughputs.size() * 0.99)];
+    cout << "Avg. CPU Usage = " << average_cpu_usage << " %" << endl;
+    cout << "Tx Count = " << total_count << endl;
+    cout << "Tx Count With Contention = " << total_count_with_contention
+         << endl;
     cout << "Avg. Throughput = " << average_throughput << endl;
     cout << "99pct Throughput = " << throughput_99pct << endl;
     cout << "Max Throughput = " << max_throughput << endl;
@@ -259,7 +328,33 @@ int main(int argc, char** argv) {
          << endl;
     cout << "Avg. 99.9pct Latency = " << total_average_999pct_latency << " us"
          << endl;
+    cout << "Avg. Latency With Contention = "
+         << total_average_latency_with_contention << " us" << endl;
+    cout << "Avg. 99pct Latency With Contention = "
+         << total_average_99pct_latency_with_contention << " us" << endl;
+    cout << "Avg. 99.9pct Latency With Contention = "
+         << total_average_999pct_latency_with_contention << " us" << endl;
     cout << "Max Latency = " << total_max_latency << " us" << endl;
+
+    // Print as CVS at the end.
+    cout << "Workload, Think Time, Lock Mode, "
+         << "Avg. CPU Usage, Tx Count, Tx Count With Contention, "
+         << "Avg. Throughput, 99pct Throughput, Max Throughput, "
+         << "Avg. Latency, Avg. 99pct Latency, Avg. 99.9pct Latency, "
+         << "Avg. Latency With Contention, "
+         << "Avg. 99pct Latency With Contention, "
+         << "Avg. 99.9pct Latency With Contention, "
+         << "Max Latency" << endl;
+    cout << workload_type << "," << think_time_type << "," << lock_mode_str
+         << "," << average_cpu_usage << "," << total_count << ","
+         << total_count_with_contention << "," << average_throughput << ","
+         << throughput_99pct << "," << max_throughput << ","
+         << total_average_latency << "," << total_average_99pct_latency << ","
+         << total_average_999pct_latency << ","
+         << total_average_latency_with_contention << ","
+         << total_average_99pct_latency_with_contention << ","
+         << total_average_999pct_latency_with_contention << "," << max_latency
+         << endl;
   }
   MPI_Finalize();
 }
@@ -296,22 +391,21 @@ void* MeasureCPUUsage(void* args) {
     if (now <= lastCPU || timeSample.tms_stime < lastSysCPU ||
         timeSample.tms_utime < lastUserCPU) {
       // Overflow detection. Just skip this value.
-      //            percent = -1.0;
-      //
+      percent = -1.0;
     } else {
       percent = (timeSample.tms_stime - lastSysCPU) +
                 (timeSample.tms_utime - lastUserCPU);
       percent /= (now - lastCPU);
       // percent /= numProcessors;
       percent *= 100;
+
+      usage->total_cpu += percent;
+      usage->num_sample += 1;
     }
     lastCPU = now;
     lastSysCPU = timeSample.tms_stime;
     lastUserCPU = timeSample.tms_utime;
 
-    usage->total_cpu += percent;
-    usage->num_sample += 1;
-    // cout << percent << endl;
     sleep(1);
   }
   return NULL;

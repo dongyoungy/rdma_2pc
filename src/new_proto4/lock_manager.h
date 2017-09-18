@@ -26,6 +26,7 @@
 #include "constants.h"
 #include "context.h"
 #include "local_work_queue.h"
+#include "lock_result_info.h"
 #include "lock_simulator.h"
 #include "lock_wait_queue.h"
 
@@ -50,9 +51,9 @@ class LockManager : public Poco::Runnable {
   int InitializeLockClients();
   int RegisterUser(uint32_t user_id, LockSimulator* user);
   int Run();
-  const Poco::Optional<std::promise<LockResult>*> Lock(
+  const Poco::Optional<std::promise<LockResultInfo>*> Lock(
       const LockRequest& request);
-  const Poco::Optional<std::promise<LockResult>*> Unlock(
+  const Poco::Optional<std::promise<LockResultInfo>*> Unlock(
       const LockRequest& request);
   int LockLocalDirect(uint32_t user_id, LockType lock_type, int obj_index);
   int UnlockLocalDirect(uint32_t user_id, LockType lock_type, int obj_index);
@@ -63,7 +64,7 @@ class LockManager : public Poco::Runnable {
   int UpdateLockModeTable(int manager_id, LockMode mode);
   int NotifyLockRequestResult(int seq_no, uintptr_t user_id, LockType lock_type,
                               int target_node_id, int obj_index,
-                              LockResult result);
+                              int contention_count, LockResult result);
   int NotifyUnlockRequestResult(int seq_no, uintptr_t user_id,
                                 LockType lock_type, int target_node_id,
                                 int obj_index, LockResult result);
@@ -234,7 +235,7 @@ class LockManager : public Poco::Runnable {
   LocalWorkQueue<Message>* local_work_queue_;
   pthread_t local_work_poller_;
 
-  std::unordered_map<uintptr_t, std::promise<LockResult>> lock_result_map_;
+  std::unordered_map<uintptr_t, std::promise<LockResultInfo>> lock_result_map_;
 
   // local lock manager
   // LocalLockManager* llm_;

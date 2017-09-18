@@ -44,7 +44,8 @@ class LockClient : public Client {
   int PollExclusiveToShared(LockRequest* request);
   int PollExclusiveToExclusive(LockRequest* request);
 
-  int UndoLocking(Context* context, LockRequest* request, bool polling = false);
+  int UndoLocking(Context* context, const LockRequest& request,
+                  bool polling = false);
 
   std::map<uintptr_t, bool> user_retry_count_;
   std::map<uintptr_t, bool> user_fail_;

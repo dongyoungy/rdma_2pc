@@ -19,7 +19,7 @@ enum LockMode {
   REMOTE_QUEUE
 };
 enum Task { LOCK, UNLOCK, READ, READ_UNLOCK, READ_LOCK };
-// enum LockConflictRule { FAIL, POLL, QUEUE, NOTIFY };
+enum ThinkTimeType { ZERO, NORMAL, UNKNOWN };
 
 const uint64_t kTransactionMax = 100000000;
 
@@ -60,6 +60,8 @@ static const int KV_ZIPF = 1;
 // purpose of remote reading
 static const int READ_POLLING = 1;
 static const int READ_NOTIFYING = 2;
+
+static const int ERROR_UNKNOWN_THINK_TIME_TYPE = -1000;
 }  // namespace proto
 }  // namespace rdma
 

@@ -633,27 +633,27 @@ int LockManager::NotifyLockMode(Context* context) {
   return 0;
 }
 
-const Poco::Optional<std::promise<LockResult>*> LockManager::Lock(
+const Poco::Optional<std::promise<LockResultInfo>*> LockManager::Lock(
     const LockRequest& request) {
-  lock_result_map_[request.user_id] = std::promise<LockResult>();
+  lock_result_map_[request.user_id] = std::promise<LockResultInfo>();
   LockClient* lock_client = lock_clients_[request.lm_id];
   if (lock_client->RequestLock(request, lock_mode_table_[request.lm_id])) {
-    return Poco::Optional<std::promise<LockResult>*>(
+    return Poco::Optional<std::promise<LockResultInfo>*>(
         &lock_result_map_[request.user_id]);
   } else {
-    return Poco::Optional<std::promise<LockResult>*>();
+    return Poco::Optional<std::promise<LockResultInfo>*>();
   }
 }
 
-const Poco::Optional<std::promise<LockResult>*> LockManager::Unlock(
+const Poco::Optional<std::promise<LockResultInfo>*> LockManager::Unlock(
     const LockRequest& request) {
-  lock_result_map_[request.user_id] = std::promise<LockResult>();
+  lock_result_map_[request.user_id] = std::promise<LockResultInfo>();
   LockClient* lock_client = lock_clients_[request.lm_id];
   if (lock_client->RequestUnlock(request, lock_mode_table_[request.lm_id])) {
-    return Poco::Optional<std::promise<LockResult>*>(
+    return Poco::Optional<std::promise<LockResultInfo>*>(
         &lock_result_map_[request.user_id]);
   } else {
-    return Poco::Optional<std::promise<LockResult>*>();
+    return Poco::Optional<std::promise<LockResultInfo>*>();
   }
 }
 
@@ -767,7 +767,7 @@ int LockManager::LockLocallyWithRetry(Context* context, Message* message) {
   } else {
     // if context is NULL, it means it is a local workload
     this->NotifyLockRequestResult(seq_no, owner_user_id, lock_type, rank_,
-                                  obj_index, lock_result);
+                                  obj_index, 0, lock_result);
   }
 
   return 0;
@@ -887,7 +887,7 @@ send_lock_result:
     if (lock_result == SUCCESS) {
       this->NotifyLockRequestResult(seq_no, owner_user_id, lock_type,
                                     rank_,  // id_?
-                                    obj_index, lock_result);
+                                    obj_index, 0, lock_result);
     }
   }
 
@@ -1323,7 +1323,8 @@ int LockManager::UnlockLocalDirect(uint32_t user_id, LockType lock_type,
 
 int LockManager::NotifyLockRequestResult(int seq_no, uintptr_t user_id,
                                          LockType lock_type, int target_node_id,
-                                         int obj_index, LockResult result) {
+                                         int obj_index, int contention_count,
+                                         LockResult result) {
   // if (lock_mode_ == LOCK_REMOTE_QUEUE || lock_mode_ == LOCK_REMOTE_NOTIFY) {
   // llm_->Lock(target_node_id, obj_index, user_id, lock_type, result);
   //}
@@ -1332,7 +1333,7 @@ int LockManager::NotifyLockRequestResult(int seq_no, uintptr_t user_id,
   // user->NotifyResult(seq_no, LockManager::TASK_LOCK, lock_type, obj_index,
   // result);
 
-  lock_result_map_[user_id].set_value(result);
+  lock_result_map_[user_id].set_value(LockResultInfo(result, contention_count));
 
   // keep the user id if it has been queued
   // if (result == RESULT_QUEUED) {
@@ -1355,7 +1356,7 @@ int LockManager::NotifyUnlockRequestResult(int seq_no, uintptr_t user_id,
   // result);
   // queued_user_[obj_index] = -1;
 
-  lock_result_map_[user_id].set_value(result);
+  lock_result_map_[user_id].set_value(LockResultInfo(result, 0));
   return 0;
 }
 
@@ -1554,7 +1555,8 @@ int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
 
         this->NotifyLockRequestResult(
             message->seq_no, message->owner_user_id, message->lock_type,
-            message->target_node_id, message->obj_index, SUCCESS_FROM_QUEUED);
+            message->target_node_id, message->obj_index, 0,
+            SUCCESS_FROM_QUEUED);
       } else {
         cerr << "Unknown lock mode for GrantLock Message: "
              << current_lock_mode_ << endl;

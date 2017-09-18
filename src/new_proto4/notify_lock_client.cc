@@ -403,7 +403,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       // cout << "received lock request result." << endl;
       local_manager_->NotifyLockRequestResult(
           message->seq_no, message->owner_user_id, message->lock_type,
-          remote_lm_id_, message->obj_index, message->lock_result);
+          remote_lm_id_, message->obj_index, 0, message->lock_result);
     } else if (message->type == Message::UNLOCK_REQUEST_RESULT) {
       // cout << "received unlock request result" << endl;
       local_manager_->NotifyUnlockRequestResult(
@@ -458,7 +458,8 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           ++total_lock_success_;
           local_manager_->NotifyLockRequestResult(
               request->seq_no, request->user_id, request->lock_type,
-              remote_lm_id_, request->obj_index, SUCCESS);
+              remote_lm_id_, request->obj_index, request->contention_count,
+              SUCCESS);
         } else {
           pthread_mutex_lock(&wait_mutex_);
           wait_before_me_[request->obj_index] = value;
@@ -471,9 +472,11 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           pthread_mutex_unlock(&wait_mutex_);
 
           ++total_lock_contention_;
+          ++request->contention_count;
           local_manager_->NotifyLockRequestResult(
               request->seq_no, request->user_id, request->lock_type,
-              remote_lm_id_, request->obj_index, QUEUED);
+              remote_lm_id_, request->obj_index, request->contention_count,
+              QUEUED);
         }
       } else if (request->lock_type == SHARED) {
         if (exclusive == 0) {
@@ -485,7 +488,8 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           ++total_lock_success_;
           local_manager_->NotifyLockRequestResult(
               request->seq_no, request->user_id, request->lock_type,
-              remote_lm_id_, request->obj_index, SUCCESS);
+              remote_lm_id_, request->obj_index, request->contention_count,
+              SUCCESS);
           //} else if ((wait_after_me_[request->obj_index] & value) != 0){
           // this->UndoLocking(context_, request);
           // wait_seq_no_ = -1;
@@ -510,9 +514,11 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           pthread_mutex_unlock(&wait_mutex_);
 
           ++total_lock_contention_;
+          ++request->contention_count;
           local_manager_->NotifyLockRequestResult(
               request->seq_no, request->user_id, request->lock_type,
-              remote_lm_id_, request->obj_index, QUEUED);
+              remote_lm_id_, request->obj_index, request->contention_count,
+              QUEUED);
         }
       }
     } else if (request->task == UNLOCK) {
@@ -568,7 +574,7 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
 
         local_manager_->NotifyLockRequestResult(
             wait_seq_no_, wait_user_id_, wait_lock_type_, remote_lm_id_,
-            wait_obj_index_, SUCCESS_FROM_QUEUED);
+            wait_obj_index_, request->contention_count, SUCCESS_FROM_QUEUED);
       }
       pthread_mutex_unlock(&wait_mutex_);
     } else if (request->task == READ_UNLOCK) {
@@ -645,7 +651,8 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             ++total_lock_success_;
             local_manager_->NotifyLockRequestResult(
                 request->seq_no, request->user_id, request->lock_type,
-                remote_lm_id_, request->obj_index, SUCCESS);
+                remote_lm_id_, request->obj_index, request->contention_count,
+                SUCCESS);
           } else {
             pthread_mutex_lock(&wait_mutex_);
             wait_before_me_[request->obj_index] = value;
@@ -658,9 +665,11 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             pthread_mutex_unlock(&wait_mutex_);
 
             ++total_lock_contention_;
+            ++request->contention_count;
             local_manager_->NotifyLockRequestResult(
                 request->seq_no, request->user_id, request->lock_type,
-                remote_lm_id_, request->obj_index, QUEUED);
+                remote_lm_id_, request->obj_index, request->contention_count,
+                QUEUED);
           }
         } else if (request->lock_type == SHARED) {
           if (exclusive == 0) {
@@ -672,7 +681,8 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             ++total_lock_success_;
             local_manager_->NotifyLockRequestResult(
                 request->seq_no, request->user_id, request->lock_type,
-                remote_lm_id_, request->obj_index, SUCCESS);
+                remote_lm_id_, request->obj_index, request->contention_count,
+                SUCCESS);
           } else {
             pthread_mutex_lock(&wait_mutex_);
             wait_after_me_[request->obj_index] = 0;
@@ -684,9 +694,11 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             pthread_mutex_unlock(&wait_mutex_);
 
             ++total_lock_contention_;
+            ++request->contention_count;
             local_manager_->NotifyLockRequestResult(
                 request->seq_no, request->user_id, request->lock_type,
-                remote_lm_id_, request->obj_index, QUEUED);
+                remote_lm_id_, request->obj_index, request->contention_count,
+                QUEUED);
           }
         }
       } else {

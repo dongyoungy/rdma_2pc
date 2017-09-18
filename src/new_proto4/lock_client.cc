@@ -108,7 +108,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
 
       local_manager_->NotifyLockRequestResult(
           message->seq_no, message->owner_user_id, message->lock_type,
-          remote_lm_id_, message->obj_index, message->lock_result);
+          remote_lm_id_, message->obj_index, 0, message->lock_result);
     } else if (message->type == Message::UNLOCK_REQUEST_RESULT) {
       // cout << "received unlock request result" << endl;
       Poco::Mutex::ScopedLock lock(lock_mutex_);
@@ -155,11 +155,14 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
         ++num_exclusive_lock_;
         local_manager_->NotifyLockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
-            remote_lm_id_, request->obj_index, SUCCESS);
+            remote_lm_id_, request->obj_index, request->contention_count,
+            SUCCESS);
       } else {
+        ++request->contention_count;
         local_manager_->NotifyLockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
-            remote_lm_id_, request->obj_index, RETRY);
+            remote_lm_id_, request->obj_index, request->contention_count,
+            RETRY);
       }
     } else if (request->task == UNLOCK) {
       if (exclusive == request->owner_node_id && shared == 0) {
@@ -167,10 +170,12 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             request->seq_no, request->user_id, request->lock_type,
             remote_lm_id_, request->obj_index, SUCCESS);
       } else if (exclusive == request->owner_node_id && shared != 0) {
+        ++request->contention_count;
         local_manager_->NotifyUnlockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
             remote_lm_id_, request->obj_index, RETRY);
       } else {
+        ++request->contention_count;
         local_manager_->NotifyUnlockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
             remote_lm_id_, request->obj_index, FAILURE);
@@ -208,14 +213,17 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
         ++num_shared_lock_;
         local_manager_->NotifyLockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
-            remote_lm_id_, request->obj_index, SUCCESS);
+            remote_lm_id_, request->obj_index, request->contention_count,
+            SUCCESS);
       } else if (exclusive != 0 && shared == 0) {
         // exclusive lock exists
         ++total_lock_contention_;
+        ++request->contention_count;
         this->HandleExclusiveToShared(request);
       } else {
         ++total_lock_contention_;
-        this->UndoLocking(context_, request);
+        ++request->contention_count;
+        this->UndoLocking(context_, *request);
       }
     } else if (request->task == UNLOCK) {
       if (user_fail_[request->user_id]) {
@@ -228,11 +236,13 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               LockManager::GetPollRetry()) {
             local_manager_->NotifyLockRequestResult(
                 request->seq_no, request->user_id, request->lock_type,
-                remote_lm_id_, request->obj_index, FAILURE);
+                remote_lm_id_, request->obj_index, request->contention_count,
+                FAILURE);
           } else {
             local_manager_->NotifyLockRequestResult(
                 request->seq_no, request->user_id, request->lock_type,
-                remote_lm_id_, request->obj_index, RETRY);
+                remote_lm_id_, request->obj_index, request->contention_count,
+                RETRY);
           }
         }
       } else {
@@ -262,7 +272,8 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       if (value == 0) {
         local_manager_->NotifyLockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
-            remote_lm_id_, request->obj_index, SUCCESS);
+            remote_lm_id_, request->obj_index, request->contention_count,
+            SUCCESS);
       } else {
         // otherwise, read/poll again (shared -> exclusive)
         this->PollSharedToExclusive(request);
@@ -273,7 +284,8 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
         if (user_retry_count_[request->user_id] > LockManager::GetPollRetry()) {
           local_manager_->NotifyLockRequestResult(
               request->seq_no, request->user_id, request->lock_type,
-              remote_lm_id_, request->obj_index, FAILURE);
+              remote_lm_id_, request->obj_index, request->contention_count,
+              FAILURE);
         } else {
           this->PollExclusiveToExclusive(request);
         }
@@ -303,7 +315,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
 int LockClient::HandleSharedToExclusive(LockRequest* request) {
   const string& rule = LockManager::GetSharedExclusiveRule();
   if (rule == "fail") {
-    this->UndoLocking(context_, request);
+    this->UndoLocking(context_, *request);
   } else if (rule == "poll") {
     request->read_target = READ_SHARED;
     this->ReadRemotely(context_, *request);
@@ -318,7 +330,7 @@ int LockClient::HandleSharedToExclusive(LockRequest* request) {
 int LockClient::HandleExclusiveToShared(LockRequest* request) {
   const string& rule = LockManager::GetExclusiveSharedRule();
   if (rule == "fail") {
-    this->UndoLocking(context_, request);
+    this->UndoLocking(context_, *request);
   } else if (rule == "poll") {
     request->read_target = READ_EXCLUSIVE;
     this->ReadRemotely(context_, *request);
@@ -332,8 +344,8 @@ int LockClient::HandleExclusiveToShared(LockRequest* request) {
       request->read_target = READ_EXCLUSIVE;
       this->ReadRemotely(context_, *request);
     } else {
-      // lock acquisition failed, undoing FA
-      this->UndoLocking(context_, request);
+      // lock acquisition failed, undo FA.
+      this->UndoLocking(context_, *request);
     }
   } else {
     cerr << "Unsupported Exclusive -> Shared rule: " << rule << endl;
@@ -346,9 +358,9 @@ int LockClient::HandleExclusiveToShared(LockRequest* request) {
 int LockClient::HandleExclusiveToExclusive(LockRequest* request) {
   const string& rule = LockManager::GetExclusiveExclusiveRule();
   if (rule == "fail") {
-    this->UndoLocking(context_, request);
+    this->UndoLocking(context_, *request);
   } else if (rule == "poll") {
-    this->UndoLocking(context_, request, true);
+    this->UndoLocking(context_, *request, true);
     request->read_target = READ_EXCLUSIVE;
     this->ReadRemotely(context_, *request);
   } else if (rule == "queue") {
@@ -362,7 +374,7 @@ int LockClient::HandleExclusiveToExclusive(LockRequest* request) {
       this->ReadRemotely(context_, *request);
     } else {
       // lock acquisition failed, undoing FA
-      this->UndoLocking(context_, request);
+      this->UndoLocking(context_, *request);
     }
   } else {
     cerr << "Unsupported Exclusive -> Exclusive rule: " << rule << endl;
@@ -371,18 +383,18 @@ int LockClient::HandleExclusiveToExclusive(LockRequest* request) {
   return FUNC_SUCCESS;
 }
 
-int LockClient::UndoLocking(Context* context, LockRequest* request,
+int LockClient::UndoLocking(Context* context, const LockRequest& request,
                             bool polling) {
-  user_fail_[request->user_id] = true;
-  user_polling_[request->user_id] = polling;
-  this->UnlockRemotely(context, *request, true, polling);
+  user_fail_[request.user_id] = true;
+  user_polling_[request.user_id] = polling;
+  this->UnlockRemotely(context, request, true, polling);
   return FUNC_SUCCESS;
 }
 
 int LockClient::PollSharedToExclusive(LockRequest* request) {
   ++user_retry_count_[request->user_id];
   if (user_retry_count_[request->user_id] > LockManager::GetPollRetry()) {
-    this->UndoLocking(context_, request);
+    this->UndoLocking(context_, *request);
     return FUNC_SUCCESS;
   }
 
@@ -400,7 +412,7 @@ int LockClient::PollSharedToExclusive(LockRequest* request) {
 int LockClient::PollExclusiveToShared(LockRequest* request) {
   ++user_retry_count_[request->user_id];
   if (user_retry_count_[request->user_id] > LockManager::GetPollRetry()) {
-    this->UndoLocking(context_, request);
+    this->UndoLocking(context_, *request);
     return FUNC_SUCCESS;
   }
   const string& rule = LockManager::GetExclusiveSharedRule();
@@ -409,17 +421,17 @@ int LockClient::PollExclusiveToShared(LockRequest* request) {
     if (value == 0) {
       ++total_lock_success_with_poll_;
       sum_poll_when_success_ += user_retry_count_[request->user_id];
-      local_manager_->NotifyLockRequestResult(request->seq_no, request->user_id,
-                                              request->lock_type, remote_lm_id_,
-                                              request->obj_index, SUCCESS);
+      local_manager_->NotifyLockRequestResult(
+          request->seq_no, request->user_id, request->lock_type, remote_lm_id_,
+          request->obj_index, request->contention_count, SUCCESS);
     } else {
       this->ReadRemotely(context_, *request);
     }
   } else if (rule == "queue") {
     if ((value & user_waiters_[request->user_id]) == 0) {
-      local_manager_->NotifyLockRequestResult(request->seq_no, request->user_id,
-                                              request->lock_type, remote_lm_id_,
-                                              request->obj_index, SUCCESS);
+      local_manager_->NotifyLockRequestResult(
+          request->seq_no, request->user_id, request->lock_type, remote_lm_id_,
+          request->obj_index, request->contention_count, SUCCESS);
     } else {
       this->ReadRemotely(context_, *request);
     }
@@ -436,7 +448,7 @@ int LockClient::PollExclusiveToExclusive(LockRequest* request) {
   ++user_retry_count_[request->user_id];
   if (++user_retry_count_[request->user_id] > LockManager::GetPollRetry() &&
       rule == "queue") {
-    this->UndoLocking(context_, request);
+    this->UndoLocking(context_, *request);
     return FUNC_SUCCESS;
   }
   uint32_t value = request->read_buffer;
@@ -448,9 +460,9 @@ int LockClient::PollExclusiveToExclusive(LockRequest* request) {
     }
   } else if (rule == "queue") {
     if ((value & user_waiters_[request->user_id]) == 0) {
-      local_manager_->NotifyLockRequestResult(request->seq_no, request->user_id,
-                                              request->lock_type, remote_lm_id_,
-                                              request->obj_index, SUCCESS);
+      local_manager_->NotifyLockRequestResult(
+          request->seq_no, request->user_id, request->lock_type, remote_lm_id_,
+          request->obj_index, request->contention_count, SUCCESS);
     } else {
       this->ReadRemotely(context_, *request);
     }
@@ -534,12 +546,8 @@ bool LockClient::LockRemotely(Context* context, const LockRequest& request) {
   memset(&send_work_request, 0x00, sizeof(send_work_request));
 
   LockRequest* current_request = lock_requests_[lock_request_idx_].get();
+  *current_request = request;
   current_request->owner_node_id = local_owner_bitvector_id_;
-  current_request->user_id = request.user_id;
-  current_request->lock_type = request.lock_type;
-  current_request->obj_index = request.obj_index;
-  current_request->task = request.task;
-  current_request->lock_type = request.lock_type;
   lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
   sge.addr = (uintptr_t)&current_request->original_value;
@@ -588,12 +596,8 @@ int LockClient::ReadRemotely(Context* context, const LockRequest& request) {
   memset(&send_work_request, 0x00, sizeof(send_work_request));
 
   LockRequest* current_request = lock_requests_[lock_request_idx_].get();
-  current_request->seq_no = request.seq_no;
+  *current_request = request;
   current_request->owner_node_id = local_owner_id_;
-  current_request->user_id = request.user_id;
-  current_request->read_target = request.read_target;
-  current_request->obj_index = request.obj_index;
-  current_request->lock_type = request.lock_type;
   current_request->task = READ;
   lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
@@ -690,9 +694,7 @@ bool LockClient::UnlockRemotely(Context* context, const LockRequest& request,
   memset(&send_work_request, 0x00, sizeof(send_work_request));
 
   LockRequest* current_request = lock_requests_[lock_request_idx_].get();
-  current_request->user_id = request.user_id;
-  current_request->lock_type = request.lock_type;
-  current_request->obj_index = request.obj_index;
+  *current_request = request;
   current_request->is_undo = is_undo;
   current_request->is_retry = retry;
   current_request->task = UNLOCK;
