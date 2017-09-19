@@ -3,24 +3,24 @@
 job_name="rdma_dist_lock"
 work_dir="/home/dyoon/temp/$job_name/dir"
 
-for num_node in 4 8
+for num_node in 4
 do
   for num_user in 1
   do
     for workload in simple hotspot
     do
       num_core=`expr 1 + $num_user`
-      resource_str="nodes=$num_node:ppn=$num_core,pmem=4gb,walltime=00:15:00"
+      resource_str="nodes=$num_node:ppn=$num_core,pmem=2gb,walltime=00:15:00"
       for duration in 600
       do
         wall_time=`expr 5 + $duration / 60`
-        for num_lock_object in 10
+        for num_lock_object in 1 10 100 1000
         do
           for request_per_tx in 1
           do
             for lock_mode in remote-poll remote-queue
             do
-              for think_time_type in zero normal
+              for think_time_type in normal
               do
                 for se_rule in fail
                 do
