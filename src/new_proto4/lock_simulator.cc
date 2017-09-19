@@ -64,7 +64,7 @@ void LockSimulator::run() {
     }
 
     // Enforce think time.
-    long think_time = think_time_gen.GetTime();
+    int think_time = think_time_gen.GetTime();
     if (think_time == -1) {
       cerr << "Unknown think time generator: " << think_time_type_ << endl;
       exit(ERROR_UNKNOWN_THINK_TIME_TYPE);

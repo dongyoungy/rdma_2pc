@@ -159,7 +159,6 @@ int main(int argc, char** argv) {
   // measure cpu usage
   pthread_t cpu_measure_thread;
   CPUUsage usage;
-  usage.terminate = false;
   if (pthread_create(&cpu_measure_thread, NULL, &MeasureCPUUsage,
                      (void*)&usage)) {
     cerr << "pthread_create() error." << endl;
@@ -189,6 +188,7 @@ int main(int argc, char** argv) {
   }
 
   for (int i = 0; i < duration; ++i) {
+    current_count = 0;
     for (int j = 0; j < num_users; ++j) {
       current_count += users[j]->GetCount();
     }
