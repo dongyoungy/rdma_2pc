@@ -29,11 +29,9 @@ struct CPUUsage {
 int main(int argc, char** argv) {
   MPI_Init(&argc, &argv);
 
-  if (argc != 14) {
+  if (argc != 11) {
     cout << argv[0] << " <work_dir> <num_lock_object> <duration>"
          << " <request_size> <num_users> <lock_mode>"
-         << " <shared_exclusive_rule> <exclusive_shared_rule>"
-         << " <exclusive_exclusive_rule>"
          << " <fail_retry> <poll_retry>"
          << " <workload_type> <think_time_type> " << endl;
     exit(1);
@@ -59,9 +57,6 @@ int main(int argc, char** argv) {
   int request_size = atoi(argv[k++]);
   int num_users = atoi(argv[k++]);
   string lock_mode_str = argv[k++];
-  string shared_exclusive_rule = argv[k++];
-  string exclusive_shared_rule = argv[k++];
-  string exclusive_exclusive_rule = argv[k++];
   int fail_retry = atoi(argv[k++]);
   int poll_retry = atoi(argv[k++]);
   string workload_type = argv[k++];
@@ -73,43 +68,51 @@ int main(int argc, char** argv) {
   }
 
   LockMode lock_mode = PROXY_RETRY;
-  if (lock_mode_str == "proxy-retry") {
-    lock_mode = PROXY_RETRY;
-  } else if (lock_mode_str == "proxy-queue") {
+  // if (lock_mode_str == "proxy-retry") {
+  // lock_mode = PROXY_RETRY;
+  //} else if (lock_mode_str == "proxy-queue") {
+  // lock_mode = PROXY_QUEUE;
+  //} else if (lock_mode_str == "remote-poll") {
+  // lock_mode = REMOTE_POLL;
+  //} else if (lock_mode_str == "remote-notify") {
+  // lock_mode = REMOTE_NOTIFY;
+  //} else if (lock_mode_str == "remote-queue") {
+  // lock_mode = REMOTE_QUEUE;
+  //} else {
+  // cerr << "Invalid Lock Mode: " << lock_mode_str << endl;
+  // exit(-1);
+  //}
+
+  if (lock_mode_str == "traditional") {
     lock_mode = PROXY_QUEUE;
-  } else if (lock_mode_str == "remote-poll") {
+  } else if (lock_mode_str == "simple_retry") {
     lock_mode = REMOTE_POLL;
-  } else if (lock_mode_str == "remote-notify") {
+    LockManager::SetSharedExclusiveRule("fail");
+    LockManager::SetExclusiveSharedRule("fail");
+    LockManager::SetExclusiveExclusiveRule("fail");
+  } else if (lock_mode_str == "drtm") {
+    lock_mode = REMOTE_POLL;
+    LockManager::SetSharedExclusiveRule("fail");
+    LockManager::SetExclusiveSharedRule("poll");
+    LockManager::SetExclusiveExclusiveRule("fail");
+  } else if (lock_mode_str == "ncosed") {
     lock_mode = REMOTE_NOTIFY;
-  } else if (lock_mode_str == "remote-queue") {
+  } else if (lock_mode_str == "d2lm") {
     lock_mode = REMOTE_QUEUE;
   } else {
-    cerr << "Invalid Lock Mode: " << lock_mode_str << endl;
-    exit(-1);
-  }
-
-  if (lock_mode == REMOTE_NOTIFY || lock_mode == PROXY_RETRY ||
-      lock_mode == PROXY_QUEUE) {
-    shared_exclusive_rule = "N/A";
-    exclusive_shared_rule = "N/A";
-    exclusive_exclusive_rule = "N/A";
+    cerr << "Invalid lock mode: " << lock_mode_str << endl;
+    exit(ERROR_INVALID_LOCK_MODE);
   }
 
   if (rank == 0) {
     cout << "Type of Workload = " << workload_type << endl;
     cout << "Type of Think Time = " << think_time_type << endl;
-    cout << "SHARED -> EXCLUSIVE = " << shared_exclusive_rule << endl;
-    cout << "EXCLUSIVE -> SHARED = " << exclusive_shared_rule << endl;
-    cout << "EXCLUSIVE -> EXCLUSIVE = " << exclusive_exclusive_rule << endl;
     cout << "Duration = " << duration << " s" << endl;
     cout << "# Requests per Tx = " << request_size << endl;
     cout << "# Lock Objects = " << num_lock_object << endl;
     cout << "Lock Mode = " << lock_mode_str << endl;
   }
 
-  LockManager::SetSharedExclusiveRule(shared_exclusive_rule);
-  LockManager::SetExclusiveSharedRule(exclusive_shared_rule);
-  LockManager::SetExclusiveExclusiveRule(exclusive_exclusive_rule);
   LockManager::SetFailRetry(fail_retry);
   LockManager::SetPollRetry(poll_retry);
 
@@ -337,7 +340,7 @@ int main(int argc, char** argv) {
     cout << "Max Latency = " << total_max_latency << " us" << endl;
 
     // Print as CVS at the end.
-    cout << "Workload, Think Time, Lock Mode, "
+    cout << "Workload, Think Time, Lock Mode, # Nodes, # Objects Per Node, "
          << "Avg. CPU Usage, Tx Count, Tx Count With Contention, "
          << "Avg. Throughput, 99pct Throughput, Max Throughput, "
          << "Avg. Latency, Avg. 99pct Latency, Avg. 99.9pct Latency, "
@@ -346,7 +349,8 @@ int main(int argc, char** argv) {
          << "Avg. 99.9pct Latency With Contention, "
          << "Max Latency" << endl;
     cout << workload_type << "," << think_time_type << "," << lock_mode_str
-         << "," << average_cpu_usage << "," << total_count << ","
+         << "," << num_managers << "," << num_lock_object << ","
+         << average_cpu_usage << "," << total_count << ","
          << total_count_with_contention << "," << average_throughput << ","
          << throughput_99pct << "," << max_throughput << ","
          << total_average_latency << "," << total_average_99pct_latency << ","

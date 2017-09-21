@@ -10,6 +10,7 @@ LockSimulator::LockSimulator(LockManager* manager, int num_nodes,
       num_nodes_(num_nodes),
       num_objects_(num_objects),
       request_size_(request_size),
+      max_request_size_(request_size),
       think_time_type_(think_time_type),
       count_(0),
       count_with_contention_(0) {
@@ -21,11 +22,9 @@ LockSimulator::LockSimulator(LockManager* manager, int num_nodes,
 LockSimulator::~LockSimulator() {}
 
 void LockSimulator::run() {
-  is_done_ = false;
-
   // Initialize requests array if empty.
   if (requests_.empty()) {
-    for (int i = 0; i < request_size_; ++i) {
+    for (int i = 0; i < max_request_size_; ++i) {
       std::unique_ptr<LockRequest> request(new LockRequest);
       requests_.push_back(std::move(request));
     }
@@ -34,8 +33,15 @@ void LockSimulator::run() {
   // Initialize think time generator.
   ThinkTimeGenerator think_time_gen(think_time_type_);
 
+  bool job_done = false;
+  {
+    Poco::Mutex::ScopedLock lock(mutex_);
+    is_done_ = false;
+    job_done = is_done_;
+  }
+
   // Keep requesting locks until done.
-  while (!is_done_) {
+  while (!job_done) {
     CreateRequest();
 
     // lock.
@@ -47,8 +53,19 @@ void LockSimulator::run() {
       if (lock_result.isSpecified()) {
         auto lock_future = lock_result.value()->get_future();
         LockResultInfo result_info = lock_future.get();
-        if (result_info.result == SUCCESS) {
+        if (result_info.result == SUCCESS ||
+            result_info.result == SUCCESS_FROM_QUEUED) {
           ++i;
+        } else {
+          // Handle queued case.
+          while (result_info.result == QUEUED) {
+            auto lock_future =
+                manager_->GetLockResult(uintptr_t(this))->get_future();
+            result_info = lock_future.get();
+          }
+          if (result_info.result == SUCCESS ||
+              result_info.result == SUCCESS_FROM_QUEUED)
+            ++i;
         }
         contention_count += result_info.contention_count;
       } else {
@@ -83,13 +100,22 @@ void LockSimulator::run() {
         LockResultInfo result_info = lock_future.get();
         if (result_info.result == SUCCESS) --i;
       } else {
-        exit(-1);
+        exit(ERROR_UNLOCK_FAIL);
       }
+    }
+
+    // Check whether the simulator has received the stop signal.
+    {
+      Poco::Mutex::ScopedLock lock(mutex_);
+      job_done = is_done_;
     }
   }
 }
 
-void LockSimulator::Stop() { is_done_ = true; }
+void LockSimulator::Stop() {
+  Poco::Mutex::ScopedLock lock(mutex_);
+  is_done_ = true;
+}
 
 uint64_t LockSimulator::GetCount() const { return count_; }
 

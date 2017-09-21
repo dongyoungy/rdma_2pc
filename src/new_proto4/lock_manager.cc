@@ -78,7 +78,6 @@ LockManager::LockManager(const string& work_dir, uint32_t rank, int num_manager,
   pthread_mutex_init(&msg_mutex_, NULL);
   pthread_mutex_init(&poll_mutex_, NULL);
   pthread_mutex_init(&seq_mutex_, NULL);
-  pthread_mutex_init(&mutex_, NULL);
 }
 
 // destructor
@@ -534,7 +533,7 @@ int LockManager::SendLockTableMemoryRegion(Context* context) {
 
 // Send lock request result to client.
 int LockManager::SendLockRequestResult(Context* context, int seq_no,
-                                       uint32_t owner_user_id,
+                                       uintptr_t owner_user_id,
                                        LockType lock_type, int obj_index,
                                        LockResult result) {
   pthread_mutex_lock(&msg_mutex_);
@@ -561,7 +560,7 @@ int LockManager::SendLockRequestResult(Context* context, int seq_no,
 
 // Send unlock request result to client.
 int LockManager::SendUnlockRequestResult(Context* context, int seq_no,
-                                         uint32_t user_id, LockType lock_type,
+                                         uintptr_t user_id, LockType lock_type,
                                          int obj_index, LockResult result) {
   pthread_mutex_lock(&msg_mutex_);
   Message* msg = context->send_message_buffer->GetMessage();
@@ -586,7 +585,7 @@ int LockManager::SendUnlockRequestResult(Context* context, int seq_no,
 
 // Send unlock request result to client.
 int LockManager::SendGrantLockAck(Context* context, int seq_no,
-                                  uint32_t user_id, LockType lock_type,
+                                  uintptr_t user_id, LockType lock_type,
                                   int obj_index) {
   pthread_mutex_lock(&msg_mutex_);
   Message* msg = context->send_message_buffer->GetMessage();
@@ -774,15 +773,6 @@ int LockManager::LockLocallyWithRetry(Context* context, Message* message) {
 }
 
 int LockManager::LockLocallyWithQueue(Context* context, Message* message) {
-  // if current lock mode is remote (i.e. direct), then notify back.
-  if (current_lock_mode_ == REMOTE_POLL ||
-      current_lock_mode_ == REMOTE_NOTIFY) {
-    NotifyLockMode(context);
-    return -1;
-  }
-  // get time
-  clock_gettime(CLOCK_MONOTONIC, &start_local_lock_);
-
   LockResult lock_result = FAILURE;
   int seq_no = message->seq_no;
   uint32_t target_node_id = rank_;
@@ -794,19 +784,6 @@ int LockManager::LockLocallyWithQueue(Context* context, Message* message) {
   LockWaitQueue* queue = wait_queues_[obj_index];
 
   uint64_t* lock_object = NULL;
-  double time_taken = 0;
-
-  pthread_mutex_lock(&seq_mutex_);
-  // get seq no from user
-  int last_seq_no = last_seq_no_map_[owner_node_id][owner_user_id];
-  // if seq no is less than last no.. ignore
-  if (last_seq_no > seq_no) {
-    pthread_mutex_unlock(&seq_mutex_);
-    goto send_lock_result;
-  } else {
-    last_seq_no_map_[owner_node_id][owner_user_id] = seq_no;
-  }
-  pthread_mutex_unlock(&seq_mutex_);
 
   // lock locally on lock table
   pthread_mutex_lock(lock_mutex_[obj_index]);
@@ -855,21 +832,6 @@ int LockManager::LockLocallyWithQueue(Context* context, Message* message) {
 
   // unlock locally on lock table
   pthread_mutex_unlock(lock_mutex_[obj_index]);
-
-  // get time
-  clock_gettime(CLOCK_MONOTONIC, &end_local_lock_);
-  time_taken = ((double)end_local_lock_.tv_sec * 1e+9 +
-                (double)end_local_lock_.tv_nsec) -
-               ((double)start_local_lock_.tv_sec * 1e+9 +
-                (double)start_local_lock_.tv_nsec);
-
-  if (lock_type == SHARED) {
-    total_local_shared_lock_time_ += time_taken;
-    ++num_local_shared_lock_;
-  } else if (lock_type == EXCLUSIVE) {
-    total_local_exclusive_lock_time_ += time_taken;
-    ++num_local_exclusive_lock_;
-  }
 
 send_lock_result:
 
@@ -1075,12 +1037,6 @@ int LockManager::UnlockLocallyWithRetry(Context* context, Message* message) {
 }
 
 int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
-  // if current lock mode is remote (i.e. direct), then notify back.
-  if (current_lock_mode_ != PROXY_QUEUE) {
-    NotifyLockMode(context);
-    return -1;
-  }
-
   LockResult lock_result = FAILURE;
   int seq_no = message->seq_no;
   // uint32_t owner_node_id = message->owner_node_id;
@@ -1089,18 +1045,6 @@ int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
   LockType lock_type = message->lock_type;
   LockWaitQueue* queue = wait_queues_[obj_index];
   uint32_t lock_value = message->owner_user_id;
-
-  // pthread_mutex_lock(&seq_mutex_);
-  //// get seq no from user
-  // int last_seq_no = last_seq_no_map_[user_id];
-  //// if seq no is less than last no.. ignore
-  // if (last_seq_no > seq_no) {
-  // pthread_mutex_unlock(&seq_mutex_);
-  // return 0;
-  //} else {
-  // last_seq_no_map_[user_id] = seq_no;
-  //}
-  // pthread_mutex_unlock(&seq_mutex_);
 
   // lock locally on lock table
   pthread_mutex_lock(lock_mutex_[obj_index]);
@@ -1126,19 +1070,6 @@ int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
       *lock_object = ((uint64_t)exclusive) << 32 | shared;
       lock_result = SUCCESS;
     }
-  }
-
-  if (*lock_object != 0) {
-    ++fail_count_[obj_index];
-  } else {
-    fail_count_[obj_index] = 0;
-  }
-
-  // reset lock object if we see same value too many
-  if (fail_count_[obj_index] > 10) {
-    *lock_object = 0;
-    queue->RemoveAll();
-    fail_count_[obj_index] = 0;
   }
 
   // Notify waiting users
@@ -1321,6 +1252,11 @@ int LockManager::UnlockLocalDirect(uint32_t user_id, LockType lock_type,
   return lock_result;
 }
 
+std::promise<LockResultInfo>* LockManager::GetLockResult(uintptr_t user_id) {
+  Poco::Mutex::ScopedLock lock(mutex_);
+  return &lock_result_map_[user_id];
+}
+
 int LockManager::NotifyLockRequestResult(int seq_no, uintptr_t user_id,
                                          LockType lock_type, int target_node_id,
                                          int obj_index, int contention_count,
@@ -1333,7 +1269,13 @@ int LockManager::NotifyLockRequestResult(int seq_no, uintptr_t user_id,
   // user->NotifyResult(seq_no, LockManager::TASK_LOCK, lock_type, obj_index,
   // result);
 
-  lock_result_map_[user_id].set_value(LockResultInfo(result, contention_count));
+  Poco::Mutex::ScopedLock lock(mutex_);
+  LockResultInfo result_info(result, contention_count);
+  lock_result_map_[user_id].set_value(result_info);
+
+  if (result == QUEUED) {
+    lock_result_map_[user_id] = std::promise<LockResultInfo>();
+  }
 
   // keep the user id if it has been queued
   // if (result == RESULT_QUEUED) {

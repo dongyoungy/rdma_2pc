@@ -2,6 +2,7 @@
 #define RDMA_PROTO_LOCK_CLIENT_H
 
 #include <unordered_map>
+#include "Poco/Condition.h"
 #include "Poco/Mutex.h"
 #include "client.h"
 

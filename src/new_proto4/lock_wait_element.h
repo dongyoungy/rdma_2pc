@@ -9,7 +9,7 @@ namespace proto {
 
 struct LockWaitElement {
   int seq_no;
-  uint32_t owner_user_id;
+  uintptr_t owner_user_id;
   uint32_t owner_node_id;
   uint32_t target_node_id;
   LockType type;  // shared or exclusive

@@ -1,6 +1,8 @@
 #ifndef RDMA_PROTO_LOCKRESULTINFO_H
 #define RDMA_PROTO_LOCKRESULTINFO_H
 
+#include <future>
+
 namespace rdma {
 namespace proto {
 

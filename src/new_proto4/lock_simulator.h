@@ -13,6 +13,7 @@
 #include <thread>
 #include <vector>
 
+#include "Poco/Mutex.h"
 #include "Poco/Random.h"
 #include "Poco/Runnable.h"
 #include "Poco/Timestamp.h"
@@ -62,10 +63,13 @@ class LockSimulator : public Poco::Runnable {
   int num_nodes_;
   int num_objects_;
   int request_size_;
+  int max_request_size_;
   string think_time_type_;
   uint64_t count_;
   uint64_t count_with_contention_;
-  volatile bool is_done_;
+  bool is_done_;
+
+  Poco::Mutex mutex_;
 };
 
 }  // namespace proto

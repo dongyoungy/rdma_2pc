@@ -34,7 +34,7 @@ LockWaitQueue::~LockWaitQueue() {
 
 // insert new element into the queue
 int LockWaitQueue::Insert(int seq_no, uint32_t target_node_id,
-                          uint32_t owner_node_id, uint32_t owner_user_id,
+                          uint32_t owner_node_id, uintptr_t owner_user_id,
                           LockType type) {
   pthread_mutex_lock(&mutex_);
   LockWaitElement* elem = pool_.front();

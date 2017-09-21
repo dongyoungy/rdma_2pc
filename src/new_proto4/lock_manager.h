@@ -55,6 +55,7 @@ class LockManager : public Poco::Runnable {
       const LockRequest& request);
   const Poco::Optional<std::promise<LockResultInfo>*> Unlock(
       const LockRequest& request);
+  std::promise<LockResultInfo>* GetLockResult(uintptr_t user_id);
   int LockLocalDirect(uint32_t user_id, LockType lock_type, int obj_index);
   int UnlockLocalDirect(uint32_t user_id, LockType lock_type, int obj_index);
   int GrantLock(int seq_no, int target_node_id, int owner_node_id,
@@ -181,12 +182,12 @@ class LockManager : public Poco::Runnable {
   int NotifyLockModeAll();
   int SendMessage(Context* context);
   int SendLockTableMemoryRegion(Context* context);
-  int SendGrantLockAck(Context* context, int seq_no, uint32_t user_id,
+  int SendGrantLockAck(Context* context, int seq_no, uintptr_t user_id,
                        LockType lock_type, int obj_index);
-  int SendLockRequestResult(Context* context, int seq_no, uint32_t user_id,
+  int SendLockRequestResult(Context* context, int seq_no, uintptr_t user_id,
                             LockType lock_type, int obj_index,
                             LockResult result);
-  int SendUnlockRequestResult(Context* context, int seq_no, uint32_t user_id,
+  int SendUnlockRequestResult(Context* context, int seq_no, uintptr_t user_id,
                               LockType lock_type, int obj_index,
                               LockResult result);
 
@@ -226,7 +227,7 @@ class LockManager : public Poco::Runnable {
   vector<LockSimulator*> users;
   map<int, LockSimulator*> user_map;
   map<int, pthread_mutex_t*> user_mutex_map;
-  map<uint32_t, map<uint32_t, int>> last_seq_no_map_;
+  map<uint32_t, map<uintptr_t, int>> last_seq_no_map_;
   map<uint64_t, uint64_t> user_to_home_map_;
 
   // queue for lock waits
@@ -271,7 +272,7 @@ class LockManager : public Poco::Runnable {
   double num_local_shared_lock_;
   uint16_t port_;
   size_t data_size_;
-  pthread_mutex_t mutex_;
+  Poco::Mutex mutex_;
   pthread_mutex_t** lock_mutex_;
   pthread_mutex_t msg_mutex_;
   pthread_mutex_t poll_mutex_;

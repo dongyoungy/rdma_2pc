@@ -9,7 +9,6 @@ CommunicationClient::CommunicationClient(const string& work_dir,
                                          uint32_t local_user_count,
                                          int remote_lm_id)
     : Client(work_dir, local_manager, local_user_count, remote_lm_id) {
-  pthread_mutex_init(&communication_mutex_, NULL);
   is_waiting_ack_ = false;
 }
 
@@ -17,12 +16,12 @@ CommunicationClient::CommunicationClient(const string& work_dir,
 CommunicationClient::~CommunicationClient() {}
 
 int CommunicationClient::GrantLock(int seq_no, int target_node_id,
-                                   int owner_user_id, int obj_index,
+                                   uintptr_t owner_user_id, int obj_index,
                                    LockType lock_type) {
+  Poco::Mutex::ScopedLock lock(communication_mutex_);
   while (is_waiting_ack_) {
-    usleep(50);  // busy-wait
+    communication_cond_.wait(communication_mutex_);
   }
-  pthread_mutex_lock(&communication_mutex_);
   Message* msg = context_->send_message_buffer->GetMessage();
 
   msg->type = Message::GRANT_LOCK;
@@ -40,18 +39,16 @@ int CommunicationClient::GrantLock(int seq_no, int target_node_id,
   is_waiting_ack_ = true;
   if (SendMessage(context_)) {
     cerr << "GrantLock(): SendMessage() failed." << endl;
-    pthread_mutex_unlock(&communication_mutex_);
     return -1;
   }
 
-  pthread_mutex_unlock(&communication_mutex_);
   return 0;
 }
 
 int CommunicationClient::RejectLock(int seq_no, int target_node_id,
-                                    int owner_user_id, int obj_index,
+                                    uintptr_t owner_user_id, int obj_index,
                                     LockType lock_type) {
-  pthread_mutex_lock(&communication_mutex_);
+  Poco::Mutex::ScopedLock lock(communication_mutex_);
   Message* msg = context_->send_message_buffer->GetMessage();
 
   msg->type = Message::REJECT_LOCK;
@@ -63,11 +60,9 @@ int CommunicationClient::RejectLock(int seq_no, int target_node_id,
 
   if (SendMessage(context_)) {
     cerr << "GrantLock(): SendMessage() failed." << endl;
-    pthread_mutex_unlock(&communication_mutex_);
     return -1;
   }
 
-  pthread_mutex_unlock(&communication_mutex_);
   return 0;
 }
 
@@ -80,20 +75,16 @@ int CommunicationClient::HandleWorkCompletion(struct ibv_wc* wc) {
   }
 
   if (wc->opcode == IBV_WC_RECV) {
-    pthread_mutex_lock(&communication_mutex_);
+    Poco::Mutex::ScopedLock lock(communication_mutex_);
     Context* context = (Context*)wc->wr_id;
     Message* message = context->receive_message_buffer->GetMessage();
     context->receive_message_buffer->Rotate();
     // post receive first.
     ReceiveMessage(context);
     if (message->type == Message::GRANT_LOCK_ACK) {
-      // pthread_mutex_lock(&PRINT_MUTEX);
-      // cout << "Grant ACK: " << message->seq_no << "," << message->user_id <<
-      // "," <<  message->obj_index << "," << message->lock_type << endl;
-      // pthread_mutex_unlock(&PRINT_MUTEX);
+      communication_cond_.signal();
       is_waiting_ack_ = false;
     }
-    pthread_mutex_unlock(&communication_mutex_);
   }
   return 0;
 }

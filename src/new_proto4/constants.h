@@ -3,6 +3,7 @@
 
 #include <pthread.h>
 #include <unistd.h>
+#include <cstdint>
 
 namespace rdma {
 namespace proto {
@@ -62,6 +63,8 @@ static const int READ_POLLING = 1;
 static const int READ_NOTIFYING = 2;
 
 static const int ERROR_UNKNOWN_THINK_TIME_TYPE = -1000;
+static const int ERROR_UNLOCK_FAIL = -1001;
+static const int ERROR_INVALID_LOCK_MODE = -1002;
 }  // namespace proto
 }  // namespace rdma
 
