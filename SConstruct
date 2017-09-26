@@ -4,6 +4,7 @@ import os
 #env = Environment(ENV = os.environ, CC = 'mpicc', CXX = 'mpic++')
 SetOption('num_jobs', 8)
 debug = ARGUMENTS.get('debug', 0)
+verbose = ARGUMENTS.get('verbose', 0)
 pedantic = ARGUMENTS.get('pedantic', 0)
 root_dir = Dir('#').abspath
 poco_dir = "{0}/lib/poco-1.7.8p3".format(root_dir)
@@ -31,12 +32,15 @@ env.Append(CCFLAGS='-Wall -Wextra -Werror -pedantic -Wno-unused')
 #env.Append(LIBPATH='{0}/poco/lib/'.format(root_dir))
 
 if int(debug):
-    env.Append(CCFLAGS='-g -pg')
+    env.Append(CCFLAGS='-g -pg -DDEBUG')
     env.Append(LINKFLAGS='-pg')
     env.Append(LIBS=['PocoXMLd', 'PocoJSONd', 'PocoFoundationd', 'PocoNetd', 'PocoUtild', 'rdmacm', 'ibverbs', 'pthread', 'rt'])
 else:
     env.Append(CCFLAGS='-O2')
     env.Append(LIBS=['PocoXML', 'PocoJSON', 'PocoFoundation', 'PocoNet', 'PocoUtil', 'rdmacm', 'ibverbs', 'pthread', 'rt'])
+
+if int(verbose):
+    env.Append(CCFLAGS='-DVERBOSE')
 
 print "running with -j", GetOption('num_jobs')
 binaries = []
