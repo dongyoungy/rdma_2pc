@@ -31,9 +31,9 @@ int main(int argc, char** argv) {
   MPI_Init(&argc, &argv);
 
   if (argc != 11) {
-    cout << argv[0] << " <work_dir> <num_lock_object> <duration>"
+    cout << "USAGE: " << argv[0] << " <work_dir> <num_lock_object> <duration>"
          << " <request_size> <num_users> <lock_mode>"
-         << " <num_retry> "
+         << " <num_retry>"
          << " <workload_type> <think_time_type> <enable_random_backoff> "
          << endl;
     exit(1);

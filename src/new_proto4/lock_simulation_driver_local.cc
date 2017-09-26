@@ -1,20 +1,23 @@
-#include <iostream>
-#include <vector>
-#include <cmath>
 #include <arpa/inet.h>
+#include <infiniband/verbs.h>
 #include <pthread.h>
 #include <sys/times.h>
-#include <infiniband/verbs.h>
-#include "mpi.h"
+#include <cmath>
+#include <iostream>
+#include <vector>
+
+#include "Poco/Thread.h"
+
 #include "constants.h"
-#include "lock_simulator.h"
+#include "hotspot_lock_simulator.h"
 #include "lock_manager.h"
+#include "lock_simulator.h"
+#include "mpi.h"
+#include "tpcc_lock_simulator.h"
 
 using namespace std;
 using namespace rdma::proto;
 
-void* RunLockManager(void* args);
-void* RunLockSimulator(void* args);
 void* MeasureCPUUsage(void* args);
 
 struct CPUUsage {
@@ -24,16 +27,14 @@ struct CPUUsage {
 };
 
 int main(int argc, char** argv) {
-
-  if (argc != 18) {
-    cout << "USAGE: " << argv[0] << " <work_dir> <num_lock_manager> <num_lock_object>" <<
-      " <num_tx> <num_request_per_tx> <num_users> <lock_mode> <shared_exclusive_rule> " <<
-      "<exclusive_shared_rule> <exclusive_exclusive_rule> <workload_type> <local_workload_ratio> "<<
-      "<shared_lock_ratio> <min_backoff_time> <max_backoff_time> <sleep_time> <rand_seed>" << endl;
+  if (argc != 12) {
+    cout << argv[0] << " <work_dir> <num_managers> <num_lock_object> <duration>"
+         << " <request_size> <num_users> <lock_mode>"
+         << " <num_retry>"
+         << " <workload_type> <think_time_type> <enable_random_backoff> "
+         << endl;
     exit(1);
   }
-
-  int rank = 1;
 
   if (1 == htons(1)) {
     cout << "The current machine uses BIG ENDIAN" << endl;
@@ -41,182 +42,124 @@ int main(int argc, char** argv) {
     cout << "The current machine uses LITTLE ENDIAN" << endl;
   }
 
-  int num_managers             = atoi(argv[2]);
-  int num_lock_object          = atoi(argv[3]);
-  long num_tx                  = atol(argv[4]);
-  int num_request_per_tx       = atoi(argv[5]);
-  int num_users                = atoi(argv[6]);
-  int lock_mode                = atoi(argv[7]);
-  int shared_exclusive_rule    = atoi(argv[8]);
-  int exclusive_shared_rule    = atoi(argv[9]);
-  int exclusive_exclusive_rule = atoi(argv[10]);
-  int workload_type            = atoi(argv[11]);
-  double local_workload_ratio  = atof(argv[12]);
-  double shared_lock_ratio     = atof(argv[13]);
-  int min_backoff_time         = atoi(argv[14]);
-  int max_backoff_time         = atoi(argv[15]);
-  int sleep_time               = atoi(argv[16]);
-  long seed                    = atol(argv[17]);
+  int k = 1;
+  string work_dir = argv[k++];
+  int num_managers = atoi(argv[k++]);
+  int num_lock_object = atoi(argv[k++]);
+  int duration = atoi(argv[k++]);
+  int request_size = atoi(argv[k++]);
+  int num_users = atoi(argv[k++]);
+  string lock_mode_str = argv[k++];
+  int num_retry = atoi(argv[k++]);
+  string workload_type = argv[k++];
+  string think_time_type = argv[k++];
+  string random_backoff_str = argv[k++];
 
-  string workload_type_str, shared_lock_ratio_str;
-  if (workload_type == LockSimulator::WORKLOAD_UNIFORM) {
-    workload_type_str = "UNIFORM";
-  } else if (workload_type == LockSimulator::WORKLOAD_HOTSPOT) {
-    workload_type_str = "HOTSPOT";
-  } else if (workload_type == LockSimulator::WORKLOAD_ALL_LOCAL) {
-    workload_type_str = "ALL_LOCAL";
-  } else if (workload_type == LockSimulator::WORKLOAD_MIXED) {
-    char buf[32];
-    sprintf(buf, "MIXED (local: %.2f %%)", local_workload_ratio * 100);
-    workload_type_str = buf;
-    sprintf(buf, "Shared Lock Ratio = %.2f %%", shared_lock_ratio * 100);
-    shared_lock_ratio_str = buf;
+  if (num_managers > 32) {
+    cerr << "# of nodes must be less than 33" << endl;
+    exit(-1);
   }
 
-  string lock_method_str;
-  if (lock_mode == LOCK_REMOTE_POLL) {
-    lock_method_str = "CLIENT-BASED/DIRECT/POLL";
-  } else if (lock_mode == LOCK_PROXY_RETRY) {
-    lock_method_str = "SERVER-BASED/PROXY/RETRY";
-  } else if (lock_mode == LOCK_PROXY_QUEUE) {
-    lock_method_str = "SERVER-BASED/PROXY/QUEUE";
-  } else if (lock_mode == LOCK_REMOTE_NOTIFY) {
-    lock_method_str = "CLIENT-BASED/DIRECT/NOTIFY";
-  } else if (lock_mode == LOCK_REMOTE_QUEUE) {
-    lock_method_str = "CLIENT-BASED/DIRECT/QUEUE";
+  LockMode lock_mode = PROXY_RETRY;
+
+  if (lock_mode_str == "traditional") {
+    lock_mode = PROXY_QUEUE;
+  } else if (lock_mode_str == "simple_retry") {
+    lock_mode = REMOTE_POLL;
+    LockManager::SetSharedExclusiveRule("fail");
+    LockManager::SetExclusiveSharedRule("fail");
+    LockManager::SetExclusiveExclusiveRule("fail");
+  } else if (lock_mode_str == "drtm") {
+    lock_mode = REMOTE_POLL;
+    LockManager::SetSharedExclusiveRule("fail");
+    LockManager::SetExclusiveSharedRule("poll");
+    LockManager::SetExclusiveExclusiveRule("fail");
+  } else if (lock_mode_str == "ncosed") {
+    lock_mode = REMOTE_NOTIFY;
+  } else if (lock_mode_str == "d2lm") {
+    lock_mode = REMOTE_QUEUE;
+  } else {
+    cerr << "Invalid lock mode: " << lock_mode_str << endl;
+    exit(ERROR_INVALID_LOCK_MODE);
   }
 
-  string shared_exclusive_rule_str, exclusive_shared_rule_str, exclusive_exclusive_rule_str;
-  switch (shared_exclusive_rule) {
-    case RULE_FAIL:
-      shared_exclusive_rule_str = "FAIL";
-      break;
-    case RULE_POLL:
-      shared_exclusive_rule_str = "POLL";
-      break;
-    case RULE_QUEUE:
-      shared_exclusive_rule_str = "QUEUE";
-      break;
-    default:
-      cerr << "Unsupported Rule: " << shared_exclusive_rule << endl;
-      exit(-1);
-  }
-  switch (exclusive_shared_rule) {
-    case RULE_FAIL:
-      exclusive_shared_rule_str = "FAIL";
-      break;
-    case RULE_POLL:
-      exclusive_shared_rule_str = "POLL";
-      break;
-    case RULE_QUEUE:
-      exclusive_shared_rule_str = "QUEUE";
-      break;
-    default:
-      cerr << "Unsupported Rule: " << exclusive_shared_rule << endl;
-      exit(-1);
-  }
-  switch (exclusive_exclusive_rule) {
-    case RULE_FAIL:
-      exclusive_exclusive_rule_str = "FAIL";
-      break;
-    case RULE_POLL:
-      exclusive_exclusive_rule_str = "POLL";
-      break;
-    case RULE_QUEUE:
-      exclusive_exclusive_rule_str = "QUEUE";
-      break;
-    default:
-      cerr << "Unsupported Rule: " << exclusive_exclusive_rule << endl;
-      exit(-1);
+  bool do_random_backoff = false;
+  if (random_backoff_str == "true") {
+    do_random_backoff = true;
+  } else if (random_backoff_str == "false") {
+    do_random_backoff = false;
+  } else {
+    cerr << "Invalid random backoff option: " << random_backoff_str << endl;
+    exit(ERROR_INVALID_RANDOM_BACKOFF);
   }
 
-  cout << "Lock Method = " << lock_method_str << endl;
-  cout << "Type of Workload = " << workload_type_str << endl;
-  cout << shared_lock_ratio_str << endl;
-  cout << "SHARED -> EXCLUSIVE = " << shared_exclusive_rule_str << endl;
-  cout << "EXCLUSIVE -> SHARED = " << exclusive_shared_rule_str << endl;
-  cout << "EXCLUSIVE -> EXCLUSIVE = " << exclusive_exclusive_rule_str << endl;
-  cout << "Num Tx = " << num_tx << endl;
-  cout << "Num Requests per Tx = " << num_request_per_tx << endl;
+  cout << "Type of Workload = " << workload_type << endl;
+  cout << "Type of Think Time = " << think_time_type << endl;
+  cout << "Duration = " << duration << " s" << endl;
+  cout << "# Requests per Tx = " << request_size << endl;
+  cout << "# Lock Objects = " << num_lock_object << endl;
+  cout << "Lock Mode = " << lock_mode_str << endl;
 
-  LockManager::SetSharedExclusiveRule(shared_exclusive_rule);
-  LockManager::SetExclusiveSharedRule(exclusive_shared_rule);
-  LockManager::SetExclusiveExclusiveRule(exclusive_exclusive_rule);
+  LockManager::SetFailRetry(num_retry);
+  LockManager::SetPollRetry(num_retry);
 
-  vector<LockSimulator*> users;
-  vector<LockManager*> managers;
+  std::vector<std::unique_ptr<LockSimulator>> users;
+  std::vector<std::unique_ptr<LockManager>> managers;
   for (int i = 0; i < num_managers; ++i) {
-    LockManager* lock_manager = new LockManager(argv[1], i, num_managers,
-        num_lock_object, lock_mode);
+    std::unique_ptr<LockManager> lock_manager(
+        new LockManager(argv[1], i, num_managers, num_lock_object, lock_mode));
 
     if (lock_manager->Initialize()) {
       cerr << "LockManager initialization failure." << endl;
       exit(-1);
     }
 
-    managers.push_back(lock_manager);
+    Poco::Thread manager_thread;
+    manager_thread.start(*lock_manager);
 
-    pthread_t lock_manager_thread;
-    if (pthread_create(&lock_manager_thread, NULL, RunLockManager,
-          (void*)lock_manager)) {
-      cerr << "pthread_create() error." << endl;
-      exit(-1);
-    }
+    managers.push_back(std::move(lock_manager));
   }
-  sleep(1);
 
   for (int i = 0; i < num_managers; ++i) {
-    for (int j=0;j<num_users;++j) {
-      LockSimulator* simulator = new LockSimulator(managers[i],
-          //(uint32_t)pow(2.0, i), // id
-          j+1, // id
-          num_managers,
-          num_lock_object,
-          num_tx, // num lock requests
-          num_request_per_tx,
-          seed,
-          true, // verbose
-          true, // measure lock
-          workload_type,
-          lock_mode,
-          local_workload_ratio,
-          shared_lock_ratio,
-          0,0,0, // tx delays
-          min_backoff_time,
-          max_backoff_time,
-          sleep_time
-          );
-      //lock_manager->RegisterUser((uint32_t)pow(2.0, i), simulator);
-      managers[i]->RegisterUser(j+1, simulator);
-      users.push_back(simulator);
+    for (int j = 0; j < num_users; ++j) {
+      std::unique_ptr<LockSimulator> simulator;
+      // TODO: Add other simulators.
+      if (workload_type == "simple") {
+        simulator.reset(new LockSimulator(managers[i].get(), num_managers,
+                                          num_lock_object, request_size,
+                                          think_time_type, do_random_backoff));
+      } else if (workload_type == "hotspot") {
+        simulator.reset(new HotspotLockSimulator(
+            managers[i].get(), num_managers, num_lock_object, request_size,
+            think_time_type, do_random_backoff));
+      } else if (workload_type == "tpcc-uniform") {
+        simulator.reset(new TPCCLockSimulator(managers[i].get(), num_managers,
+                                              kTPCCNumObjects, think_time_type,
+                                              do_random_backoff, i));
+      } else if (workload_type == "tpcc-hotspot") {
+        simulator.reset(new TPCCLockSimulator(managers[i].get(), 1,
+                                              kTPCCNumObjects, think_time_type,
+                                              do_random_backoff, 0));
+      } else {
+        cerr << "Unknown workload: " << workload_type << endl;
+        exit(-2);
+      }
+      managers[i]->RegisterUser(i + 1, simulator.get());
+      users.push_back(std::move(simulator));
     }
+  }
 
-    sleep(1);
+  sleep(3);
 
+  for (int i = 0; i < num_managers; ++i) {
     if (managers[i]->InitializeLockClients()) {
       cerr << "InitializeLockClients() failed." << endl;
       exit(-1);
     }
 
+    // wait till all clients are initialized
     while (!managers[i]->IsClientsInitialized()) {
-      usleep(250000);
-    }
-  }
-
-
-  cout << "Starting simulation..." << endl;
-  time_t start_time;
-  time_t end_time;
-
-  time(&start_time);
-
-  for (unsigned int i=0;i<users.size();++i) {
-    //users[i]->Run();
-    pthread_t lock_simulator_thread;
-    if (pthread_create(&lock_simulator_thread, NULL, &RunLockSimulator,
-          (void*)users[i])) {
-      cerr << "pthread_create() error." << endl;
-      exit(-1);
+      Poco::Thread::sleep(250);
     }
   }
 
@@ -224,56 +167,35 @@ int main(int argc, char** argv) {
   pthread_t cpu_measure_thread;
   CPUUsage usage;
   if (pthread_create(&cpu_measure_thread, NULL, &MeasureCPUUsage,
-        (void*)&usage)) {
-     cerr << "pthread_create() error." << endl;
-     exit(-1);
+                     (void*)&usage)) {
+    cerr << "pthread_create() error." << endl;
+    exit(-1);
   }
 
+  // Start lock simulators
+  std::vector<std::unique_ptr<Poco::Thread>> user_threads;
+  for (int i = 0; i < num_users; ++i) {
+    std::unique_ptr<Poco::Thread> user_thread(new Poco::Thread);
+    user_thread->start(*users[i]);
+    user_threads.push_back(std::move(user_thread));
+  }
 
   int count = 0;
-  for (unsigned int i=0;i<users.size();++i) {
-    LockSimulator* simulator = users[i];
-    while (simulator->GetState() != LockSimulator::STATE_DONE) {
-       sleep(1);
-       cout << count << " : " << users[0]->GetCount() <<
-         "," << users[0]->GetCurrentBackoff() << endl;
-       ++count;
-       //if (count == 3) {
-         //lock_manager->SwitchToLocal();
-       //}
+  for (unsigned int i = 0; i < users.size(); ++i) {
+    while (count <= duration) {
+      sleep(1);
+      cout << count << " : " << users[0]->GetCount() << endl;
+      ++count;
     }
   }
 
-  time(&end_time);
-  double time_taken = difftime(end_time, start_time);
-
-  for (int i=0;i<num_managers;++i) {
-    if (rank==i) {
-      cout << "Node = " << rank << endl;
-      for (unsigned int j=0;j<users.size();++j) {
-        LockSimulator* simulator = users[j];
-        cout << "Total Lock # = " << simulator->GetTotalNumLocks() << endl;
-        cout << "Total Unlock # = " << simulator->GetTotalNumUnlocks() << endl;
-        cout << "Time Taken = " << simulator->GetTimeTaken() << " s" << endl;
-      }
-    }
+  for (unsigned int j = 0; j < users.size(); ++j) {
+    LockSimulator* simulator = users[j].get();
+    cout << "Total Tx # = " << simulator->GetCount() << endl;
   }
   usage.terminate = true;
   pthread_join(cpu_measure_thread, NULL);
   cout << "Avg CPU Usage = " << usage.total_cpu / usage.num_sample << endl;
-  cout<< "Total Time Taken = " << time_taken << endl;
-}
-
-void* RunLockManager(void* args) {
-  LockManager* lock_manager = (LockManager*)args;
-  lock_manager->Run();
-  return NULL;
-}
-
-void* RunLockSimulator(void* args) {
-  LockSimulator* user = (LockSimulator*)args;
-  user->Run();
-  return NULL;
 }
 
 void* MeasureCPUUsage(void* args) {
@@ -291,14 +213,14 @@ void* MeasureCPUUsage(void* args) {
   struct tms timeSample;
   char line[128];
 
-  lastCPU     = times(&timeSample);
-  lastSysCPU  = timeSample.tms_stime;
+  lastCPU = times(&timeSample);
+  lastSysCPU = timeSample.tms_stime;
   lastUserCPU = timeSample.tms_utime;
 
-  file          = fopen("/proc/cpuinfo", "r");
+  file = fopen("/proc/cpuinfo", "r");
   numProcessors = 0;
-  percent       = 0;
-  while(fgets(line, 128, file) != NULL){
+  percent = 0;
+  while (fgets(line, 128, file) != NULL) {
     if (strncmp(line, "processor", 9) == 0) numProcessors++;
   }
   fclose(file);
@@ -306,18 +228,16 @@ void* MeasureCPUUsage(void* args) {
   while (!usage->terminate) {
     now = times(&timeSample);
     if (now <= lastCPU || timeSample.tms_stime < lastSysCPU ||
-        timeSample.tms_utime < lastUserCPU){
-      //Overflow detection. Just skip this value.
+        timeSample.tms_utime < lastUserCPU) {
+      // Overflow detection. Just skip this value.
       //            percent = -1.0;
       //
-    }
-    else{
+    } else {
       percent = (timeSample.tms_stime - lastSysCPU) +
-        (timeSample.tms_utime - lastUserCPU);
+                (timeSample.tms_utime - lastUserCPU);
       percent /= (now - lastCPU);
-      //percent /= numProcessors;
+      // percent /= numProcessors;
       percent *= 100;
-
     }
     lastCPU = now;
     lastSysCPU = timeSample.tms_stime;
