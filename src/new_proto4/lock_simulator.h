@@ -74,6 +74,7 @@ class LockSimulator : public Poco::Runnable {
   std::vector<uint64_t> backoff_latency_;
   std::vector<uint64_t> backoff_time_;
   std::vector<std::unique_ptr<LockRequest>> requests_;
+  LockRequest** temp_requests_;
   int num_nodes_;
   int num_objects_;
   int request_size_;

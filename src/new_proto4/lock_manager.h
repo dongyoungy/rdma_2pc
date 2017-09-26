@@ -113,6 +113,7 @@ class LockManager : public Poco::Runnable {
   static void* PollLocalWorkQueue(void* arg);
   static void* RunLockClient(void* args);
 
+  inline static bool IsAtomicHCAReplyBe() { return is_atomic_hca_reply_be_; }
   inline static string GetSharedExclusiveRule() {
     return shared_exclusive_rule_;
   }
@@ -288,6 +289,7 @@ class LockManager : public Poco::Runnable {
   static string exclusive_shared_rule_;
   static string exclusive_exclusive_rule_;
 
+  static bool is_atomic_hca_reply_be_;
   static int poll_retry_;
   static int fail_retry_;
 

@@ -128,7 +128,7 @@ int NotifyLockClient::ReadRemotely(Context* context, const Message& message) {
 
   sge.addr = (uintptr_t)&current_request->read_buffer2;
   sge.length = sizeof(uint64_t);
-  sge.lkey = current_request->read_buffer_mr->lkey;
+  sge.lkey = current_request->read_buffer2_mr->lkey;
 
   send_work_request.wr_id = (uintptr_t)current_request;
   send_work_request.num_sge = 1;
@@ -213,11 +213,11 @@ int NotifyLockClient::NotifyWaitingNodes(LockRequest* request, uint64_t value) {
 }
 
 int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
-  Poco::Mutex::ScopedLock lock(lock_mutex_);
-
   if (work_completion->status != IBV_WC_SUCCESS) {
-    cerr << "Work completion status is not IBV_WC_SUCCESS: "
-         << work_completion->status << endl;
+    cerr << "(NotifyLockClient) Work completion status is not IBV_WC_SUCCESS: "
+         << work_completion->status << ", opcode = " << work_completion->opcode
+         << ", pid = " << getpid() << endl;
+    sleep(30);
     return -1;
   }
 
@@ -272,8 +272,11 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     ++num_shared_lock_;
 
     uint64_t prev_value = request->original_value;
+    uint64_t value = prev_value;
 #if __BYTE_ORDER == __LITTLE_ENDIAN
-    uint64_t value = __bswap_constant_64(prev_value);  // Compiler builtin
+    if (LockManager::IsAtomicHCAReplyBe()) {
+      value = __bswap_constant_64(prev_value);  // Compiler builtin
+    }
 #endif
     uint32_t exclusive, shared;
     exclusive = (uint32_t)((value) >> 32);

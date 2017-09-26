@@ -28,8 +28,10 @@ LockSimulator::~LockSimulator() {}
 void LockSimulator::run() {
   // Initialize requests array if empty.
   if (requests_.empty()) {
+    temp_requests_ = new LockRequest*[max_request_size_];
     for (int i = 0; i < max_request_size_; ++i) {
       std::unique_ptr<LockRequest> request(new LockRequest);
+      temp_requests_[i] = request.get();
       requests_.push_back(std::move(request));
     }
   }
@@ -73,6 +75,8 @@ void LockSimulator::run() {
           // Handle queued case.
           bool timeout = false;
           if (result_info.result == QUEUED) {
+            cout << getpid() << endl;
+            sleep(20);
             auto lock_future =
                 manager_->GetLockResult(uintptr_t(this))->get_future();
             auto future_status =

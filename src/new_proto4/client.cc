@@ -428,6 +428,13 @@ void Client::BuildQueuePairAttr(Context* context,
                                 struct ibv_exp_qp_init_attr* attributes) {
   memset(attributes, 0x00, sizeof(*attributes));
 
+  struct ibv_exp_device_attr device_attr;
+  int ret = 0;
+  if ((ret = ibv_exp_query_device(context->device_context, &device_attr))) {
+    cerr << "ibv_exp_query_device() failed: " << strerror(ret) << endl;
+    exit(-1);
+  }
+
   attributes->pd = context->protection_domain;
   attributes->send_cq = context->completion_queue;
   attributes->recv_cq = context->completion_queue;
@@ -436,10 +443,18 @@ void Client::BuildQueuePairAttr(Context* context,
   attributes->cap.max_recv_wr = 4096;
   attributes->cap.max_send_sge = 4;
   attributes->cap.max_recv_sge = 4;
-  attributes->comp_mask =
-      IBV_EXP_QP_INIT_ATTR_PD | IBV_EXP_QP_INIT_ATTR_CREATE_FLAGS;
-  attributes->exp_create_flags = IBV_EXP_QP_CREATE_ATOMIC_BE_REPLY;
-  attributes->max_atomic_arg = sizeof(uint64_t);
+  if (device_attr.exp_atomic_cap == IBV_EXP_ATOMIC_HCA ||
+      device_attr.exp_atomic_cap == IBV_EXP_ATOMIC_GLOB) {
+    attributes->comp_mask = IBV_EXP_QP_INIT_ATTR_PD;
+  } else if (device_attr.exp_atomic_cap == IBV_EXP_ATOMIC_HCA_REPLY_BE) {
+    attributes->comp_mask =
+        IBV_EXP_QP_INIT_ATTR_PD | IBV_EXP_QP_INIT_ATTR_CREATE_FLAGS;
+    attributes->max_atomic_arg = sizeof(uint64_t);
+    attributes->exp_create_flags = IBV_EXP_QP_CREATE_ATOMIC_BE_REPLY;
+  } else {
+    cerr << "atomic operation not supported: " << device_attr.exp_atomic_cap
+         << endl;
+  }
 }
 
 Context* Client::BuildContext(struct rdma_cm_id* id) {

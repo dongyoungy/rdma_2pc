@@ -131,6 +131,7 @@ int main(int argc, char** argv) {
   std::unique_ptr<LockManager> lock_manager(
       new LockManager(argv[1], rank, num_managers, num_lock_object, lock_mode));
 
+  LockManager* temp_manager = lock_manager.get();
   if (lock_manager->Initialize()) {
     cerr << "LockManager initialization failure." << endl;
     exit(-1);
@@ -140,6 +141,7 @@ int main(int argc, char** argv) {
   manager_thread.start(*lock_manager);
 
   std::vector<std::unique_ptr<LockSimulator>> users;
+  LockSimulator* temp_user;
   for (int i = 0; i < num_users; ++i) {
     std::unique_ptr<LockSimulator> simulator;
     // TODO: Add other simulators.
@@ -164,6 +166,7 @@ int main(int argc, char** argv) {
       exit(-2);
     }
     lock_manager->RegisterUser(i + 1, simulator.get());
+    temp_user = simulator.get();
     users.push_back(std::move(simulator));
   }
 
@@ -210,6 +213,7 @@ int main(int argc, char** argv) {
     user_threads.push_back(std::move(user_thread));
   }
 
+  int zero_count = 0;
   for (int i = 0; i < duration; ++i) {
     current_count = 0;
     for (int j = 0; j < num_users; ++j) {
@@ -224,11 +228,24 @@ int main(int argc, char** argv) {
         current_total_count += current_counts[j];
       }
       uint64_t current_throughput = current_total_count - last_total_count;
+#ifdef VERBOSE
+      cout << "throughput = " << current_throughput << endl;
+#endif
       throughputs.push_back(current_throughput);
       if (current_throughput > max_throughput) {
         max_throughput = current_throughput;
       }
       last_total_count = current_total_count;
+      if (current_throughput == 0) {
+        ++zero_count;
+      } else {
+        zero_count = 0;
+      }
+#ifdef DEBUG
+      if (zero_count >= 5) {
+        // abort();
+      }
+#endif
     }
     MPI_Barrier(MPI_COMM_WORLD);
     Poco::Thread::sleep(1000);
@@ -237,7 +254,6 @@ int main(int argc, char** argv) {
   for (int i = 0; i < num_users; ++i) {
     users[i]->Stop();
   }
-  abort();
   for (int i = 0; i < num_users; ++i) {
     try {
       user_threads[i]->join(5000);
@@ -252,6 +268,13 @@ int main(int argc, char** argv) {
   double cpu_usage = usage.total_cpu / usage.num_sample;
 
   MPI_Barrier(MPI_COMM_WORLD);
+
+  // Simple sanity check.
+  if (lock_manager->lock_table_[0] != 0) {
+    cerr << "Value of index 0 is not zero: " << lock_manager->lock_table_[0]
+         << endl;
+    exit(ERROR_FAILED_SANITY_CHECK);
+  }
 
   double average_cpu_usage = 0;
   double total_average_latency = 0;

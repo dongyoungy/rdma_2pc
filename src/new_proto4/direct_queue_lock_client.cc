@@ -219,8 +219,11 @@ int DirectQueueLockClient::HandleWorkCompletion(
     total_rdma_atomic_time_ += time_taken;
 
     uint64_t prev_value = request->original_value;
+    uint64_t value = prev_value;
 #if __BYTE_ORDER == __LITTLE_ENDIAN
-    uint64_t value = __bswap_constant_64(prev_value);  // Compiler builtin
+    if (LockManager::IsAtomicHCAReplyBe()) {
+      value = __bswap_constant_64(prev_value);  // Compiler builtin
+    }
 #endif
     uint32_t exclusive, shared;
     exclusive = (uint32_t)((value) >> 32);

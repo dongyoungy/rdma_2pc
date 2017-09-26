@@ -9,9 +9,21 @@ namespace rdma {
 namespace proto {
 
 struct LockRequest {
+  LockRequest() {}
+  LockRequest(const LockRequest& other) {
+    seq_no = other.seq_no;
+    lm_id = other.lm_id;
+    user_id = other.user_id;
+    read_target = other.read_target;
+    obj_index = other.obj_index;
+    lock_type = other.lock_type;
+    contention_count = other.contention_count;
+    task = other.task;
+  }
   LockRequest& operator=(const LockRequest& other) {
     if (this != &other) {
       seq_no = other.seq_no;
+      lm_id = other.lm_id;
       user_id = other.user_id;
       read_target = other.read_target;
       obj_index = other.obj_index;

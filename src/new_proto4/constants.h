@@ -72,6 +72,7 @@ static const int ERROR_INVALID_LOCK_MODE = -1002;
 static const int ERROR_INVALID_RANDOM_BACKOFF = -1003;
 static const int ERROR_INVALID_OPCODE = -1004;
 static const int ERROR_INVALID_FUTURE_STATUS = -1005;
+static const int ERROR_FAILED_SANITY_CHECK = -1006;
 }  // namespace proto
 }  // namespace rdma
 

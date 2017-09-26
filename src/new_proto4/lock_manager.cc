@@ -13,6 +13,7 @@ string LockManager::exclusive_shared_rule_ = "fail";
 string LockManager::exclusive_exclusive_rule_ = "fail";
 int LockManager::poll_retry_ = 3;
 int LockManager::fail_retry_ = 3;
+bool LockManager::is_atomic_hca_reply_be_ = false;
 map<uint32_t, uint32_t> LockManager::user_to_node_map_;
 
 // constructor
@@ -1395,6 +1396,13 @@ void LockManager::BuildQueuePairAttr(Context* context,
                                      struct ibv_exp_qp_init_attr* attributes) {
   memset(attributes, 0x00, sizeof(*attributes));
 
+  struct ibv_exp_device_attr device_attr;
+  int ret = 0;
+  if ((ret = ibv_exp_query_device(context->device_context, &device_attr))) {
+    cerr << "ibv_exp_query_device() failed: " << strerror(ret) << endl;
+    exit(-1);
+  }
+
   attributes->pd = context->protection_domain;
   attributes->send_cq = context->completion_queue;
   attributes->recv_cq = context->completion_queue;
@@ -1403,10 +1411,20 @@ void LockManager::BuildQueuePairAttr(Context* context,
   attributes->cap.max_recv_wr = 4096;
   attributes->cap.max_send_sge = 4;
   attributes->cap.max_recv_sge = 4;
-  attributes->comp_mask =
-      IBV_EXP_QP_INIT_ATTR_PD | IBV_EXP_QP_INIT_ATTR_CREATE_FLAGS;
-  attributes->max_atomic_arg = sizeof(uint64_t);
-  attributes->exp_create_flags = IBV_EXP_QP_CREATE_ATOMIC_BE_REPLY;
+  if (device_attr.exp_atomic_cap == IBV_EXP_ATOMIC_HCA ||
+      device_attr.exp_atomic_cap == IBV_EXP_ATOMIC_GLOB) {
+    attributes->comp_mask = IBV_EXP_QP_INIT_ATTR_PD;
+    is_atomic_hca_reply_be_ = false;
+  } else if (device_attr.exp_atomic_cap == IBV_EXP_ATOMIC_HCA_REPLY_BE) {
+    attributes->comp_mask =
+        IBV_EXP_QP_INIT_ATTR_PD | IBV_EXP_QP_INIT_ATTR_CREATE_FLAGS;
+    attributes->max_atomic_arg = sizeof(uint64_t);
+    attributes->exp_create_flags = IBV_EXP_QP_CREATE_ATOMIC_BE_REPLY;
+    is_atomic_hca_reply_be_ = true;
+  } else {
+    cerr << "atomic operation not supported: " << device_attr.exp_atomic_cap
+         << endl;
+  }
 }
 
 Context* LockManager::BuildContext(struct rdma_cm_id* id) {

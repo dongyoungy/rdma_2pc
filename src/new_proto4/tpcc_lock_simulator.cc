@@ -19,7 +19,7 @@ void TPCCLockSimulator::CreateRequest() {
   for (int i = 0; i < request_size_; ++i) {
     requests_[i]->seq_no = seq_count_++;
     requests_[i]->contention_count = 0;
-    temp_lock_requests_[i] = requests_[i].get();
+    requests_[i]->user_id = (uintptr_t)this;
   }
 }
 

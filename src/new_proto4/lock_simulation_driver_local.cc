@@ -113,11 +113,11 @@ int main(int argc, char** argv) {
       cerr << "LockManager initialization failure." << endl;
       exit(-1);
     }
-
-    Poco::Thread manager_thread;
-    manager_thread.start(*lock_manager);
-
     managers.push_back(std::move(lock_manager));
+  }
+  for (int i = 0; i < num_managers; ++i) {
+    Poco::Thread manager_thread;
+    manager_thread.start(*managers[i]);
   }
 
   for (int i = 0; i < num_managers; ++i) {
