@@ -15,8 +15,8 @@ CommunicationClient::CommunicationClient(const string& work_dir,
 // destructor
 CommunicationClient::~CommunicationClient() {}
 
-int CommunicationClient::GrantLock(int seq_no, int target_node_id,
-                                   uintptr_t owner_user_id, int obj_index,
+int CommunicationClient::GrantLock(int seq_no, int releasing_node_id,
+                                   int target_node_id, int obj_index,
                                    LockType lock_type) {
   Poco::Mutex::ScopedLock lock(communication_mutex_);
   while (is_waiting_ack_) {
@@ -28,13 +28,8 @@ int CommunicationClient::GrantLock(int seq_no, int target_node_id,
   msg->seq_no = seq_no;
   msg->lock_type = lock_type;
   msg->obj_index = obj_index;
+  msg->releasing_node_id = releasing_node_id;
   msg->target_node_id = target_node_id;
-  msg->owner_user_id = owner_user_id;
-
-  // pthread_mutex_lock(&PRINT_MUTEX);
-  // cout << "Grant: " << msg->seq_no << "," << msg->user_id << "," <<
-  // msg->obj_index << "," << msg->lock_type << endl;
-  // pthread_mutex_unlock(&PRINT_MUTEX);
 
   is_waiting_ack_ = true;
   if (SendMessage(context_)) {
@@ -82,8 +77,8 @@ int CommunicationClient::HandleWorkCompletion(struct ibv_wc* wc) {
     // post receive first.
     ReceiveMessage(context);
     if (message->type == Message::GRANT_LOCK_ACK) {
-      communication_cond_.signal();
       is_waiting_ack_ = false;
+      communication_cond_.signal();
     }
   }
   return 0;

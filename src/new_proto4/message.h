@@ -30,6 +30,7 @@ class Message {
   struct ibv_mr lock_table_mr;
   int seq_no;  // seq. no. of lock request
   uint32_t owner_node_id;
+  uint32_t releasing_node_id;
   uint32_t target_node_id;
   uintptr_t owner_user_id;
   uint32_t manager_id;  // id of lock manager requesting lock

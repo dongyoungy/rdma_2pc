@@ -34,13 +34,15 @@ class LockManager;
 class LockSimulator : public Poco::Runnable {
  public:
   LockSimulator(LockManager* manager, int num_nodes, int num_objects,
-                int request_size, string think_time_type);
+                int request_size, string think_time_type,
+                bool run_random_backoff);
   ~LockSimulator();
   virtual void run();  // for Poco::Runnable
 
   void Stop();
   uint64_t GetCount() const;
   uint64_t GetCountWithContention() const;
+  uint64_t GetCountWithBackoff() const;
 
   void SortLatency();
   double GetAverageLatency() const;
@@ -52,22 +54,36 @@ class LockSimulator : public Poco::Runnable {
   double Get99PercentileLatencyWithContention() const;
   double Get999PercentileLatencyWithContention() const;
 
+  double GetAverageLatencyWithBackoff() const;
+  double Get99PercentileLatencyWithBackoff() const;
+  double Get999PercentileLatencyWithBackoff() const;
+
+  double GetAverageBackoffTime() const;
+
  protected:
   virtual void CreateRequest();
+  void RevertLocks(int& index);
+  int PerformRandomBackoff(int& attempt);
 
   Poco::Random rng_;
+  Poco::Timestamp last_lock_start_time_;
+  Poco::Timestamp last_lock_try_time_;
   LockManager* manager_;
   std::vector<uint64_t> latency_;
   std::vector<uint64_t> contention_latency_;
+  std::vector<uint64_t> backoff_latency_;
+  std::vector<uint64_t> backoff_time_;
   std::vector<std::unique_ptr<LockRequest>> requests_;
   int num_nodes_;
   int num_objects_;
   int request_size_;
   int max_request_size_;
   string think_time_type_;
+  bool do_random_backoff_;
   uint64_t count_;
-  uint64_t count_with_contention_;
+  uint64_t backoff_count_;
   bool is_done_;
+  int seq_count_;
 
   Poco::Mutex mutex_;
 };

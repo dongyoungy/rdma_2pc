@@ -306,74 +306,9 @@ int DirectQueueLockClient::HandleWorkCompletion(
                          (double)start_rdma_read_.tv_nsec);
     total_rdma_read_time_ += time_taken;
 
-    // uint64_t prev;
-    // uint32_t value, exclusive, shared;
     LockRequest* request = (LockRequest*)work_completion->wr_id;
-    // uint64_t all_value = *request->read_buffer2;
     uint64_t prev_value = request->read_buffer2;
-    uint64_t all_value = prev_value;
-    //#if __BYTE_ORDER == __LITTLE_ENDIAN
-    // all_value = __bswap_constant_64(prev_value);  // Compiler builtin
-    //#else
-    // all_value = prev_value;
-    //#endif
-
-    // polling result
-    // if (request->read_target == ALL) {
-    // uint64_t prev_value = *request->read_buffer2;
-    // prev = prev_value;
-    // exclusive = (uint32_t)((all_value)>>32);
-    // shared = (uint32_t)all_value;
-    //#if __BYTE_ORDER == __LITTLE_ENDIAN
-    // all_value = __bswap_constant_64(prev_value);  // Compiler builtin
-    //#else
-    // all_value = prev_value;
-    //#endif
-    // all_value = prev_value;
-    //} else {
-    // value = *request->read_buffer;
-    //}
-
-    // if (request->read_target == EXCLUSIVE) {
-    //// Polling on X -> proceed if value is zero
-    // if ((context_->waiters & value) == 0) {
-    // context_->waiters = 0;
-    //++total_lock_success_with_poll_;
-    // sum_poll_when_success_ += context_->retry;
-    // local_manager_->NotifyLockRequestResult(
-    // request->seq_no,
-    // request->user_id,
-    // request->lock_type,
-    // request->obj_index,
-    // LockManager::RESULT_SUCCESS);
-    //} else {
-    //// otherwise, read/poll again (shared -> exclusive)
-    // this->HandleShared(request);
-    //}
-    //} else {
-    // if ((context_->all_waiters & all_value) == 0) {
-    // context_->all_waiters = 0;
-    //++total_lock_success_with_poll_;
-    // sum_poll_when_success_ += context_->retry;
-    // local_manager_->NotifyLockRequestResult(
-    // request->seq_no,
-    // request->user_id,
-    // request->lock_type,
-    // request->obj_index,
-    // LockManager::RESULT_SUCCESS);
-    //} else {
-    // this->HandleExclusive(request);
-    //}
-    //}
-
-    uint64_t remaining = (user_all_waiters_[request->user_id] & all_value);
-    // uint64_t remaining = (context_->all_waiters & all_value);
-    // cout << "prev_value = " << all_value << endl;
-    // cout << "prev_value2 = " << prev << endl;
-    // cout << "waiters = " << context_->all_waiters << endl;
-    // cout << "remaining = " << remaining << endl;
-    // cout << "remaining2 = " << (context_->all_waiters & all_value) << endl;
-    // cout << "remaining3 = " << (context_->all_waiters & prev) << endl;
+    uint64_t remaining = (user_all_waiters_[request->user_id] & prev_value);
 
     if (request->lock_type == SHARED) {
       // Polling on Ex -> proceed if value is zero
@@ -416,13 +351,6 @@ int DirectQueueLockClient::HandleShared(LockRequest* request) {
   }
   ++user_retry_count_[request->user_id];
   request->read_target = READ_ALL;
-  // request->read_target = EXCLUSIVE;
-  // this->ReadRemotely(context_,
-  // request->seq_no,
-  // request->user_id,
-  // request->read_target,
-  // request->lock_type,
-  // request->obj_index);
   this->ReadRemotely(context_, *request);
 
   return FUNC_SUCCESS;
@@ -434,6 +362,7 @@ int DirectQueueLockClient::HandleExclusive(LockRequest* request) {
     return 0;
   }
   ++user_retry_count_[request->user_id];
+  request->read_target = READ_ALL;
   this->ReadRemotely(context_, *request);
 
   return FUNC_SUCCESS;

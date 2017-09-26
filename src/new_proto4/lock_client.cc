@@ -8,34 +8,10 @@ LockClient::LockClient(const string& work_dir, LockManager* local_manager,
                        uint32_t local_user_count, uint32_t remote_lm_id)
     : Client(work_dir, local_manager, local_user_count, remote_lm_id) {
   message_in_progress_ = false;
-
-  int num_manager = local_manager->GetNumManager();
-  // user_retry_count_ = new int[num_manager * (local_user_count + 1)];
-  // user_fail_ = new bool[num_manager * (local_user_count + 1)];
-  // user_polling_ = new bool[num_manager * (local_user_count + 1)];
-  // user_waiters_ = new uint32_t[num_manager * (local_user_count + 1)];
-  // user_all_waiters_ = new uint64_t[num_manager * (local_user_count + 1)];
-
-  // memset(user_retry_count_, 0x00,
-  // sizeof(int) * (num_manager * (local_user_count + 1)));
-  // memset(user_fail_, 0x00,
-  // sizeof(bool) * (num_manager * (local_user_count + 1)));
-  // memset(user_polling_, 0x00,
-  // sizeof(bool) * (num_manager * (local_user_count + 1)));
-  // memset(user_waiters_, 0x00,
-  // sizeof(uint32_t) * (num_manager * (local_user_count + 1)));
-  // memset(user_all_waiters_, 0x00,
-  // sizeof(uint64_t) * (num_manager * (local_user_count + 1)));
 }
 
 // destructor
-LockClient::~LockClient() {
-  // delete[] user_retry_count_;
-  // delete[] user_fail_;
-  // delete[] user_polling_;
-  // delete[] user_waiters_;
-  // delete[] user_all_waiters_;
-}
+LockClient::~LockClient() {}
 
 int LockClient::HandleConnection(Context* context) {
   // cout << "connected to server." << endl;
@@ -205,25 +181,48 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     request->shared = shared;
 
     if (request->task == LOCK) {
-      // shared lock
-      if (exclusive == 0) {
-        // it should have been successful since exclusive and shared was 0
-        ++total_lock_success_;
-        total_shared_lock_remote_time_ += time_taken;
-        ++num_shared_lock_;
-        local_manager_->NotifyLockRequestResult(
-            request->seq_no, request->user_id, request->lock_type,
-            remote_lm_id_, request->obj_index, request->contention_count,
-            SUCCESS);
-      } else if (exclusive != 0 && shared == 0) {
-        // exclusive lock exists
-        ++total_lock_contention_;
-        ++request->contention_count;
-        this->HandleExclusiveToShared(request);
+      if (request->lock_type == EXCLUSIVE) {
+        if (exclusive == 0 && shared == 0) {
+          // exclusive lock acquisition successful
+          ++total_lock_success_;
+          total_exclusive_lock_remote_time_ += time_taken;
+          ++num_exclusive_lock_;
+          local_manager_->NotifyLockRequestResult(
+              request->seq_no, request->user_id, request->lock_type,
+              remote_lm_id_, request->obj_index, request->contention_count,
+              SUCCESS);
+        } else {
+          ++total_lock_contention_;
+          ++request->contention_count;
+          if (shared == 0 && exclusive != 0) {
+            this->HandleExclusiveToExclusive(request);
+          } else if (shared != 0 && exclusive == 0) {
+            this->HandleSharedToExclusive(request);
+          } else {
+            this->UndoLocking(context_, *request);
+          }
+        }
       } else {
-        ++total_lock_contention_;
-        ++request->contention_count;
-        this->UndoLocking(context_, *request);
+        // shared lock
+        if (exclusive == 0) {
+          // it should have been successful since exclusive and shared was 0
+          ++total_lock_success_;
+          total_shared_lock_remote_time_ += time_taken;
+          ++num_shared_lock_;
+          local_manager_->NotifyLockRequestResult(
+              request->seq_no, request->user_id, request->lock_type,
+              remote_lm_id_, request->obj_index, request->contention_count,
+              SUCCESS);
+        } else if (exclusive != 0 && shared == 0) {
+          // exclusive lock exists
+          ++total_lock_contention_;
+          ++request->contention_count;
+          this->HandleExclusiveToShared(request);
+        } else {
+          ++total_lock_contention_;
+          ++request->contention_count;
+          this->UndoLocking(context_, *request);
+        }
       }
     } else if (request->task == UNLOCK) {
       if (user_fail_[request->user_id]) {
@@ -264,9 +263,6 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     total_rdma_read_time_ += time_taken;
     // polling result
     uint32_t value = request->read_buffer;
-    //#if __BYTE_ORDER == __LITTLE_ENDIAN
-    // uint32_t value = __bswap_constant_32(prev_value);  // Compiler builtin
-    //#endif
     if (request->read_target == READ_SHARED) {
       // Polling on Sh_X -> proceed if value is zero
       if (value == 0) {
@@ -294,18 +290,6 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
         this->PollExclusiveToShared(request);
       }
     }
-    // else if (purpose == READ_NOTIFYING) {
-
-    //// read an object for notifying
-    // uint64_t prev_value = *context->read_buffer2;
-    //#if __BYTE_ORDER == __LITTLE_ENDIAN
-    // uint64_t value = __bswap_constant_64(prev_value);  // Compiler builtin
-    //#endif
-    // uint32_t exclusive, shared;
-    // exclusive = (uint32_t)((value)>>32);
-    // shared = (uint32_t)value;
-
-    //}
   }
 
   return 0;
@@ -510,6 +494,14 @@ int LockClient::SendLockTableRequest(Context* context) {
 }
 
 bool LockClient::RequestLock(const LockRequest& request, LockMode lock_mode) {
+  user_retry_count_[request.user_id] = 0;
+  user_fail_[request.user_id] = false;
+  user_polling_[request.user_id] = false;
+  user_waiters_[request.user_id] = 0;
+  user_all_waiters_[request.user_id] = 0;
+  waiters_before_me_[request.obj_index] = 0;
+  queued_user_[request.obj_index] = 0;
+
   if (lock_mode == PROXY_RETRY || lock_mode == PROXY_QUEUE) {
     // ask lock manager to place the lock
     return this->SendLockRequest(context_, request);
@@ -536,9 +528,9 @@ bool LockClient::RequestUnlock(const LockRequest& request, LockMode lock_mode) {
 }
 
 bool LockClient::LockRemotely(Context* context, const LockRequest& request) {
-  uint32_t exclusive, shared;
   Poco::Mutex::ScopedLock lock(lock_mutex_);
 
+  uint32_t exclusive, shared;
   struct ibv_exp_send_wr send_work_request;
   struct ibv_exp_send_wr* bad_work_request;
   struct ibv_sge sge;
@@ -559,17 +551,37 @@ bool LockClient::LockRemotely(Context* context, const LockRequest& request) {
   send_work_request.sg_list = &sge;
   send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
 
-  if (current_request->lock_type == SHARED) {
-    send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
-    send_work_request.wr.atomic.compare_add = 1;
-  } else if (current_request->lock_type == EXCLUSIVE) {
-    send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_CMP_AND_SWP;
-    exclusive = local_owner_bitvector_id_;
-    shared = 0;
-    uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
-    send_work_request.wr.atomic.compare_add = 0;
-    send_work_request.wr.atomic.swap = new_value;
+  send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
+  switch (current_request->lock_type) {
+    case SHARED: {
+      exclusive = 0;
+      shared = local_owner_bitvector_id_;
+      uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
+      send_work_request.wr.atomic.compare_add = new_value;
+      break;
+    }
+    case EXCLUSIVE: {
+      exclusive = local_owner_bitvector_id_;
+      shared = 0;
+      uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
+      send_work_request.wr.atomic.compare_add = new_value;
+      break;
+    }
+    default:
+      break;
   }
+
+  // if (current_request->lock_type == SHARED) {
+  // send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
+  // send_work_request.wr.atomic.compare_add = 1;
+  //} else if (current_request->lock_type == EXCLUSIVE) {
+  // send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_CMP_AND_SWP;
+  // exclusive = local_owner_bitvector_id_;
+  // shared = 0;
+  // uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
+  // send_work_request.wr.atomic.compare_add = 0;
+  // send_work_request.wr.atomic.swap = new_value;
+  //}
 
   send_work_request.wr.atomic.remote_addr =
       (uint64_t)context->lock_table_mr->addr +
@@ -635,58 +647,11 @@ int LockClient::ReadRemotely(Context* context, const LockRequest& request) {
   return 0;
 }
 
-// The fucntion is used by NotifyLockClient.
-int LockClient::ReadRemotely(Context* context, int seq_no, uintptr_t user_id,
-                             LockType lock_type, int obj_index) {
-  Poco::Mutex::ScopedLock lock(lock_mutex_);
-  struct ibv_exp_send_wr send_work_request;
-  struct ibv_exp_send_wr* bad_work_request;
-  struct ibv_sge sge;
-
-  memset(&send_work_request, 0x00, sizeof(send_work_request));
-
-  LockRequest* current_request = lock_requests_[lock_request_idx_].get();
-  current_request->seq_no = seq_no;
-  current_request->owner_node_id = local_owner_id_;
-  current_request->user_id = user_id;
-  current_request->read_target = READ_ALL;
-  current_request->obj_index = obj_index;
-  current_request->lock_type = lock_type;
-  current_request->task = READ;
-  lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
-
-  sge.addr = (uintptr_t)&current_request->read_buffer2;
-  sge.length = sizeof(uint64_t);
-  sge.lkey = current_request->read_buffer_mr->lkey;
-
-  send_work_request.wr_id = (uintptr_t)current_request;
-  send_work_request.num_sge = 1;
-  send_work_request.sg_list = &sge;
-  send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
-  send_work_request.exp_opcode = IBV_EXP_WR_RDMA_READ;
-
-  send_work_request.wr.rdma.rkey = context->lock_table_mr->rkey;
-  send_work_request.wr.rdma.remote_addr =
-      (uint64_t)context->lock_table_mr->addr + (obj_index * sizeof(uint64_t));
-  clock_gettime(CLOCK_MONOTONIC, &start_rdma_read_);
-
-  int ret = 0;
-  if ((ret = ibv_exp_post_send(context->queue_pair, &send_work_request,
-                               &bad_work_request))) {
-    cerr << "ReadRemotely(): ibv_exp_post_send() failed: " << strerror(ret)
-         << endl;
-    return -1;
-  }
-
-  ++num_rdma_read_;
-  return 0;
-}
-
 bool LockClient::UnlockRemotely(Context* context, const LockRequest& request,
                                 bool is_undo, bool retry) {
   Poco::Mutex::ScopedLock lock(lock_mutex_);
 
-  uint32_t shared;
+  uint32_t exclusive, shared;
   struct ibv_exp_send_wr send_work_request;
   struct ibv_exp_send_wr* bad_work_request;
   struct ibv_sge sge;
@@ -709,16 +674,38 @@ bool LockClient::UnlockRemotely(Context* context, const LockRequest& request,
   send_work_request.sg_list = &sge;
   send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
 
-  if (current_request->lock_type == SHARED) {
-    send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
-    send_work_request.wr.atomic.compare_add = -1;
-  } else if (current_request->lock_type == EXCLUSIVE) {
-    send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_CMP_AND_SWP;
-    shared = 0;
-    uint64_t prev_value = ((uint64_t)local_owner_bitvector_id_) << 32 | shared;
-    send_work_request.wr.atomic.compare_add = prev_value;
-    send_work_request.wr.atomic.swap = 0;
+  send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
+  switch (current_request->lock_type) {
+    case SHARED: {
+      exclusive = 0;
+      shared = local_owner_bitvector_id_;
+      uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
+      new_value = (-1) * new_value;  // need to subtract for unlock
+      send_work_request.wr.atomic.compare_add = new_value;
+      break;
+    }
+    case EXCLUSIVE: {
+      exclusive = 0;
+      shared = 0;
+      uint64_t new_value = ((uint64_t)local_owner_bitvector_id_) << 32 | shared;
+      new_value = (-1) * new_value;  // need to subtract for unlock
+      send_work_request.wr.atomic.compare_add = new_value;
+      break;
+    }
+    default:
+      break;
   }
+
+  // if (current_request->lock_type == SHARED) {
+  // send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
+  // send_work_request.wr.atomic.compare_add = -1;
+  //} else if (current_request->lock_type == EXCLUSIVE) {
+  // send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_CMP_AND_SWP;
+  // shared = 0;
+  // uint64_t prev_value = ((uint64_t)local_owner_bitvector_id_) << 32 | shared;
+  // send_work_request.wr.atomic.compare_add = prev_value;
+  // send_work_request.wr.atomic.swap = 0;
+  //}
   send_work_request.wr.atomic.remote_addr =
       (uint64_t)context->lock_table_mr->addr +
       (current_request->obj_index * sizeof(uint64_t));

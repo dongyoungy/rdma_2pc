@@ -432,8 +432,8 @@ void Client::BuildQueuePairAttr(Context* context,
   attributes->send_cq = context->completion_queue;
   attributes->recv_cq = context->completion_queue;
   attributes->qp_type = IBV_QPT_RC;
-  attributes->cap.max_send_wr = 2048;
-  attributes->cap.max_recv_wr = 2048;
+  attributes->cap.max_send_wr = 4096;
+  attributes->cap.max_recv_wr = 4096;
   attributes->cap.max_send_sge = 4;
   attributes->cap.max_recv_sge = 4;
   attributes->comp_mask =

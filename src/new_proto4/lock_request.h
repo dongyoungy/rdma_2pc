@@ -24,6 +24,7 @@ struct LockRequest {
   int seq_no;  // sequence no (id)
   bool is_undo;
   uint32_t owner_node_id;
+  uint32_t releasing_node_id;
   uintptr_t user_id;
   int lm_id;
   int obj_index;

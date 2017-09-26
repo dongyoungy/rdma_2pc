@@ -13,7 +13,8 @@ namespace proto {
 class TPCCLockSimulator : public LockSimulator {
  public:
   TPCCLockSimulator(LockManager* manager, int num_nodes, int num_objects,
-                    string think_time_type, int home_warehouse_id);
+                    string think_time_type, bool do_random_backoff,
+                    int home_warehouse_id);
 
  protected:
   virtual void CreateRequest();
@@ -22,6 +23,7 @@ class TPCCLockSimulator : public LockSimulator {
   std::unique_ptr<TPCCLockGen> tpcc_lock_gen_;
   uint32_t home_warehouse_id_;
   int max_request_size_;
+  LockRequest** temp_lock_requests_;
 };
 
 }  // namespace proto

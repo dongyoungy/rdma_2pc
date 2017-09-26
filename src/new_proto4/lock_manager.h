@@ -28,6 +28,7 @@
 #include "local_work_queue.h"
 #include "lock_result_info.h"
 #include "lock_simulator.h"
+#include "lock_status_info.h"
 #include "lock_wait_queue.h"
 
 using namespace std;
@@ -58,8 +59,8 @@ class LockManager : public Poco::Runnable {
   std::promise<LockResultInfo>* GetLockResult(uintptr_t user_id);
   int LockLocalDirect(uint32_t user_id, LockType lock_type, int obj_index);
   int UnlockLocalDirect(uint32_t user_id, LockType lock_type, int obj_index);
-  int GrantLock(int seq_no, int target_node_id, int owner_node_id,
-                LockType lock_type, int obj_index);
+  int GrantLock(int seq_no, int releasing_node_id, int target_node_id,
+                int owner_node_id, LockType lock_type, int obj_index);
   int RejectLock(int seq_no, uintptr_t user_id, uint32_t manager_id,
                  LockType lock_type, int obj_index);
   int UpdateLockModeTable(int manager_id, LockMode mode);
@@ -69,6 +70,7 @@ class LockManager : public Poco::Runnable {
   int NotifyUnlockRequestResult(int seq_no, uintptr_t user_id,
                                 LockType lock_type, int target_node_id,
                                 int obj_index, LockResult result);
+  void SetLockStatusInvalid(uint32_t node_id, uint32_t obj_index);
   int GetID() const;
   int GetRank() const;
   LockMode GetLockMode() const;
@@ -216,6 +218,8 @@ class LockManager : public Poco::Runnable {
   set<Context*> context_set_;
   vector<pthread_t*> lock_client_threads_;
 
+  LockClient** temp_lock_clients_;
+
   map<uint64_t, CommunicationClient*> communication_clients_;
   vector<pthread_t*> communication_client_threads_;
 
@@ -237,6 +241,8 @@ class LockManager : public Poco::Runnable {
   pthread_t local_work_poller_;
 
   std::unordered_map<uintptr_t, std::promise<LockResultInfo>> lock_result_map_;
+  std::unordered_map<uint32_t, std::unordered_map<uint32_t, LockStatusInfo>>
+      lock_status_map_;
 
   // local lock manager
   // LocalLockManager* llm_;

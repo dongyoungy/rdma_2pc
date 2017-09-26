@@ -14,6 +14,7 @@
 #include "lock_manager.h"
 #include "lock_simulator.h"
 #include "mpi.h"
+#include "tpcc_lock_simulator.h"
 
 using namespace std;
 using namespace rdma::proto;
@@ -32,8 +33,9 @@ int main(int argc, char** argv) {
   if (argc != 11) {
     cout << argv[0] << " <work_dir> <num_lock_object> <duration>"
          << " <request_size> <num_users> <lock_mode>"
-         << " <fail_retry> <poll_retry>"
-         << " <workload_type> <think_time_type> " << endl;
+         << " <num_retry> "
+         << " <workload_type> <think_time_type> <enable_random_backoff> "
+         << endl;
     exit(1);
   }
 
@@ -57,10 +59,10 @@ int main(int argc, char** argv) {
   int request_size = atoi(argv[k++]);
   int num_users = atoi(argv[k++]);
   string lock_mode_str = argv[k++];
-  int fail_retry = atoi(argv[k++]);
-  int poll_retry = atoi(argv[k++]);
+  int num_retry = atoi(argv[k++]);
   string workload_type = argv[k++];
   string think_time_type = argv[k++];
+  string random_backoff_str = argv[k++];
 
   if (num_managers > 32) {
     cerr << "# of nodes must be less than 33" << endl;
@@ -104,6 +106,16 @@ int main(int argc, char** argv) {
     exit(ERROR_INVALID_LOCK_MODE);
   }
 
+  bool do_random_backoff = false;
+  if (random_backoff_str == "true") {
+    do_random_backoff = true;
+  } else if (random_backoff_str == "false") {
+    do_random_backoff = false;
+  } else {
+    cerr << "Invalid random backoff option: " << random_backoff_str << endl;
+    exit(ERROR_INVALID_RANDOM_BACKOFF);
+  }
+
   if (rank == 0) {
     cout << "Type of Workload = " << workload_type << endl;
     cout << "Type of Think Time = " << think_time_type << endl;
@@ -113,8 +125,8 @@ int main(int argc, char** argv) {
     cout << "Lock Mode = " << lock_mode_str << endl;
   }
 
-  LockManager::SetFailRetry(fail_retry);
-  LockManager::SetPollRetry(poll_retry);
+  LockManager::SetFailRetry(num_retry);
+  LockManager::SetPollRetry(num_retry);
 
   std::unique_ptr<LockManager> lock_manager(
       new LockManager(argv[1], rank, num_managers, num_lock_object, lock_mode));
@@ -134,11 +146,19 @@ int main(int argc, char** argv) {
     if (workload_type == "simple") {
       simulator.reset(new LockSimulator(lock_manager.get(), num_managers,
                                         num_lock_object, request_size,
-                                        think_time_type));
+                                        think_time_type, do_random_backoff));
     } else if (workload_type == "hotspot") {
-      simulator.reset(new HotspotLockSimulator(lock_manager.get(), num_managers,
-                                               num_lock_object, request_size,
-                                               think_time_type));
+      simulator.reset(new HotspotLockSimulator(
+          lock_manager.get(), num_managers, num_lock_object, request_size,
+          think_time_type, do_random_backoff));
+    } else if (workload_type == "tpcc-uniform") {
+      simulator.reset(new TPCCLockSimulator(lock_manager.get(), num_managers,
+                                            kTPCCNumObjects, think_time_type,
+                                            do_random_backoff, rank));
+    } else if (workload_type == "tpcc-hotspot") {
+      simulator.reset(new TPCCLockSimulator(lock_manager.get(), 1,
+                                            kTPCCNumObjects, think_time_type,
+                                            do_random_backoff, 0));
     } else {
       cerr << "Unknown workload: " << workload_type << endl;
       exit(-2);
@@ -217,6 +237,7 @@ int main(int argc, char** argv) {
   for (int i = 0; i < num_users; ++i) {
     users[i]->Stop();
   }
+  abort();
   for (int i = 0; i < num_users; ++i) {
     try {
       user_threads[i]->join(5000);
@@ -245,6 +266,14 @@ int main(int argc, char** argv) {
   double average_latency_with_contention = 0;
   double average_99pct_latency_with_contention = 0;
   double average_999pct_latency_with_contention = 0;
+  double total_average_latency_with_backoff = 0;
+  double total_average_99pct_latency_with_backoff = 0;
+  double total_average_999pct_latency_with_backoff = 0;
+  double average_latency_with_backoff = 0;
+  double average_99pct_latency_with_backoff = 0;
+  double average_999pct_latency_with_backoff = 0;
+  double average_backoff_time = 0;
+  double total_average_backoff_time = 0;
   uint64_t total_max_latency = 0;
   uint64_t max_latency = 0;
   uint64_t total_throughput = 0;
@@ -254,10 +283,13 @@ int main(int argc, char** argv) {
   uint64_t total_count = 0;
   uint64_t count_with_contention = 0;
   uint64_t total_count_with_contention = 0;
+  uint64_t count_with_backoff = 0;
+  uint64_t total_count_with_backoff = 0;
   for (int i = 0; i < num_users; ++i) {
     users[i]->SortLatency();
     count += users[i]->GetCount();
     count_with_contention += users[i]->GetCountWithContention();
+    count_with_backoff += users[i]->GetCountWithBackoff();
     average_latency += users[i]->GetAverageLatency();
     average_99pct_latency += users[i]->Get99PercentileLatency();
     average_999pct_latency += users[i]->Get999PercentileLatency();
@@ -267,6 +299,12 @@ int main(int argc, char** argv) {
         users[i]->Get99PercentileLatencyWithContention();
     average_999pct_latency_with_contention +=
         users[i]->Get999PercentileLatencyWithContention();
+    average_latency_with_backoff += users[i]->GetAverageLatencyWithBackoff();
+    average_99pct_latency_with_backoff +=
+        users[i]->Get99PercentileLatencyWithBackoff();
+    average_999pct_latency_with_backoff +=
+        users[i]->Get999PercentileLatencyWithBackoff();
+    average_backoff_time += users[i]->GetAverageBackoffTime();
     max_latency = (max_latency < users[i]->GetMaxLatency())
                       ? users[i]->GetMaxLatency()
                       : max_latency;
@@ -279,10 +317,16 @@ int main(int argc, char** argv) {
   average_99pct_latency_with_contention /= num_users;
   average_999pct_latency_with_contention /= num_users;
 
+  average_latency_with_backoff /= num_users;
+  average_99pct_latency_with_backoff /= num_users;
+  average_999pct_latency_with_backoff /= num_users;
+
   MPI_Reduce(&cpu_usage, &average_cpu_usage, 1, MPI_DOUBLE, MPI_SUM, 0,
              MPI_COMM_WORLD);
   MPI_Reduce(&average_latency, &total_average_latency, 1, MPI_DOUBLE, MPI_SUM,
              0, MPI_COMM_WORLD);
+  MPI_Reduce(&average_backoff_time, &total_average_backoff_time, 1, MPI_DOUBLE,
+             MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Reduce(&average_99pct_latency, &total_average_99pct_latency, 1,
              MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Reduce(&average_999pct_latency, &total_average_999pct_latency, 1,
@@ -300,9 +344,20 @@ int main(int argc, char** argv) {
              &total_average_999pct_latency_with_contention, 1, MPI_DOUBLE,
              MPI_SUM, 0, MPI_COMM_WORLD);
 
+  MPI_Reduce(&average_latency_with_backoff, &total_average_latency_with_backoff,
+             1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&average_99pct_latency_with_backoff,
+             &total_average_99pct_latency_with_backoff, 1, MPI_DOUBLE, MPI_SUM,
+             0, MPI_COMM_WORLD);
+  MPI_Reduce(&average_999pct_latency_with_backoff,
+             &total_average_999pct_latency_with_backoff, 1, MPI_DOUBLE, MPI_SUM,
+             0, MPI_COMM_WORLD);
+
   MPI_Reduce(&count, &total_count, 1, MPI_LONG_LONG_INT, MPI_SUM, 0,
              MPI_COMM_WORLD);
   MPI_Reduce(&count_with_contention, &total_count_with_contention, 1,
+             MPI_LONG_LONG_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&count_with_backoff, &total_count_with_backoff, 1,
              MPI_LONG_LONG_INT, MPI_SUM, 0, MPI_COMM_WORLD);
 
   if (rank == 0) {
@@ -313,6 +368,10 @@ int main(int argc, char** argv) {
     total_average_latency_with_contention /= num_managers;
     total_average_99pct_latency_with_contention /= num_managers;
     total_average_999pct_latency_with_contention /= num_managers;
+    total_average_latency_with_backoff /= num_managers;
+    total_average_99pct_latency_with_backoff /= num_managers;
+    total_average_999pct_latency_with_backoff /= num_managers;
+    total_average_backoff_time /= num_managers;
     // Sort throughputs.
     std::sort(throughputs.begin(), throughputs.end());
     total_throughput =
@@ -323,6 +382,7 @@ int main(int argc, char** argv) {
     cout << "Tx Count = " << total_count << endl;
     cout << "Tx Count With Contention = " << total_count_with_contention
          << endl;
+    cout << "Tx Count With Backoff = " << total_count_with_backoff << endl;
     cout << "Avg. Throughput = " << average_throughput << endl;
     cout << "99pct Throughput = " << throughput_99pct << endl;
     cout << "Max Throughput = " << max_throughput << endl;
@@ -337,28 +397,47 @@ int main(int argc, char** argv) {
          << total_average_99pct_latency_with_contention << " us" << endl;
     cout << "Avg. 99.9pct Latency With Contention = "
          << total_average_999pct_latency_with_contention << " us" << endl;
+    cout << "Avg. Latency With Backoff = " << total_average_latency_with_backoff
+         << " us" << endl;
+    cout << "Avg. 99pct Latency With Backoff = "
+         << total_average_99pct_latency_with_backoff << " us" << endl;
+    cout << "Avg. 99.9pct Latency With Backoff = "
+         << total_average_999pct_latency_with_backoff << " us" << endl;
+    cout << "Avg. Backoff Time = " << total_average_backoff_time << " us"
+         << endl;
     cout << "Max Latency = " << total_max_latency << " us" << endl;
 
     // Print as CVS at the end.
     cout << "Workload, Think Time, Lock Mode, # Nodes, # Objects Per Node, "
+         << "# Retry, "
+         << "Uses Backoff, "
          << "Avg. CPU Usage, Tx Count, Tx Count With Contention, "
+         << "Tx Count With Backoff, "
          << "Avg. Throughput, 99pct Throughput, Max Throughput, "
          << "Avg. Latency, Avg. 99pct Latency, Avg. 99.9pct Latency, "
          << "Avg. Latency With Contention, "
          << "Avg. 99pct Latency With Contention, "
          << "Avg. 99.9pct Latency With Contention, "
+         << "Avg. Latency With Backoff, "
+         << "Avg. 99pct Latency With Backoff, "
+         << "Avg. 99.9pct Latency With Backoff, "
+         << "Avg. Backoff Time, "
          << "Max Latency" << endl;
     cout << workload_type << "," << think_time_type << "," << lock_mode_str
-         << "," << num_managers << "," << num_lock_object << ","
-         << average_cpu_usage << "," << total_count << ","
-         << total_count_with_contention << "," << average_throughput << ","
+         << "," << num_managers << "," << num_lock_object << "," << num_retry
+         << "," << random_backoff_str << "," << average_cpu_usage << ","
+         << total_count << "," << total_count_with_contention << ","
+         << total_count_with_backoff << "," << average_throughput << ","
          << throughput_99pct << "," << max_throughput << ","
          << total_average_latency << "," << total_average_99pct_latency << ","
          << total_average_999pct_latency << ","
          << total_average_latency_with_contention << ","
          << total_average_99pct_latency_with_contention << ","
-         << total_average_999pct_latency_with_contention << "," << max_latency
-         << endl;
+         << total_average_999pct_latency_with_contention << ","
+         << total_average_latency_with_backoff << ","
+         << total_average_99pct_latency_with_backoff << ","
+         << total_average_999pct_latency_with_backoff << ","
+         << total_average_backoff_time << "," << max_latency << endl;
   }
   MPI_Finalize();
 }

@@ -164,6 +164,7 @@ int LockManager::RegisterUser(uint32_t user_id, LockSimulator* user) {
 
 int LockManager::InitializeLockClients() {
   int ret = 0;
+  temp_lock_clients_ = new LockClient*[num_manager_];
   for (int i = 0; i < num_manager_; ++i) {
     for (int j = 0; j < 1; ++j) {
       // for (unsigned int j = 0; j < users.size(); ++j) {
@@ -187,6 +188,7 @@ int LockManager::InitializeLockClients() {
 
       // lock_clients_[MAX_USER*i+user->GetID()] = client;
       lock_clients_[i] = client;
+      temp_lock_clients_[i] = client;
       lock_client_threads_.push_back(client_thread);
 
       if (ret) {
@@ -634,7 +636,10 @@ int LockManager::NotifyLockMode(Context* context) {
 
 const Poco::Optional<std::promise<LockResultInfo>*> LockManager::Lock(
     const LockRequest& request) {
+  Poco::Mutex::ScopedLock lock(mutex_);
   lock_result_map_[request.user_id] = std::promise<LockResultInfo>();
+  LockStatusInfo status(request.seq_no, request.user_id, LOCKING);
+  lock_status_map_[request.lm_id][request.obj_index] = status;
   LockClient* lock_client = lock_clients_[request.lm_id];
   if (lock_client->RequestLock(request, lock_mode_table_[request.lm_id])) {
     return Poco::Optional<std::promise<LockResultInfo>*>(
@@ -646,7 +651,10 @@ const Poco::Optional<std::promise<LockResultInfo>*> LockManager::Lock(
 
 const Poco::Optional<std::promise<LockResultInfo>*> LockManager::Unlock(
     const LockRequest& request) {
+  Poco::Mutex::ScopedLock lock(mutex_);
   lock_result_map_[request.user_id] = std::promise<LockResultInfo>();
+  LockStatusInfo status(request.seq_no, request.user_id, UNLOCKING);
+  lock_status_map_[request.lm_id][request.obj_index] = status;
   LockClient* lock_client = lock_clients_[request.lm_id];
   if (lock_client->RequestUnlock(request, lock_mode_table_[request.lm_id])) {
     return Poco::Optional<std::promise<LockResultInfo>*>(
@@ -672,17 +680,11 @@ int LockManager::SwitchToRemote() {
   return 0;
 }
 
-int LockManager::GrantLock(int seq_no, int target_node_id, int owner_node_id,
+int LockManager::GrantLock(int seq_no, int releasing_node_id,
+                           int target_node_id, int owner_node_id,
                            LockType lock_type, int obj_index) {
-  // uint64_t waiting_id = user_to_home_map_[user_id];
-  // CommunicationClient* client =
-  // communication_clients_[MAX_USER*waiting_id+user_id];
   CommunicationClient* client = communication_clients_[owner_node_id];
-  // cerr << "GrantLock():" << rank_ << "," << waiting_id << "," << home_id <<
-  // "," <<  user_id <<endl;
-  uintptr_t user_id = queued_user_[obj_index];
-  queued_user_[obj_index] = 0;
-  return client->GrantLock(seq_no, target_node_id, user_id, obj_index,
+  return client->GrantLock(seq_no, releasing_node_id, target_node_id, obj_index,
                            lock_type);
 }
 
@@ -777,10 +779,10 @@ int LockManager::LockLocallyWithQueue(Context* context, Message* message) {
   int seq_no = message->seq_no;
   uint32_t target_node_id = rank_;
   uint32_t owner_node_id = message->owner_node_id;
-  uint32_t owner_user_id = message->owner_user_id;
+  uintptr_t owner_user_id = message->owner_user_id;
   int obj_index = message->obj_index;
   LockType lock_type = message->lock_type;
-  uint32_t lock_value = message->owner_user_id;
+  uint32_t lock_value = message->owner_node_id;
   LockWaitQueue* queue = wait_queues_[obj_index];
 
   uint64_t* lock_object = NULL;
@@ -971,7 +973,7 @@ int LockManager::UnlockLocallyWithRetry(Context* context, Message* message) {
 
   LockResult lock_result = FAILURE;
   int seq_no = message->seq_no;
-  uint32_t owner_node_id = message->owner_node_id;
+  uintptr_t owner_node_id = message->owner_node_id;
   uint32_t owner_user_id = message->owner_user_id;
   int obj_index = message->obj_index;
   LockType lock_type = message->lock_type;
@@ -1040,11 +1042,11 @@ int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
   LockResult lock_result = FAILURE;
   int seq_no = message->seq_no;
   // uint32_t owner_node_id = message->owner_node_id;
-  uint32_t owner_user_id = message->owner_user_id;
+  uintptr_t owner_user_id = message->owner_user_id;
   int obj_index = message->obj_index;
   LockType lock_type = message->lock_type;
   LockWaitQueue* queue = wait_queues_[obj_index];
-  uint32_t lock_value = message->owner_user_id;
+  uint32_t lock_value = message->owner_node_id;
 
   // lock locally on lock table
   pthread_mutex_lock(lock_mutex_[obj_index]);
@@ -1079,7 +1081,7 @@ int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
       // CommunicationClient* client =
       // communication_clients_[MAX_USER*elem->home_id+elem->user_id];
       CommunicationClient* client = communication_clients_[elem->owner_node_id];
-      lock_value = (uint32_t)elem->owner_user_id;
+      lock_value = (uint32_t)elem->owner_node_id;
       exclusive = (uint32_t)((*lock_object) >> 32);
       shared = (uint32_t)(*lock_object);
       if (exclusive == 0 && elem->type == SHARED) {
@@ -1195,7 +1197,7 @@ int LockManager::TryLock(Context* context, Message* message) {
   uint32_t target_node_id = message->target_node_id;
   LockType lock_type = message->lock_type;
   int obj_index = message->obj_index;
-  uint32_t owner_user_id = message->owner_user_id;
+  uintptr_t owner_user_id = message->owner_user_id;
   // LockClient* client = lock_clients_[MAX_USER*home_id+user_id];
   LockClient* client = lock_clients_[target_node_id];
   NotifyLockClient* notify_client = dynamic_cast<NotifyLockClient*>(client);
@@ -1209,7 +1211,7 @@ int LockManager::TryLock(Context* context, Message* message) {
   // sends the ACK message back to CommunicationClient
   this->SendGrantLockAck(context, seq_no, owner_user_id, lock_type, obj_index);
 
-  return notify_client->TryLock(seq_no, rank_, lock_type, obj_index);
+  return notify_client->TryLock(*message);
 }
 
 int LockManager::UnlockLocalDirect(uint32_t user_id, LockType lock_type,
@@ -1257,6 +1259,11 @@ std::promise<LockResultInfo>* LockManager::GetLockResult(uintptr_t user_id) {
   return &lock_result_map_[user_id];
 }
 
+void LockManager::SetLockStatusInvalid(uint32_t node_id, uint32_t obj_index) {
+  Poco::Mutex::ScopedLock lock(mutex_);
+  lock_status_map_[node_id][obj_index].status = INVALID;
+}
+
 int LockManager::NotifyLockRequestResult(int seq_no, uintptr_t user_id,
                                          LockType lock_type, int target_node_id,
                                          int obj_index, int contention_count,
@@ -1271,7 +1278,12 @@ int LockManager::NotifyLockRequestResult(int seq_no, uintptr_t user_id,
 
   Poco::Mutex::ScopedLock lock(mutex_);
   LockResultInfo result_info(result, contention_count);
-  lock_result_map_[user_id].set_value(result_info);
+  auto& status = lock_status_map_[target_node_id][obj_index];
+  if (status.seq_no == seq_no && status.status == LOCKING &&
+      status.user_id == user_id) {
+    lock_result_map_[user_id].set_value(result_info);
+  }
+  lock_status_map_[target_node_id].erase(obj_index);
 
   if (result == QUEUED) {
     lock_result_map_[user_id] = std::promise<LockResultInfo>();
@@ -1289,20 +1301,20 @@ int LockManager::NotifyUnlockRequestResult(int seq_no, uintptr_t user_id,
                                            LockType lock_type,
                                            int target_node_id, int obj_index,
                                            LockResult result) {
-  // if (lock_mode_ == LOCK_REMOTE_QUEUE || lock_mode_ == LOCK_REMOTE_NOTIFY) {
-  // llm_->Unlock(target_node_id, obj_index, user_id, lock_type, result);
-  //}
-
-  // LockSimulator* user = user_map[user_id];
-  // user->NotifyResult(seq_no, LockManager::TASK_UNLOCK, lock_type, obj_index,
-  // result);
-  // queued_user_[obj_index] = -1;
-
-  lock_result_map_[user_id].set_value(LockResultInfo(result, 0));
+  Poco::Mutex::ScopedLock lock(mutex_);
+  auto& status = lock_status_map_[target_node_id][obj_index];
+  if (status.seq_no == seq_no && status.status == UNLOCKING &&
+      status.user_id == user_id) {
+    lock_result_map_[user_id].set_value(LockResultInfo(result, 0));
+  } else {
+    lock_result_map_[user_id].set_value(LockResultInfo(FAILURE, 0));
+  }
+  lock_status_map_[target_node_id].erase(obj_index);
   return 0;
 }
 
 int LockManager::SendMessage(Context* context) {
+  Poco::Mutex::ScopedLock lock(mutex_);
   struct ibv_send_wr send_work_request;
   struct ibv_send_wr* bad_work_request;
   struct ibv_sge sge;
@@ -1338,6 +1350,7 @@ int LockManager::SendMessage(Context* context) {
 
 // Post receive to get message from clients
 int LockManager::ReceiveMessage(Context* context) {
+  Poco::Mutex::ScopedLock lock(mutex_);
   struct ibv_recv_wr receive_work_request;
   struct ibv_recv_wr* bad_work_request;
   struct ibv_sge sge;
@@ -1386,8 +1399,8 @@ void LockManager::BuildQueuePairAttr(Context* context,
   attributes->send_cq = context->completion_queue;
   attributes->recv_cq = context->completion_queue;
   attributes->qp_type = IBV_QPT_RC;
-  attributes->cap.max_send_wr = 2048;
-  attributes->cap.max_recv_wr = 2048;
+  attributes->cap.max_send_wr = 4096;
+  attributes->cap.max_recv_wr = 4096;
   attributes->cap.max_send_sge = 4;
   attributes->cap.max_recv_sge = 4;
   attributes->comp_mask =

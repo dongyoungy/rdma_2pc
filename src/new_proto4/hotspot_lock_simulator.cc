@@ -5,9 +5,10 @@ namespace proto {
 
 HotspotLockSimulator::HotspotLockSimulator(LockManager* manager, int num_nodes,
                                            int num_objects, int request_size,
-                                           string think_time_type)
+                                           string think_time_type,
+                                           bool do_random_backoff)
     : LockSimulator(manager, num_nodes, num_objects, request_size,
-                    think_time_type) {}
+                    think_time_type, do_random_backoff) {}
 
 void HotspotLockSimulator::CreateRequest() {
   // Generate random requests.

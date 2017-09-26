@@ -21,8 +21,12 @@ enum LockMode {
 };
 enum Task { LOCK, UNLOCK, READ, READ_UNLOCK, READ_LOCK };
 enum ThinkTimeType { ZERO, NORMAL, UNKNOWN };
+enum LockStatus { IDLE, LOCKING, UNLOCKING, INVALID };
 
 const uint64_t kTransactionMax = 100000000;
+const uint32_t kMaxBackoff = 1000000;  // microseconds
+const uint32_t kBaseBackoff = 100;     // microseconds
+const uint64_t kTPCCNumObjects = 700000;
 
 static const int WORKLOAD_UNIFORM = 0;
 static const int WORKLOAD_HOTSPOT = 1;
@@ -65,6 +69,9 @@ static const int READ_NOTIFYING = 2;
 static const int ERROR_UNKNOWN_THINK_TIME_TYPE = -1000;
 static const int ERROR_UNLOCK_FAIL = -1001;
 static const int ERROR_INVALID_LOCK_MODE = -1002;
+static const int ERROR_INVALID_RANDOM_BACKOFF = -1003;
+static const int ERROR_INVALID_OPCODE = -1004;
+static const int ERROR_INVALID_FUTURE_STATUS = -1005;
 }  // namespace proto
 }  // namespace rdma
 

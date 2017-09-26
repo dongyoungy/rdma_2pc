@@ -2,7 +2,6 @@
 #define RDMA_PROTO_LOCK_CLIENT_H
 
 #include <unordered_map>
-#include "Poco/Condition.h"
 #include "Poco/Mutex.h"
 #include "client.h"
 
@@ -26,8 +25,6 @@ class LockClient : public Client {
   virtual bool UnlockRemotely(Context* context, const LockRequest& request,
                               bool is_undo = false, bool retry = false);
   virtual int ReadRemotely(Context* context, const LockRequest& request);
-  virtual int ReadRemotely(Context* context, int seq_no, uintptr_t user_id,
-                           LockType lock_type, int obj_index);
   int SendLockTableRequest(Context* context);
   int SendLockModeRequest(Context* context);
   bool SendLockRequest(Context* context, const LockRequest& request);
@@ -48,11 +45,13 @@ class LockClient : public Client {
   int UndoLocking(Context* context, const LockRequest& request,
                   bool polling = false);
 
-  std::map<uintptr_t, bool> user_retry_count_;
+  std::map<uintptr_t, int> user_retry_count_;
   std::map<uintptr_t, bool> user_fail_;
   std::map<uintptr_t, bool> user_polling_;
   std::map<uintptr_t, uint32_t> user_waiters_;
   std::map<uintptr_t, uint64_t> user_all_waiters_;
+  std::map<uint32_t, uint64_t> waiters_before_me_;
+  std::map<int, uintptr_t> queued_user_;
 
   Poco::Mutex lock_mutex_;
 
