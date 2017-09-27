@@ -217,7 +217,6 @@ int NotifyLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     cerr << "(NotifyLockClient) Work completion status is not IBV_WC_SUCCESS: "
          << work_completion->status << ", opcode = " << work_completion->opcode
          << ", pid = " << getpid() << endl;
-    sleep(30);
     return -1;
   }
 

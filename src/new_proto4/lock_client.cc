@@ -183,11 +183,6 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     exclusive = (uint32_t)((value) >> 32);
     shared = (uint32_t)value;
 
-    if (exclusive >= 16 || shared >= 16) {
-      cout << "pid = " << getpid() << endl;
-      sleep(1000000);
-    }
-
     request->exclusive = exclusive;
     request->shared = shared;
 
