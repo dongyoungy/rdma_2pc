@@ -14,6 +14,7 @@
 #include "lock_manager.h"
 #include "lock_simulator.h"
 #include "mpi.h"
+#include "test_lock_simulator.h"
 #include "tpcc_lock_simulator.h"
 
 using namespace std;
@@ -149,6 +150,10 @@ int main(int argc, char** argv) {
       simulator.reset(new LockSimulator(lock_manager.get(), num_managers,
                                         num_lock_object, request_size,
                                         think_time_type, do_random_backoff));
+    } else if (workload_type == "test") {
+      simulator.reset(new TestLockSimulator(lock_manager.get(), num_managers,
+                                            num_lock_object, think_time_type,
+                                            do_random_backoff));
     } else if (workload_type == "hotspot") {
       simulator.reset(new HotspotLockSimulator(
           lock_manager.get(), num_managers, num_lock_object, request_size,
@@ -243,6 +248,8 @@ int main(int argc, char** argv) {
       }
 #ifdef DEBUG
       if (zero_count >= 5) {
+        // cout << "zero throughput: " << getpid() << endl;
+        // sleep(600000);
         // abort();
       }
 #endif
@@ -332,6 +339,7 @@ int main(int argc, char** argv) {
                       ? users[i]->GetMaxLatency()
                       : max_latency;
   }
+  cout << "Count " << rank << " = " << count << endl;
   average_latency /= num_users;
   average_99pct_latency /= num_users;
   average_999pct_latency /= num_users;

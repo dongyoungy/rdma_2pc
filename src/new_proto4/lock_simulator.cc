@@ -75,8 +75,6 @@ void LockSimulator::run() {
           // Handle queued case.
           bool timeout = false;
           if (result_info.result == QUEUED) {
-            cout << getpid() << endl;
-            sleep(20);
             auto lock_future =
                 manager_->GetLockResult(uintptr_t(this))->get_future();
             auto future_status =
@@ -97,7 +95,7 @@ void LockSimulator::run() {
           // if locks have been failed, revert acquired locks and perform random
           // backoff.
           if (timeout || result_info.result == FAILURE) {
-            if (i >= 0) {
+            if (i > 0) {
               // Revert only acquired locks.
               RevertLocks(--i);
             }
@@ -169,7 +167,11 @@ void LockSimulator::RevertLocks(int& index) {
     if (lock_result.isSpecified()) {
       auto lock_future = lock_result.value()->get_future();
       LockResultInfo result_info = lock_future.get();
-      if (result_info.result == SUCCESS) --index;
+      if (result_info.result == SUCCESS) {
+        --index;
+      } else {
+        exit(ERROR_UNLOCK_FAIL);
+      }
     } else {
       exit(ERROR_UNLOCK_FAIL);
     }

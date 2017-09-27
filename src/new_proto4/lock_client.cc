@@ -116,8 +116,11 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     total_rdma_atomic_time_ += time_taken;
 
     uint64_t prev_value = request->original_value;
+    uint64_t value = prev_value;
 #if __BYTE_ORDER == __LITTLE_ENDIAN
-    uint64_t value = __bswap_constant_64(prev_value);  // Compiler builtin
+    if (LockManager::IsAtomicHCAReplyBe()) {
+      value = __bswap_constant_64(prev_value);  // Compiler builtin
+    }
 #endif
     uint32_t exclusive, shared;
     exclusive = (uint32_t)((value) >> 32);
@@ -170,12 +173,20 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     total_rdma_atomic_time_ += time_taken;
 
     uint64_t prev_value = request->original_value;
+    uint64_t value = prev_value;
 #if __BYTE_ORDER == __LITTLE_ENDIAN
-    uint64_t value = __bswap_constant_64(prev_value);  // Compiler builtin
+    if (LockManager::IsAtomicHCAReplyBe()) {
+      value = __bswap_constant_64(prev_value);  // Compiler builtin
+    }
 #endif
     uint32_t exclusive, shared;
     exclusive = (uint32_t)((value) >> 32);
     shared = (uint32_t)value;
+
+    if (exclusive >= 16 || shared >= 16) {
+      cout << "pid = " << getpid() << endl;
+      sleep(1000000);
+    }
 
     request->exclusive = exclusive;
     request->shared = shared;
@@ -187,6 +198,8 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           ++total_lock_success_;
           total_exclusive_lock_remote_time_ += time_taken;
           ++num_exclusive_lock_;
+
+          user_retry_count_[request->user_id] = 0;
           local_manager_->NotifyLockRequestResult(
               request->seq_no, request->user_id, request->lock_type,
               remote_lm_id_, request->obj_index, request->contention_count,
@@ -209,6 +222,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           ++total_lock_success_;
           total_shared_lock_remote_time_ += time_taken;
           ++num_shared_lock_;
+          user_retry_count_[request->user_id] = 0;
           local_manager_->NotifyLockRequestResult(
               request->seq_no, request->user_id, request->lock_type,
               remote_lm_id_, request->obj_index, request->contention_count,
@@ -231,8 +245,9 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           user_polling_[request->user_id] = false;
         } else {
           ++user_retry_count_[request->user_id];
-          if (user_retry_count_[request->user_id] >
+          if (user_retry_count_[request->user_id] >=
               LockManager::GetPollRetry()) {
+            user_retry_count_[request->user_id] = 0;
             local_manager_->NotifyLockRequestResult(
                 request->seq_no, request->user_id, request->lock_type,
                 remote_lm_id_, request->obj_index, request->contention_count,
@@ -266,6 +281,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     if (request->read_target == READ_SHARED) {
       // Polling on Sh_X -> proceed if value is zero
       if (value == 0) {
+        user_retry_count_[request->user_id] = 0;
         local_manager_->NotifyLockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
             remote_lm_id_, request->obj_index, request->contention_count,
@@ -277,7 +293,9 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     } else {
       if (request->lock_type == EXCLUSIVE) {
         // exclusive -> exclusive
-        if (user_retry_count_[request->user_id] > LockManager::GetPollRetry()) {
+        if (user_retry_count_[request->user_id] >=
+            LockManager::GetPollRetry()) {
+          user_retry_count_[request->user_id] = 0;
           local_manager_->NotifyLockRequestResult(
               request->seq_no, request->user_id, request->lock_type,
               remote_lm_id_, request->obj_index, request->contention_count,
@@ -494,7 +512,6 @@ int LockClient::SendLockTableRequest(Context* context) {
 }
 
 bool LockClient::RequestLock(const LockRequest& request, LockMode lock_mode) {
-  user_retry_count_[request.user_id] = 0;
   user_fail_[request.user_id] = false;
   user_polling_[request.user_id] = false;
   user_waiters_[request.user_id] = 0;

@@ -289,6 +289,7 @@ int DirectQueueLockClient::HandleWorkCompletion(
       }
     } else if (request->task == UNLOCK) {
       if (request->is_undo) {
+        user_retry_count_[request->user_id] = 0;
         local_manager_->NotifyLockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
             remote_lm_id_, request->obj_index, request->contention_count,
@@ -319,6 +320,7 @@ int DirectQueueLockClient::HandleWorkCompletion(
         user_all_waiters_[request->user_id] = 0;
         ++total_lock_success_with_poll_;
         sum_poll_when_success_ += user_retry_count_[request->user_id];
+        user_retry_count_[request->user_id] = 0;
         local_manager_->NotifyLockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
             remote_lm_id_, request->obj_index, request->contention_count,
@@ -333,6 +335,7 @@ int DirectQueueLockClient::HandleWorkCompletion(
         user_all_waiters_[request->user_id] = 0;
         ++total_lock_success_with_poll_;
         sum_poll_when_success_ += user_retry_count_[request->user_id];
+        user_retry_count_[request->user_id] = 0;
         local_manager_->NotifyLockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
             remote_lm_id_, request->obj_index, request->contention_count,
