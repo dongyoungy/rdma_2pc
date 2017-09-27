@@ -630,9 +630,15 @@ int LockClient::ReadRemotely(Context* context, const LockRequest& request) {
   current_request->task = READ;
   lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
-  sge.addr = (uintptr_t)&current_request->read_buffer;
-  sge.length = sizeof(uint32_t);
-  sge.lkey = current_request->read_buffer_mr->lkey;
+  if (current_request->read_target == READ_ALL) {
+    sge.addr = (uintptr_t)&current_request->read_buffer2;
+    sge.length = sizeof(uint64_t);
+    sge.lkey = current_request->read_buffer2_mr->lkey;
+  } else {
+    sge.addr = (uintptr_t)&current_request->read_buffer;
+    sge.length = sizeof(uint32_t);
+    sge.lkey = current_request->read_buffer_mr->lkey;
+  }
 
   send_work_request.wr_id = (uint64_t)current_request;
   send_work_request.num_sge = 1;

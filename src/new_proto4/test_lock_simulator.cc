@@ -21,6 +21,7 @@ void TestLockSimulator::CreateRequest() {
     requests_[i]->obj_index = i;
     requests_[i]->lock_type = (rng_.nextBool()) ? SHARED : EXCLUSIVE;
     requests_[i]->contention_count = 0;
+    temp_lock_requests_[i] = requests_[i].get();
   }
 }
 

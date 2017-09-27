@@ -68,7 +68,6 @@ LockManager::LockManager(const string& work_dir, uint32_t rank, int num_manager,
   memset(fail_count_, 0x00, num_lock_object_ * sizeof(uint64_t));
 
   lock_mode_table_[rank_] = current_lock_mode_;
-
   // for (int i=0;i<num_manager_;++i) {
   //// every lock manager starts in remote mode.
   // lock_mode_table_[i] = LockManager::LOCK_REMOTE;

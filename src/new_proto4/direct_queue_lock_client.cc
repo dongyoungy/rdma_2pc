@@ -283,7 +283,7 @@ int DirectQueueLockClient::HandleWorkCompletion(
         } else {
           ++total_lock_contention_;
           ++request->contention_count;
-          user_all_waiters_[request->user_id] = exclusive;
+          user_all_waiters_[request->user_id] = value;
           this->HandleShared(request);
         }
       }
