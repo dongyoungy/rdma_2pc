@@ -1,6 +1,7 @@
 #include "message_buffer.h"
 
-namespace rdma { namespace proto {
+namespace rdma {
+namespace proto {
 
 MessageBuffer::MessageBuffer() {
   index_ = 0;
@@ -24,11 +25,10 @@ MessageBuffer::~MessageBuffer() {
 int MessageBuffer::Register(Context* context) {
   for (int i = 0; i < size_; ++i) {
     Message* message = messages_[i];
-    struct ibv_mr* mr = ibv_reg_mr(context->protection_domain,
-        message,
-        sizeof(*message),
-        IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
-        IBV_ACCESS_REMOTE_ATOMIC);
+    struct ibv_mr* mr =
+        ibv_reg_mr(context->protection_domain, message, sizeof(*message),
+                   IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
+                       IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
     if (mr == NULL) {
       cerr << "MessageBuffer::Register(): ibv_reg_mr() failed." << endl;
       return -1;
@@ -38,16 +38,13 @@ int MessageBuffer::Register(Context* context) {
   return 0;
 }
 
-Message* MessageBuffer::GetMessage() {
-  return messages_[index_];
-}
+Message* MessageBuffer::GetMessage() { return messages_[index_]; }
 
 struct ibv_mr* MessageBuffer::GetMR() {
   return mrs_[index_];
 }
 
-void MessageBuffer::Rotate() {
-  index_ = (index_ + 1) % size_;
-}
+void MessageBuffer::Rotate() { index_ = (index_ + 1) % size_; }
 
-}}
+}  // namespace proto
+}  // namespace rdma

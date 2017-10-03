@@ -13,6 +13,7 @@ HotspotLockSimulator::HotspotLockSimulator(LockManager* manager, int num_nodes,
 void HotspotLockSimulator::CreateRequest() {
   // Generate random requests.
   for (int i = 0; i < request_size_; ++i) {
+    requests_[i]->seq_no = seq_count_++;
     requests_[i]->user_id = (uintptr_t)this;
     requests_[i]->task = LOCK;
     requests_[i]->lm_id = 0;  // this is fixed to node 0.

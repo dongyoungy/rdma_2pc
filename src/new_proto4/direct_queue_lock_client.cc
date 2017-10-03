@@ -250,10 +250,11 @@ int DirectQueueLockClient::HandleWorkCompletion(
               request->seq_no, request->user_id, request->lock_type,
               remote_lm_id_, request->obj_index, request->contention_count,
               SUCCESS);
-          //} else if ((wait_after_me_[request->obj_index] & value) != 0) {
-          // wait_after_me_[request->obj_index] =
-          // (wait_after_me_[request->obj_index] & value);
-          // this->UndoLocking(context_, request, true);
+        } else if ((wait_after_me_[request->obj_index] & value) != 0) {
+          ++request->contention_count;
+          wait_after_me_[request->obj_index] =
+              (wait_after_me_[request->obj_index] & value);
+          this->UndoLocking(context_, *request, true);
         } else {
           ++total_lock_contention_;
           ++request->contention_count;
@@ -276,10 +277,11 @@ int DirectQueueLockClient::HandleWorkCompletion(
               request->seq_no, request->user_id, request->lock_type,
               remote_lm_id_, request->obj_index, request->contention_count,
               SUCCESS);
-          //} else if ((wait_after_me_[request->obj_index] & value) != 0) {
-          // wait_after_me_[request->obj_index] =
-          // (wait_after_me_[request->obj_index] & value);
-          // this->UndoLocking(context_, request, true);
+        } else if ((wait_after_me_[request->obj_index] & value) != 0) {
+          ++request->contention_count;
+          wait_after_me_[request->obj_index] =
+              (wait_after_me_[request->obj_index] & value);
+          this->UndoLocking(context_, *request, true);
         } else {
           ++total_lock_contention_;
           ++request->contention_count;
@@ -295,7 +297,12 @@ int DirectQueueLockClient::HandleWorkCompletion(
             remote_lm_id_, request->obj_index, request->contention_count,
             FAILURE);
       } else {
-        // wait_after_me_[request->obj_index] = value;
+        if (request->lock_type == EXCLUSIVE) {
+          value -= ((uint64_t)local_owner_bitvector_id_) << 32;
+        } else if (request->lock_type == SHARED) {
+          value -= local_owner_bitvector_id_;
+        }
+        wait_after_me_[request->obj_index] = value;
         local_manager_->NotifyUnlockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
             remote_lm_id_, request->obj_index, SUCCESS);

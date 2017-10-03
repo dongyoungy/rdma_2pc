@@ -398,6 +398,18 @@ int Client::RegisterMemoryRegion(Context* context) {
       cerr << "ibv_reg_mr() failed for read_buffer2_mr." << endl;
       return -1;
     }
+
+    // std::unique_ptr<uint64_t[]> buffer(new uint64_t[kNumFields]);
+    request->buffer.reset(new uint64_t[kNumFields]);
+    request->buffer_mr =
+        ibv_reg_mr(context->protection_domain, request->buffer.get(),
+                   sizeof(uint64_t) * kNumFields,
+                   IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
+                       IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
+    if (request->buffer_mr == NULL) {
+      cerr << "ibv_reg_mr() failed for buffer_mr." << endl;
+      return -1;
+    }
   }
 
   context->read_buffer_mr =

@@ -32,7 +32,7 @@ class LockClient : public Client {
 
   int HandleConnection(Context* context);
   int HandleDisconnect(Context* context);
-  int HandleWorkCompletion(struct ibv_wc* work_completion);
+  virtual int HandleWorkCompletion(struct ibv_wc* work_completion);
 
   int HandleSharedToExclusive(LockRequest* request);
   int HandleExclusiveToShared(LockRequest* request);

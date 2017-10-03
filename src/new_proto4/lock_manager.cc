@@ -1,5 +1,6 @@
 #include "lock_manager.h"
 #include "communication_client.h"
+#include "d2lm_lock_client.h"
 #include "direct_queue_lock_client.h"
 #include "direct_queue_lock_client_two.h"
 #include "lock_client.h"
@@ -27,7 +28,6 @@ LockManager::LockManager(const string& work_dir, uint32_t rank, int num_manager,
   num_client_ = num_client;
   num_total_user_ = num_total_user;
   num_lock_object_ = num_lock_object;
-  lock_table_ = new uint64_t[num_lock_object_];
   last_lock_table_ = new uint64_t[num_lock_object_];
   fail_count_ = new uint64_t[num_lock_object_];
   lock_mode_table_ = new LockMode[num_manager_];
@@ -63,9 +63,10 @@ LockManager::LockManager(const string& work_dir, uint32_t rank, int num_manager,
   current_lock_mode_ = lock_mode_;
 
   // initialize lock table with 0
-  memset(lock_table_, 0x00, num_lock_object_ * sizeof(uint64_t));
   memset(last_lock_table_, 0x00, num_lock_object_ * sizeof(uint64_t));
   memset(fail_count_, 0x00, num_lock_object_ * sizeof(uint64_t));
+  lock_table_ = new uint64_t[num_lock_object_];
+  memset(lock_table_, 0x00, num_lock_object_ * sizeof(uint64_t));
 
   lock_mode_table_[rank_] = current_lock_mode_;
   // for (int i=0;i<num_manager_;++i) {
@@ -87,11 +88,6 @@ LockManager::~LockManager() {
   if (lock_mode_table_) delete[] lock_mode_table_;
 
   if (wait_queues_) delete[] wait_queues_;
-
-  // destroy mutex and free the resource
-  for (int i = 0; i < num_lock_object_; ++i) {
-    pthread_mutex_destroy(lock_mutex_[i]);
-  }
 }
 
 void LockManager::run() { this->Run(); }
@@ -173,8 +169,10 @@ int LockManager::InitializeLockClients() {
       LockClient* client;
       if (lock_mode_ == REMOTE_NOTIFY)
         client = new NotifyLockClient(work_dir_, this, users.size(), i);
-      else if (lock_mode_ == REMOTE_QUEUE)
+      else if (lock_mode_ == REMOTE_D2LM_V1)
         client = new DirectQueueLockClient(work_dir_, this, users.size(), i);
+      else if (lock_mode_ == REMOTE_D2LM_V2)
+        client = new D2LMLockClient(work_dir_, this, users.size(), i);
       else
         client = new LockClient(work_dir_, this, users.size(), i);
 
@@ -347,33 +345,19 @@ int LockManager::RegisterMemoryRegion(Context* context) {
   context->lock_table = lock_table_;
 
   if (context->send_message_buffer->Register(context)) {
-    cerr << "MessageBuffer::Register failed()" << endl;
+    cerr << "LockManager: MessageBuffer::Register failed()" << endl;
     return -1;
   }
   if (context->receive_message_buffer->Register(context)) {
-    cerr << "MessageBuffer::Register failed()" << endl;
+    cerr << "LockManager: MessageBuffer::Register failed()" << endl;
     return -1;
   }
 
-  // context->send_mr = ibv_reg_mr(context->protection_domain,
-  // context->send_message,
-  // sizeof(*(context->send_message)),
-  // IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ);
-  // if (context->send_mr == NULL) {
-  // cerr << "ibv_reg_mr() failed for send_mr." << endl;
-  // return -1;
-  //}
-  // context->receive_mr = ibv_reg_mr(context->protection_domain,
-  // context->receive_message,
-  // sizeof(*(context->receive_message)),
-  // IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
-  // if (context->receive_mr == NULL) {
-  // cerr << "ibv_reg_mr() failed for receive_mr." << endl;
-  // return -1;
-  //}
+  size_t lock_table_size = num_lock_object_;
+
   context->lock_table_mr =
       ibv_reg_mr(context->protection_domain, context->lock_table,
-                 num_lock_object_ * sizeof(uint64_t),
+                 lock_table_size * sizeof(uint64_t),
                  IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ |
                      IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_ATOMIC);
   if (context->lock_table_mr == NULL) {

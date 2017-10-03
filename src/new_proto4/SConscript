@@ -2,10 +2,10 @@ Import("env")
 env.Append(LIBS=['rdmacm', 'ibverbs', 'pthread', 'rt'])
 env.Append(CCFLAGS='-fopenmp')
 env.Append(LINKFLAGS='-fopenmp')
-CommonObjs = env.Object(['think_time_generator.cc', 'lock_simulator.cc', 'test_lock_simulator.cc', 'tpcc_lock_simulator.cc', 'tpcc_lock_gen.cc', 'hotspot_lock_simulator.cc', 'local_work_queue.cc', 'lock_manager.cc', 'lock_wait_queue.cc', 'communication_client.cc', 'direct_queue_lock_client.cc', 'notify_lock_client.cc','lock_client.cc', 'client.cc', 'message_buffer.cc'])
+CommonObjs = env.Object(['think_time_generator.cc', 'lock_simulator.cc', 'test_lock_simulator.cc', 'tpcc_lock_simulator.cc', 'tpcc_lock_gen.cc', 'hotspot_lock_simulator.cc', 'local_work_queue.cc', 'lock_manager.cc', 'lock_wait_queue.cc', 'communication_client.cc', 'direct_queue_lock_client.cc', 'notify_lock_client.cc','lock_client.cc', 'client.cc', 'd2lm_lock_client.cc', 'd2lm_lock_manager.cc', 'message_buffer.cc'])
 #CommonObjs = env.Object(['lock_simulator.cc', 'tpcc_lock_gen.cc', 'kv_lock_simulator.cc', 'microbench_lock_simulator.cc', 'tpcc_lock_simulator.cc', 'fs_lock_simulator.cc', 'read_lock_simulator.cc', 'write_lock_simulator.cc', 'local_work_queue.cc', 'lock_manager.cc', 'lock_wait_queue.cc', 'communication_client.cc', 'direct_queue_lock_client.cc', 'notify_lock_client.cc','lock_client.cc', 'client.cc', 'message_buffer.cc'])
 lockSimulation = env.Program(target = 'lock_simulation', source = ['lock_simulation_driver.cc', CommonObjs])
-lockSimulationLocal = env.Program(target = 'lock_simulation_local', source = ['lock_simulation_driver_local.cc', CommonObjs])
+#lockSimulationLocal = env.Program(target = 'lock_simulation_local', source = ['lock_simulation_driver_local.cc', CommonObjs])
 #tpccLockSimulation = env.Program(target = 'tpcc_lock_simulation', source = ['tpcc_lock_simulation_driver.cc', CommonObjs])
 #microbenchLockSimulation = env.Program(target = 'microbench_lock_simulation', source = ['microbench_lock_simulation_driver.cc', CommonObjs])
 #rwLockSimulation = env.Program(target = 'rw_lock_simulation', source = ['rw_lock_simulation_driver.cc', CommonObjs])
@@ -27,5 +27,5 @@ lockSimulationLocal = env.Program(target = 'lock_simulation_local', source = ['l
 #kvLockSimulationLocal = env.Program(target = 'kv_lock_simulation_local', source = ['kv_lock_simulation_driver_local.cc', CommonObjs], LIBS=['rdmacm', 'ibverbs', 'pthread' ,'rt'])
 
 #binaries = [lockSimulation, fsLockSimulation, rwLockSimulation, lockSimulationLocal, tpccLockSimulation, tpccLockSimulationLocal, microbenchLockSimulation, microbenchLockSimulationLocal, kvLockSimulation, kvLockSimulationLocal]
-binaries = [lockSimulation, lockSimulationLocal]
+binaries = [lockSimulation]
 Return("binaries")

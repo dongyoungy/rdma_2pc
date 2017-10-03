@@ -45,6 +45,7 @@ class LockManager : public Poco::Runnable {
   LockManager(const string& work_dir, uint32_t rank, int num_manager,
               int num_lock_object, LockMode lock_mode, int num_total_user = 0,
               int num_client = 1);
+  LockManager(){};
   ~LockManager();
   virtual void run();
 
@@ -171,7 +172,7 @@ class LockManager : public Poco::Runnable {
   static map<uint32_t, uint32_t> user_to_node_map_;
   uint64_t* lock_table_;
 
- private:
+ protected:
   Context* BuildContext(struct rdma_cm_id* id);
   int PrintInfo();
   int GetInfinibandIP(string& ip_address);
@@ -179,7 +180,7 @@ class LockManager : public Poco::Runnable {
                           struct ibv_exp_qp_init_attr* attributes);
   int BuildConnectionManagerParams(struct rdma_conn_param* params);
   int RegisterContext(Context* context);
-  int RegisterMemoryRegion(Context* context);
+  virtual int RegisterMemoryRegion(Context* context);
   int ReceiveMessage(Context* context);
   int NotifyLockMode(Context* context);
   int NotifyLockModeAll();
@@ -241,7 +242,7 @@ class LockManager : public Poco::Runnable {
   LocalWorkQueue<Message>* local_work_queue_;
   pthread_t local_work_poller_;
 
-  std::unordered_map<uintptr_t, std::promise<LockResultInfo>> lock_result_map_;
+  std::map<uintptr_t, std::promise<LockResultInfo>> lock_result_map_;
   std::unordered_map<uint32_t, std::unordered_map<uint32_t, LockStatusInfo>>
       lock_status_map_;
 

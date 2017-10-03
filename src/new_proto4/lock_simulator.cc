@@ -60,6 +60,7 @@ void LockSimulator::run() {
     int contention_count = 0;
     int attempt = 0;
     int time_spent_backoff = 0;
+    bool backoff_done = false;
     Poco::Timestamp lock_start;
     last_lock_start_time_.update();
     while (i < request_size_) {
@@ -101,6 +102,7 @@ void LockSimulator::run() {
             }
             time_spent_backoff += PerformRandomBackoff(attempt);
             ++backoff_count_;
+            backoff_done = true;
             i = 0;
           } else if (result_info.result == SUCCESS ||
                      result_info.result == SUCCESS_FROM_QUEUED)
@@ -118,11 +120,10 @@ void LockSimulator::run() {
     if (time_spent_backoff > 0) {
       backoff_time_.push_back(time_spent_backoff);
     }
-    if (contention_count > 0) {
-      contention_latency_.push_back(latency);
-    }
-    if (time_spent_backoff > 0) {
+    if (backoff_done) {
       backoff_latency_.push_back(latency);
+    } else if (contention_count > 0) {
+      contention_latency_.push_back(latency);
     }
 
     // Enforce think time.
@@ -146,9 +147,11 @@ void LockSimulator::run() {
         if (result_info.result == SUCCESS) {
           --i;
         } else if (result_info.result == FAILURE) {
+          cerr << "Unlock failure." << endl;
           exit(ERROR_UNLOCK_FAIL);
         }
       } else {
+        cerr << "Unlock failure." << endl;
         exit(ERROR_UNLOCK_FAIL);
       }
     }

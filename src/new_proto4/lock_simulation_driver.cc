@@ -10,6 +10,7 @@
 
 #include "Poco/Thread.h"
 
+#include "d2lm_lock_manager.h"
 #include "hotspot_lock_simulator.h"
 #include "lock_manager.h"
 #include "lock_simulator.h"
@@ -100,8 +101,10 @@ int main(int argc, char** argv) {
     LockManager::SetExclusiveExclusiveRule("fail");
   } else if (lock_mode_str == "ncosed") {
     lock_mode = REMOTE_NOTIFY;
-  } else if (lock_mode_str == "d2lm") {
-    lock_mode = REMOTE_QUEUE;
+  } else if (lock_mode_str == "d2lm_1") {
+    lock_mode = REMOTE_D2LM_V1;
+  } else if (lock_mode_str == "d2lm_2") {
+    lock_mode = REMOTE_D2LM_V2;
   } else {
     cerr << "Invalid lock mode: " << lock_mode_str << endl;
     exit(ERROR_INVALID_LOCK_MODE);
@@ -117,7 +120,12 @@ int main(int argc, char** argv) {
     exit(ERROR_INVALID_RANDOM_BACKOFF);
   }
 
+  if (workload_type == "tpcc-uniform" || workload_type == "tpcc-hotspot") {
+    num_lock_object = kTPCCNumObjects;
+  }
+
   if (rank == 0) {
+    cout << "# of Nodes = " << num_managers << endl;
     cout << "Type of Workload = " << workload_type << endl;
     cout << "Type of Think Time = " << think_time_type << endl;
     cout << "Duration = " << duration << " s" << endl;
@@ -128,7 +136,6 @@ int main(int argc, char** argv) {
 
   LockManager::SetFailRetry(num_retry);
   LockManager::SetPollRetry(num_retry);
-
   std::unique_ptr<LockManager> lock_manager(
       new LockManager(argv[1], rank, num_managers, num_lock_object, lock_mode));
 
@@ -212,10 +219,20 @@ int main(int argc, char** argv) {
 
   // Start lock simulators
   std::vector<std::unique_ptr<Poco::Thread>> user_threads;
-  for (int i = 0; i < num_users; ++i) {
-    std::unique_ptr<Poco::Thread> user_thread(new Poco::Thread);
-    user_thread->start(*users[i]);
-    user_threads.push_back(std::move(user_thread));
+  if (workload_type == "hotspot" || workload_type == "tpcc-hotspot") {
+    if (rank != 0) {
+      for (int i = 0; i < num_users; ++i) {
+        std::unique_ptr<Poco::Thread> user_thread(new Poco::Thread);
+        user_thread->start(*users[i]);
+        user_threads.push_back(std::move(user_thread));
+      }
+    }
+  } else {
+    for (int i = 0; i < num_users; ++i) {
+      std::unique_ptr<Poco::Thread> user_thread(new Poco::Thread);
+      user_thread->start(*users[i]);
+      user_threads.push_back(std::move(user_thread));
+    }
   }
 
   int zero_count = 0;
@@ -258,10 +275,10 @@ int main(int argc, char** argv) {
     Poco::Thread::sleep(1000);
   }
 
-  for (int i = 0; i < num_users; ++i) {
+  for (size_t i = 0; i < users.size(); ++i) {
     users[i]->Stop();
   }
-  for (int i = 0; i < num_users; ++i) {
+  for (size_t i = 0; i < user_threads.size(); ++i) {
     try {
       user_threads[i]->join(5000);
     } catch (Poco::Exception& e) {
@@ -277,10 +294,12 @@ int main(int argc, char** argv) {
   MPI_Barrier(MPI_COMM_WORLD);
 
   // Simple sanity check.
-  if (lock_manager->lock_table_[0] != 0) {
-    cerr << "Value of index 0 is not zero: " << lock_manager->lock_table_[0]
-         << endl;
-    exit(ERROR_FAILED_SANITY_CHECK);
+  if (lock_mode != REMOTE_D2LM_V2) {
+    if (lock_manager->lock_table_[0] != 0) {
+      cerr << "Value of index 0 is not zero: " << lock_manager->lock_table_[0]
+           << endl;
+      exit(ERROR_FAILED_SANITY_CHECK);
+    }
   }
 
   double average_cpu_usage = 0;
@@ -468,7 +487,7 @@ int main(int argc, char** argv) {
          << total_average_latency_with_backoff << ","
          << total_average_99pct_latency_with_backoff << ","
          << total_average_999pct_latency_with_backoff << ","
-         << total_average_backoff_time << "," << max_latency << endl;
+         << total_average_backoff_time << "," << total_max_latency << endl;
   }
   MPI_Finalize();
 }

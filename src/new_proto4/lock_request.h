@@ -19,6 +19,13 @@ struct LockRequest {
     lock_type = other.lock_type;
     contention_count = other.contention_count;
     task = other.task;
+    prev_value = other.prev_value;
+    exclusive_number = other.exclusive_number;
+    shared_number = other.shared_number;
+    exclusive_leave = other.exclusive_leave;
+    shared_leave = other.shared_leave;
+    exclusive_max = other.exclusive_max;
+    shared_max = other.shared_max;
   }
   LockRequest& operator=(const LockRequest& other) {
     if (this != &other) {
@@ -30,6 +37,13 @@ struct LockRequest {
       lock_type = other.lock_type;
       contention_count = other.contention_count;
       task = other.task;
+      prev_value = other.prev_value;
+      exclusive_number = other.exclusive_number;
+      shared_number = other.shared_number;
+      exclusive_leave = other.exclusive_leave;
+      shared_leave = other.shared_leave;
+      exclusive_max = other.exclusive_max;
+      shared_max = other.shared_max;
     }
     return *this;
   }
@@ -58,6 +72,16 @@ struct LockRequest {
   uint32_t waiters;
   uint32_t exclusive;
   uint32_t shared;
+
+  std::unique_ptr<uint64_t[]> buffer;
+  struct ibv_mr* buffer_mr;
+
+  uint16_t exclusive_number = 0;
+  uint16_t shared_number = 0;
+  uint16_t exclusive_leave = 0;
+  uint16_t shared_leave = 0;
+  uint16_t exclusive_max = 0;
+  uint16_t shared_max = 0;
 };
 
 }  // namespace proto
