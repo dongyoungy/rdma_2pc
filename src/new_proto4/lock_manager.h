@@ -68,10 +68,28 @@ class LockManager : public Poco::Runnable {
   int NotifyLockRequestResult(int seq_no, uintptr_t user_id, LockType lock_type,
                               int target_node_id, int obj_index,
                               int contention_count, LockResult result);
+  int NotifyLockRequestResult(int seq_no, uintptr_t user_id, LockType lock_type,
+                              int target_node_id, int obj_index, LockStat stat,
+                              LockResult result);
   int NotifyUnlockRequestResult(int seq_no, uintptr_t user_id,
                                 LockType lock_type, int target_node_id,
                                 int obj_index, LockResult result);
   void SetLockStatusInvalid(uint32_t node_id, uint32_t obj_index);
+
+  // used by NCOSED.
+  int SendNCOSEDLockRequest(int seq_no, int current_owner_id, int node_id,
+                            int obj_index, int request_node_id,
+                            uintptr_t request_user_id, int shared_remaining,
+                            LockType type);
+  int SendNCOSEDLockGrant(int node_id, int obj_index);
+  int SendNCOSEDLockRelease(const LockRequest& request);
+  int SendNCOSEDLockReleaseSuccess(const LockRequest& request);
+  int HandleNCOSEDLockRequest(const Message& msg);
+  int HandleNCOSEDLockGrant(const Message& msg);
+  int HandleNCOSEDLockRelease(const Message& msg);
+  int HandleNCOSEDLockReleaseSuccess(const Message& msg);
+  void ResetSharedReleaseCount(int node_id, int obj_index);
+
   int GetID() const;
   int GetRank() const;
   LockMode GetLockMode() const;
@@ -301,6 +319,15 @@ class LockManager : public Poco::Runnable {
 
   uint64_t request_lock_call_time_;
   uint64_t request_lock_call_count_;
+
+  // used by NCOSED
+  std::map<int, std::map<int, bool>> lock_grant_map_;
+  std::map<int, std::map<int, int>> next_seq_no_map_;
+  std::map<int, std::map<int, int>> next_node_id_map_;
+  std::map<int, std::map<int, uintptr_t>> next_user_id_map_;
+  std::map<int, std::map<int, LockType>> next_lock_type_map_;
+  std::map<int, std::map<int, int>> shared_remaining_map_;
+  std::map<int, std::map<int, int>> shared_release_count_map_;
 };
 
 }  // namespace proto

@@ -24,12 +24,10 @@ class D2LMLockClient : public LockClient {
   bool ReadForReset(Context* context, const LockRequest& request);
   bool Reset(Context* context, const LockRequest& request);
   bool Undo(Context* context, const LockRequest& request);
-  bool Leave(Context* context, const LockRequest& request);
   virtual int HandleWorkCompletion(struct ibv_wc* work_completion);
 
-  std::map<int, uint16_t> other_max_map_;
-  std::map<int, LockType> do_reset_;
-  std::map<int, uint64_t> reset_value_;
+  std::map<uintptr_t, std::map<int, bool>> do_reset_;
+  std::map<uintptr_t, std::map<int, uint64_t>> reset_value_;
 };
 
 }  // namespace proto

@@ -132,16 +132,26 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
         ++total_lock_success_;
         total_exclusive_lock_remote_time_ += time_taken;
         ++num_exclusive_lock_;
+        user_retry_count_[request->user_id] = 0;
         local_manager_->NotifyLockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
             remote_lm_id_, request->obj_index, request->contention_count,
             SUCCESS);
       } else {
         ++request->contention_count;
-        local_manager_->NotifyLockRequestResult(
-            request->seq_no, request->user_id, request->lock_type,
-            remote_lm_id_, request->obj_index, request->contention_count,
-            RETRY);
+        ++user_retry_count_[request->user_id];
+        if (user_retry_count_[request->user_id] >=
+            LockManager::GetFailRetry()) {
+          local_manager_->NotifyLockRequestResult(
+              request->seq_no, request->user_id, request->lock_type,
+              remote_lm_id_, request->obj_index, request->contention_count,
+              FAILURE);
+        } else {
+          local_manager_->NotifyLockRequestResult(
+              request->seq_no, request->user_id, request->lock_type,
+              remote_lm_id_, request->obj_index, request->contention_count,
+              RETRY);
+        }
       }
     } else if (request->task == UNLOCK) {
       if (exclusive == request->owner_node_id && shared == 0) {
@@ -331,6 +341,7 @@ int LockClient::HandleExclusiveToShared(LockRequest* request) {
   if (rule == "fail") {
     this->UndoLocking(context_, *request);
   } else if (rule == "poll") {
+    this->UndoLocking(context_, *request, true);
     request->read_target = READ_EXCLUSIVE;
     this->ReadRemotely(context_, *request);
   } else if (rule == "queue") {
@@ -410,19 +421,16 @@ int LockClient::PollSharedToExclusive(LockRequest* request) {
 
 int LockClient::PollExclusiveToShared(LockRequest* request) {
   ++user_retry_count_[request->user_id];
-  if (user_retry_count_[request->user_id] > LockManager::GetPollRetry()) {
-    this->UndoLocking(context_, *request);
-    return FUNC_SUCCESS;
-  }
   const string& rule = LockManager::GetExclusiveSharedRule();
   uint32_t value = request->read_buffer;
   if (rule == "poll") {
     if (value == 0) {
-      ++total_lock_success_with_poll_;
-      sum_poll_when_success_ += user_retry_count_[request->user_id];
-      local_manager_->NotifyLockRequestResult(
-          request->seq_no, request->user_id, request->lock_type, remote_lm_id_,
-          request->obj_index, request->contention_count, SUCCESS);
+      //++total_lock_success_with_poll_;
+      // sum_poll_when_success_ += user_retry_count_[request->user_id];
+      // local_manager_->NotifyLockRequestResult(
+      // request->seq_no, request->user_id, request->lock_type, remote_lm_id_,
+      // request->obj_index, request->contention_count, SUCCESS);
+      this->LockRemotely(context_, *request);
     } else {
       this->ReadRemotely(context_, *request);
     }
@@ -519,8 +527,9 @@ bool LockClient::RequestLock(const LockRequest& request, LockMode lock_mode) {
   if (lock_mode == PROXY_RETRY || lock_mode == PROXY_QUEUE) {
     // ask lock manager to place the lock
     return this->SendLockRequest(context_, request);
-  } else if (lock_mode == REMOTE_POLL || lock_mode == REMOTE_NOTIFY ||
-             lock_mode == REMOTE_D2LM_V1 || lock_mode == REMOTE_D2LM_V2) {
+  } else if (lock_mode == REMOTE_POLL || lock_mode == REMOTE_DRTM ||
+             lock_mode == REMOTE_NOTIFY || lock_mode == REMOTE_D2LM_V1 ||
+             lock_mode == REMOTE_D2LM_V2) {
     // try locking remotely
     return this->LockRemotely(context_, request);
   } else {
@@ -530,10 +539,13 @@ bool LockClient::RequestLock(const LockRequest& request, LockMode lock_mode) {
 }
 
 bool LockClient::RequestUnlock(const LockRequest& request, LockMode lock_mode) {
+  user_fail_[request.user_id] = false;
+  user_polling_[request.user_id] = false;
   if (lock_mode == PROXY_RETRY || lock_mode == PROXY_QUEUE) {
     return this->SendUnlockRequest(context_, request);
-  } else if (lock_mode == REMOTE_POLL || lock_mode == REMOTE_NOTIFY ||
-             lock_mode == REMOTE_D2LM_V1 || lock_mode == REMOTE_D2LM_V2) {
+  } else if (lock_mode == REMOTE_POLL || lock_mode == REMOTE_DRTM ||
+             lock_mode == REMOTE_NOTIFY || lock_mode == REMOTE_D2LM_V1 ||
+             lock_mode == REMOTE_D2LM_V2) {
     return this->UnlockRemotely(context_, request);
   } else {
     cerr << "RequestUnlock(): Unknown lock mode: " << lock_mode << endl;
@@ -553,7 +565,8 @@ bool LockClient::LockRemotely(Context* context, const LockRequest& request) {
 
   LockRequest* current_request = lock_requests_[lock_request_idx_].get();
   *current_request = request;
-  current_request->owner_node_id = local_owner_bitvector_id_;
+  current_request->task = LOCK;
+  current_request->owner_node_id = local_owner_id_;
   lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
   sge.addr = (uintptr_t)&current_request->original_value;
@@ -569,13 +582,13 @@ bool LockClient::LockRemotely(Context* context, const LockRequest& request) {
   // switch (current_request->lock_type) {
   // case SHARED: {
   // exclusive = 0;
-  // shared = local_owner_bitvector_id_;
+  // shared = local_owner_id_;
   // uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
   // send_work_request.wr.atomic.compare_add = new_value;
   // break;
   //}
   // case EXCLUSIVE: {
-  // exclusive = local_owner_bitvector_id_;
+  // exclusive = local_owner_id_;
   // shared = 0;
   // uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
   // send_work_request.wr.atomic.compare_add = new_value;
@@ -590,7 +603,7 @@ bool LockClient::LockRemotely(Context* context, const LockRequest& request) {
     send_work_request.wr.atomic.compare_add = 1;
   } else if (current_request->lock_type == EXCLUSIVE) {
     send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_CMP_AND_SWP;
-    exclusive = local_owner_bitvector_id_;
+    exclusive = local_owner_id_;
     shared = 0;
     uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
     send_work_request.wr.atomic.compare_add = 0;
@@ -680,7 +693,7 @@ bool LockClient::UnlockRemotely(Context* context, const LockRequest& request,
 
   LockRequest* current_request = lock_requests_[lock_request_idx_].get();
   *current_request = request;
-  current_request->owner_node_id = local_owner_bitvector_id_;
+  current_request->owner_node_id = local_owner_id_;
   current_request->is_undo = is_undo;
   current_request->is_retry = retry;
   current_request->task = UNLOCK;
@@ -699,7 +712,7 @@ bool LockClient::UnlockRemotely(Context* context, const LockRequest& request,
   // switch (current_request->lock_type) {
   // case SHARED: {
   // exclusive = 0;
-  // shared = local_owner_bitvector_id_;
+  // shared = local_owner_id_;
   // uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
   // new_value = (-1) * new_value;  // need to subtract for unlock
   // send_work_request.wr.atomic.compare_add = new_value;
@@ -708,7 +721,7 @@ bool LockClient::UnlockRemotely(Context* context, const LockRequest& request,
   // case EXCLUSIVE: {
   // exclusive = 0;
   // shared = 0;
-  // uint64_t new_value = ((uint64_t)local_owner_bitvector_id_) << 32 | shared;
+  // uint64_t new_value = ((uint64_t)local_owner_id_) << 32 | shared;
   // new_value = (-1) * new_value;  // need to subtract for unlock
   // send_work_request.wr.atomic.compare_add = new_value;
   // break;
@@ -723,7 +736,7 @@ bool LockClient::UnlockRemotely(Context* context, const LockRequest& request,
   } else if (current_request->lock_type == EXCLUSIVE) {
     send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_CMP_AND_SWP;
     shared = 0;
-    uint64_t prev_value = ((uint64_t)local_owner_bitvector_id_) << 32 | shared;
+    uint64_t prev_value = ((uint64_t)local_owner_id_) << 32 | shared;
     send_work_request.wr.atomic.compare_add = prev_value;
     send_work_request.wr.atomic.swap = 0;
   }
@@ -761,6 +774,93 @@ bool LockClient::SendLockRequest(Context* context, const LockRequest& request) {
     cerr << "SendLockRequest(): SendMessage() failed." << endl;
     return false;
   }
+  return true;
+}
+
+bool LockClient::SendNCOSEDLockRelease(const LockRequest& request) {
+  Poco::Mutex::ScopedLock lock(lock_mutex_);
+  Message* msg = context_->send_message_buffer->GetMessage();
+
+  msg->type = Message::NCOSED_LOCK_RELEASE;
+  msg->lock_type = request.lock_type;
+  msg->seq_no = request.seq_no;
+  msg->node_id = request.lm_id;
+  msg->obj_index = request.obj_index;
+  msg->owner_user_id = request.user_id;
+  msg->owner_node_id = request.owner_node_id;
+
+  if (SendMessage(context_)) {
+    cerr << "SendLockRequest(): SendMessage() failed." << endl;
+    return false;
+  }
+
+  return true;
+}
+
+bool LockClient::SendNCOSEDLockReleaseSuccess(const LockRequest& request) {
+  Poco::Mutex::ScopedLock lock(lock_mutex_);
+  Message* msg = context_->send_message_buffer->GetMessage();
+
+  msg->type = Message::NCOSED_LOCK_RELEASE_SUCCESS;
+  msg->lock_type = request.lock_type;
+  msg->seq_no = request.seq_no;
+  msg->node_id = request.lm_id;
+  msg->obj_index = request.obj_index;
+  msg->owner_user_id = request.user_id;
+  msg->owner_node_id = request.owner_node_id;
+
+  if (SendMessage(context_)) {
+    cerr << "SendLockRequest(): SendMessage() failed." << endl;
+    return false;
+  }
+
+  return true;
+}
+
+bool LockClient::SendNCOSEDLockRequest(int seq_no, int node_id, int obj_index,
+                                       int request_node_id,
+                                       uintptr_t request_user_id,
+                                       int shared_remaining,
+                                       LockType lock_type) {
+  Poco::Mutex::ScopedLock lock(lock_mutex_);
+
+  Message* msg = context_->send_message_buffer->GetMessage();
+
+  msg->type = Message::NCOSED_LOCK_REQUEST;
+  msg->lock_type = lock_type;
+  msg->seq_no = seq_no;
+  msg->node_id = node_id;
+  msg->obj_index = obj_index;
+  msg->request_node_id = request_node_id;
+  msg->request_user_id = request_user_id;
+  msg->shared_remaining = shared_remaining;
+
+  if (SendMessage(context_)) {
+    cerr << "SendLockRequest(): SendMessage() failed." << endl;
+    return false;
+  }
+
+  return true;
+}
+
+bool LockClient::SendNCOSEDLockGrant(int seq_no, uintptr_t user_id, int node_id,
+                                     int obj_index, LockType lock_type) {
+  Poco::Mutex::ScopedLock lock(lock_mutex_);
+
+  Message* msg = context_->send_message_buffer->GetMessage();
+
+  msg->type = Message::NCOSED_LOCK_GRANT;
+  msg->lock_type = lock_type;
+  msg->seq_no = seq_no;
+  msg->node_id = node_id;
+  msg->obj_index = obj_index;
+  msg->owner_user_id = user_id;
+
+  if (SendMessage(context_)) {
+    cerr << "SendLockRequest(): SendMessage() failed." << endl;
+    return false;
+  }
+
   return true;
 }
 

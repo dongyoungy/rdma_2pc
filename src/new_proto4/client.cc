@@ -38,8 +38,8 @@ Client::Client(const string& work_dir, LockManager* local_manager,
   num_rdma_read_ = 0;
   num_rdma_atomic_ = 0;
 
-  local_owner_id_ = local_manager_->GetRank();
-  local_owner_bitvector_id_ = local_manager_->GetID();
+  local_owner_id_ = local_manager_->GetID();
+  local_owner_bitvector_id_ = pow(2, local_manager_->GetID() - 1);
 
   // initialize local lock mutex
   pthread_mutex_init(&msg_mutex_, NULL);
@@ -279,6 +279,7 @@ int Client::SendMessage(Context* context) {
   Message* msg = context->send_message_buffer->GetMessage();
   struct ibv_mr* mr = context->send_message_buffer->GetMR();
 
+  context->last_message = msg;
   sge.addr = (uint64_t)msg;
   sge.length = sizeof(*msg);
   sge.lkey = mr->lkey;

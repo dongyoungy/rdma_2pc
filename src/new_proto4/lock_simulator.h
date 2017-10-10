@@ -60,6 +60,13 @@ class LockSimulator : public Poco::Runnable {
 
   double GetAverageBackoffTime() const;
 
+  double GetAverageContentionCount() const;
+  double GetAverageContentionCount2() const;
+  double GetAverageContentionCount3() const;
+  double GetAverageContentionCount4() const;
+  double GetAverageContentionCount5() const;
+  double GetAverageContentionCount6() const;
+
  protected:
   virtual void CreateRequest();
   void RevertLocks(int& index);
@@ -73,6 +80,7 @@ class LockSimulator : public Poco::Runnable {
   std::vector<uint64_t> contention_latency_;
   std::vector<uint64_t> backoff_latency_;
   std::vector<uint64_t> backoff_time_;
+  std::vector<LockStat> stats_;
   std::vector<std::unique_ptr<LockRequest>> requests_;
   LockRequest** temp_requests_;
   int num_nodes_;

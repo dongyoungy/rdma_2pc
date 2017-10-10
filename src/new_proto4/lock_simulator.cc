@@ -20,6 +20,7 @@ LockSimulator::LockSimulator(LockManager* manager, int num_nodes,
   contention_latency_.reserve(kTransactionMax);
   backoff_time_.reserve(kTransactionMax);
   backoff_latency_.reserve(kTransactionMax);
+  stats_.reserve(kTransactionMax);
   rng_.seed();
 }
 
@@ -58,6 +59,11 @@ void LockSimulator::run() {
     // lock.
     int i = 0;
     int contention_count = 0;
+    int contention_count2 = 0;
+    int contention_count3 = 0;
+    int contention_count4 = 0;
+    int contention_count5 = 0;
+    int contention_count6 = 0;
     int attempt = 0;
     int time_spent_backoff = 0;
     bool backoff_done = false;
@@ -65,6 +71,12 @@ void LockSimulator::run() {
     last_lock_start_time_.update();
     while (i < request_size_) {
       last_lock_try_time_.update();
+      requests_[i]->contention_count = 0;
+      requests_[i]->contention_count2 = 0;
+      requests_[i]->contention_count3 = 0;
+      requests_[i]->contention_count4 = 0;
+      requests_[i]->contention_count5 = 0;
+      requests_[i]->contention_count6 = 0;
       auto& lock_result = manager_->Lock(*requests_[i]);
       if (lock_result.isSpecified()) {
         auto lock_future = lock_result.value()->get_future();
@@ -72,6 +84,12 @@ void LockSimulator::run() {
         if (result_info.result == SUCCESS ||
             result_info.result == SUCCESS_FROM_QUEUED) {
           ++i;
+        } else if (result_info.result == RETRY) {
+          if (do_random_backoff_) {
+            time_spent_backoff += PerformRandomBackoff(attempt);
+            ++backoff_count_;
+            backoff_done = true;
+          }
         } else {
           // Handle queued case.
           bool timeout = false;
@@ -108,13 +126,21 @@ void LockSimulator::run() {
                      result_info.result == SUCCESS_FROM_QUEUED)
             ++i;
         }
-        contention_count += result_info.contention_count;
+        contention_count += result_info.stat.contention_count;
+        contention_count2 += result_info.stat.contention_count2;
+        contention_count3 += result_info.stat.contention_count3;
+        contention_count4 += result_info.stat.contention_count4;
+        contention_count5 += result_info.stat.contention_count5;
+        contention_count6 += result_info.stat.contention_count6;
       } else {
         exit(-1);
       }
     }
     Poco::Timestamp::TimeDiff latency = lock_start.elapsed();
     latency_.push_back(latency);  // microseconds.
+    LockStat s(contention_count, contention_count2, contention_count3,
+               contention_count4, contention_count5, contention_count6);
+    stats_.push_back(s);
 
     ++count_;
     if (time_spent_backoff > 0) {
@@ -122,7 +148,9 @@ void LockSimulator::run() {
     }
     if (backoff_done) {
       backoff_latency_.push_back(latency);
-    } else if (contention_count > 0) {
+    } else if ((contention_count + contention_count2 + contention_count3 +
+                contention_count4 + contention_count5 + contention_count6) >
+               0) {
       contention_latency_.push_back(latency);
     }
 
@@ -147,11 +175,11 @@ void LockSimulator::run() {
         if (result_info.result == SUCCESS) {
           --i;
         } else if (result_info.result == FAILURE) {
-          cerr << "Unlock failure." << endl;
+          cerr << "Unlock failure (1)." << endl;
           exit(ERROR_UNLOCK_FAIL);
         }
       } else {
-        cerr << "Unlock failure." << endl;
+        cerr << "Unlock failure. (2)" << endl;
         exit(ERROR_UNLOCK_FAIL);
       }
     }
@@ -162,6 +190,8 @@ void LockSimulator::run() {
       job_done = is_done_;
     }
   }
+  cout << "Simulator " << manager_->GetID() << " done" << endl;
+  std::flush(cout);
 }
 
 void LockSimulator::RevertLocks(int& index) {
@@ -172,10 +202,12 @@ void LockSimulator::RevertLocks(int& index) {
       LockResultInfo result_info = lock_future.get();
       if (result_info.result == SUCCESS) {
         --index;
-      } else {
+      } else if (result_info.result == FAILURE) {
+        cerr << "Unlock failure. (3)" << endl;
         exit(ERROR_UNLOCK_FAIL);
       }
     } else {
+      cerr << "Unlock failure. (4)" << endl;
       exit(ERROR_UNLOCK_FAIL);
     }
   }
@@ -237,6 +269,58 @@ double LockSimulator::GetAverageBackoffTime() const {
     sum += backoff;
   }
   return sum / (double)backoff_time_.size();
+}
+
+double LockSimulator::GetAverageContentionCount() const {
+  if (stats_.empty()) return 0;
+  double sum = 0;
+  for (auto s : stats_) {
+    sum += s.contention_count;
+  }
+  return sum / (double)stats_.size();
+}
+
+double LockSimulator::GetAverageContentionCount2() const {
+  if (stats_.empty()) return 0;
+  double sum = 0;
+  for (auto s : stats_) {
+    sum += s.contention_count2;
+  }
+  return sum / (double)stats_.size();
+}
+
+double LockSimulator::GetAverageContentionCount3() const {
+  if (stats_.empty()) return 0;
+  double sum = 0;
+  for (auto s : stats_) {
+    sum += s.contention_count3;
+  }
+  return sum / (double)stats_.size();
+}
+
+double LockSimulator::GetAverageContentionCount4() const {
+  if (stats_.empty()) return 0;
+  double sum = 0;
+  for (auto s : stats_) {
+    sum += s.contention_count4;
+  }
+  return sum / (double)stats_.size();
+}
+double LockSimulator::GetAverageContentionCount5() const {
+  if (stats_.empty()) return 0;
+  double sum = 0;
+  for (auto s : stats_) {
+    sum += s.contention_count5;
+  }
+  return sum / (double)stats_.size();
+}
+double LockSimulator::GetAverageContentionCount6() const {
+  if (stats_.empty()) return 0;
+  double sum = 0;
+  for (auto s : stats_) {
+    sum += s.contention_count6;
+  }
+  return sum / (double)stats_.size();
 }
 
 double LockSimulator::Get99PercentileLatency() const {
@@ -305,8 +389,9 @@ void LockSimulator::CreateRequest() {
   for (int i = 0; i < request_size_; ++i) {
     requests_[i]->seq_no = seq_count_++;
     requests_[i]->user_id = (uintptr_t)this;
+    requests_[i]->owner_node_id = manager_->GetID();
     requests_[i]->task = LOCK;
-    requests_[i]->lm_id = rng_.next() % num_nodes_;
+    requests_[i]->lm_id = 1 + (rng_.next() % num_nodes_);
     requests_[i]->obj_index = rng_.next() % num_objects_;
     requests_[i]->lock_type = (rng_.nextBool()) ? SHARED : EXCLUSIVE;
     requests_[i]->contention_count = 0;

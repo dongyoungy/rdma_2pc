@@ -33,6 +33,7 @@ struct Context {
   /*Message* receive_message;*/
   /*struct ibv_mr* receive_mr;*/
 
+  Message* last_message;
   std::unique_ptr<MessageBuffer> send_message_buffer;
   std::unique_ptr<MessageBuffer> receive_message_buffer;
 

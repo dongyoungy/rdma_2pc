@@ -10,7 +10,7 @@ namespace rdma {
 namespace proto {
 
 enum LockResult { SUCCESS, FAILURE, RETRY, QUEUED, SUCCESS_FROM_QUEUED };
-enum LockType { NONE, SHARED, EXCLUSIVE };
+enum LockType { NONE, SHARED, EXCLUSIVE, BOTH };
 enum ReadType { READ_SHARED, READ_EXCLUSIVE, READ_ALL };
 enum LockMode {
   LOCAL,
@@ -18,6 +18,7 @@ enum LockMode {
   PROXY_QUEUE,
   REMOTE_POLL,
   REMOTE_NOTIFY,
+  REMOTE_DRTM,
   REMOTE_D2LM_V1,
   REMOTE_D2LM_V2
 };
@@ -30,33 +31,29 @@ const uint32_t kMaxBackoff = 1000000;  // microseconds
 const uint32_t kBaseBackoff = 100;     // microseconds
 const uint64_t kTPCCNumObjects = 700000;
 
+const uint32_t kDRTMSharedLimit = 3;
+
 const int kValueIdx = 0;
 const int kLeaverIdx = 1;
 const int kCounterIdx = 2;
 const int kNumFields = 3;
 
-const int kSharedMaxBits = 12;
-const int kExclusiveMaxBits = 12;
-const int kSharedLeaveBits = 10;
-const int kExclusiveLeaveBits = 10;
-const int kSharedNumberBits = 10;
-const int kExclusiveNumberBits = 10;
+const int kSharedMaxBits = 16;
+const int kExclusiveMaxBits = 16;
+const int kSharedNumberBits = 16;
+const int kExclusiveNumberBits = 16;
 
 const int kSharedMaxBitShift = 0;
-const int kExclusiveMaxBitShift = 12;
-const int kSharedLeaveBitShift = 24;
-const int kExclusiveLeaveBitShift = 34;
-const int kSharedNumberBitShift = 44;
-const int kExclusiveNumberBitShift = 54;
+const int kExclusiveMaxBitShift = 16;
+const int kSharedNumberBitShift = 32;
+const int kExclusiveNumberBitShift = 48;
 
-const uint64_t kExclusiveNumberBitMask = 0xFFC0000000000000;
-const uint64_t kSharedNumberBitMask = 0x3FF00000000000;
-const uint64_t kExclusiveLeaveBitMask = 0xFFC00000000;
-const uint64_t kSharedLeaveBitMask = 0x3FF000000;
-const uint64_t kExclusiveMaxBitMask = 0xFFF000;
-const uint64_t kSharedMaxBitMask = 0xFFF;
+const uint64_t kExclusiveNumberBitMask = 0xFFFF000000000000;
+const uint64_t kSharedNumberBitMask = 0xFFFF00000000;
+const uint64_t kExclusiveMaxBitMask = 0xFFFF0000;
+const uint64_t kSharedMaxBitMask = 0xFFFF;
 
-constexpr uint16_t kMaxPossibleNumber = 1023;
+constexpr uint16_t kMaxPossibleNumber = 32768;  // 2^15
 
 static const int WORKLOAD_UNIFORM = 0;
 static const int WORKLOAD_HOTSPOT = 1;
@@ -105,6 +102,7 @@ static const int ERROR_INVALID_FUTURE_STATUS = 15;
 static const int ERROR_FAILED_SANITY_CHECK = 16;
 static const int ERROR_FA_FOR_EXCLUSIVE = 17;
 static const int ERROR_INVALID_LOCK_TYPE = 18;
+static const int ERROR_INVALID_TASK = 19;
 }  // namespace proto
 }  // namespace rdma
 

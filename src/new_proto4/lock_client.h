@@ -20,6 +20,16 @@ class LockClient : public Client {
   double GetAverageRemoteExclusiveLockTime() const;
   double GetAverageRemoteSharedLockTime() const;
 
+  // used by NCOSED.
+  bool SendNCOSEDLockRequest(int seq_no, int node_id, int obj_index,
+                             int request_node_id, uintptr_t request_user_id,
+                             int shared_remaining, LockType lock_type);
+
+  bool SendNCOSEDLockGrant(int seq_no, uintptr_t user_id, int node_id,
+                           int obj_index, LockType lock_type);
+  bool SendNCOSEDLockRelease(const LockRequest& request);
+  bool SendNCOSEDLockReleaseSuccess(const LockRequest& request);
+
  protected:
   virtual bool LockRemotely(Context* context, const LockRequest& request);
   virtual bool UnlockRemotely(Context* context, const LockRequest& request,
@@ -54,8 +64,6 @@ class LockClient : public Client {
   std::map<int, uintptr_t> queued_user_;
 
   Poco::Mutex lock_mutex_;
-
- private:
   volatile bool message_in_progress_;
   map<uint32_t, uint32_t> waitlist_;
 };

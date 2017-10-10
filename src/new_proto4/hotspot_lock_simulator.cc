@@ -15,11 +15,13 @@ void HotspotLockSimulator::CreateRequest() {
   for (int i = 0; i < request_size_; ++i) {
     requests_[i]->seq_no = seq_count_++;
     requests_[i]->user_id = (uintptr_t)this;
+    requests_[i]->owner_node_id = manager_->GetID();
     requests_[i]->task = LOCK;
-    requests_[i]->lm_id = 0;  // this is fixed to node 0.
+    requests_[i]->lm_id = 1;  // this is fixed to node 1.
     requests_[i]->obj_index = rng_.next() % num_objects_;
     requests_[i]->lock_type = (rng_.nextBool()) ? SHARED : EXCLUSIVE;
     requests_[i]->contention_count = 0;
+    requests_[i]->contention_count2 = 0;
   }
 }
 

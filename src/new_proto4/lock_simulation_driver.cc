@@ -95,7 +95,7 @@ int main(int argc, char** argv) {
     LockManager::SetExclusiveSharedRule("fail");
     LockManager::SetExclusiveExclusiveRule("fail");
   } else if (lock_mode_str == "drtm") {
-    lock_mode = REMOTE_POLL;
+    lock_mode = REMOTE_DRTM;
     LockManager::SetSharedExclusiveRule("fail");
     LockManager::SetExclusiveSharedRule("poll");
     LockManager::SetExclusiveExclusiveRule("fail");
@@ -241,16 +241,21 @@ int main(int argc, char** argv) {
     for (int j = 0; j < num_users; ++j) {
       current_count += users[j]->GetCount();
     }
+#ifdef DEBUG
+    cout << rank << " : " << current_count << endl;
+    std::flush(cout);
+#endif
     MPI_Gather(&current_count, 1, MPI_LONG_LONG_INT, current_counts, 1,
                MPI_LONG_LONG_INT, 0, MPI_COMM_WORLD);
 
+    MPI_Barrier(MPI_COMM_WORLD);
     if (rank == 0) {
       current_total_count = 0;
       for (int j = 0; j < num_managers; ++j) {
         current_total_count += current_counts[j];
       }
       uint64_t current_throughput = current_total_count - last_total_count;
-#ifdef VERBOSE
+#ifdef DEBUG
       cout << "throughput = " << current_throughput << endl;
 #endif
       throughputs.push_back(current_throughput);
@@ -300,6 +305,29 @@ int main(int argc, char** argv) {
            << endl;
       exit(ERROR_FAILED_SANITY_CHECK);
     }
+  } else {
+    uint64_t value = lock_manager->lock_table_[0];
+    uint64_t exclusive_number =
+        (value & kExclusiveNumberBitMask) >> kExclusiveNumberBitShift;
+    uint64_t shared_number =
+        (value & kSharedNumberBitMask) >> kSharedNumberBitShift;
+    uint64_t exclusive_max =
+        (value & kExclusiveMaxBitMask) >> kExclusiveMaxBitShift;
+    uint64_t shared_max = value & kSharedMaxBitMask;
+    if (exclusive_number != exclusive_max || shared_number != shared_max) {
+      cerr << "Counter numbers do not match: " << exclusive_number << ","
+           << shared_number << "," << exclusive_max << "," << shared_max
+           << endl;
+      exit(ERROR_FAILED_SANITY_CHECK);
+    }
+    for (int i = 0; i < num_managers; ++i) {
+      if (i == rank) {
+        cerr << "(Node " << i << ") Counter numbers match: " << exclusive_number
+             << "," << shared_number << "," << exclusive_max << ","
+             << shared_max << endl;
+      }
+      MPI_Barrier(MPI_COMM_WORLD);
+    }
   }
 
   double average_cpu_usage = 0;
@@ -323,6 +351,20 @@ int main(int argc, char** argv) {
   double average_999pct_latency_with_backoff = 0;
   double average_backoff_time = 0;
   double total_average_backoff_time = 0;
+
+  double average_contention_count = 0;
+  double total_average_contention_count = 0;
+  double average_contention_count2 = 0;
+  double total_average_contention_count2 = 0;
+  double average_contention_count3 = 0;
+  double total_average_contention_count3 = 0;
+  double average_contention_count4 = 0;
+  double total_average_contention_count4 = 0;
+  double average_contention_count5 = 0;
+  double total_average_contention_count5 = 0;
+  double average_contention_count6 = 0;
+  double total_average_contention_count6 = 0;
+
   uint64_t total_max_latency = 0;
   uint64_t max_latency = 0;
   uint64_t total_throughput = 0;
@@ -354,6 +396,12 @@ int main(int argc, char** argv) {
     average_999pct_latency_with_backoff +=
         users[i]->Get999PercentileLatencyWithBackoff();
     average_backoff_time += users[i]->GetAverageBackoffTime();
+    average_contention_count += users[i]->GetAverageContentionCount();
+    average_contention_count2 += users[i]->GetAverageContentionCount2();
+    average_contention_count3 += users[i]->GetAverageContentionCount3();
+    average_contention_count4 += users[i]->GetAverageContentionCount4();
+    average_contention_count5 += users[i]->GetAverageContentionCount5();
+    average_contention_count6 += users[i]->GetAverageContentionCount6();
     max_latency = (max_latency < users[i]->GetMaxLatency())
                       ? users[i]->GetMaxLatency()
                       : max_latency;
@@ -383,6 +431,19 @@ int main(int argc, char** argv) {
              MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Reduce(&max_latency, &total_max_latency, 1, MPI_LONG_LONG_INT, MPI_MAX, 0,
              MPI_COMM_WORLD);
+
+  MPI_Reduce(&average_contention_count, &total_average_contention_count, 1,
+             MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&average_contention_count2, &total_average_contention_count2, 1,
+             MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&average_contention_count3, &total_average_contention_count3, 1,
+             MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&average_contention_count4, &total_average_contention_count4, 1,
+             MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&average_contention_count5, &total_average_contention_count5, 1,
+             MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&average_contention_count6, &total_average_contention_count6, 1,
+             MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 
   MPI_Reduce(&average_latency_with_contention,
              &total_average_latency_with_contention, 1, MPI_DOUBLE, MPI_SUM, 0,
@@ -455,6 +516,25 @@ int main(int argc, char** argv) {
          << total_average_999pct_latency_with_backoff << " us" << endl;
     cout << "Avg. Backoff Time = " << total_average_backoff_time << " us"
          << endl;
+    cout << "Avg. Contention Count = "
+         << total_average_contention_count + total_average_contention_count2 +
+                total_average_contention_count3 +
+                total_average_contention_count4 +
+                total_average_contention_count5 +
+                total_average_contention_count6
+         << endl;
+    cout << "Avg. Contention Count (type 1) = "
+         << total_average_contention_count << endl;
+    cout << "Avg. Contention Count (type 2) = "
+         << total_average_contention_count2 << endl;
+    cout << "Avg. Contention Count (type 3) = "
+         << total_average_contention_count3 << endl;
+    cout << "Avg. Contention Count (type 4) = "
+         << total_average_contention_count4 << endl;
+    cout << "Avg. Contention Count (type 5) = "
+         << total_average_contention_count5 << endl;
+    cout << "Avg. Contention Count (type 6) = "
+         << total_average_contention_count6 << endl;
     cout << "Max Latency = " << total_max_latency << " us" << endl;
 
     // Print as CVS at the end.
@@ -472,6 +552,13 @@ int main(int argc, char** argv) {
          << "Avg. 99pct Latency With Backoff, "
          << "Avg. 99.9pct Latency With Backoff, "
          << "Avg. Backoff Time, "
+         << "Avg. Contention Count, "
+         << "Avg. Contention Count (type 1), "
+         << "Avg. Contention Count (type 2), "
+         << "Avg. Contention Count (type 3), "
+         << "Avg. Contention Count (type 4), "
+         << "Avg. Contention Count (type 5), "
+         << "Avg. Contention Count (type 6), "
          << "Max Latency" << endl;
     cout << workload_type << "," << think_time_type << "," << lock_mode_str
          << "," << num_managers << "," << num_lock_object << "," << num_retry
@@ -487,7 +574,18 @@ int main(int argc, char** argv) {
          << total_average_latency_with_backoff << ","
          << total_average_99pct_latency_with_backoff << ","
          << total_average_999pct_latency_with_backoff << ","
-         << total_average_backoff_time << "," << total_max_latency << endl;
+         << total_average_backoff_time << ","
+         << total_average_contention_count + total_average_contention_count2 +
+                total_average_contention_count3 +
+                total_average_contention_count4 +
+                total_average_contention_count5 +
+                total_average_contention_count6
+         << "," << total_average_contention_count << ","
+         << total_average_contention_count2 << ","
+         << total_average_contention_count3 << ","
+         << total_average_contention_count4 << ","
+         << total_average_contention_count5 << ","
+         << total_average_contention_count6 << "," << total_max_latency << endl;
   }
   MPI_Finalize();
 }
