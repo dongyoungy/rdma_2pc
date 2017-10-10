@@ -11,6 +11,7 @@
 #include "Poco/Thread.h"
 
 #include "d2lm_lock_manager.h"
+#include "hotspot_exclusive_lock_simulator.h"
 #include "hotspot_lock_simulator.h"
 #include "lock_manager.h"
 #include "lock_simulator.h"
@@ -165,6 +166,10 @@ int main(int argc, char** argv) {
       simulator.reset(new HotspotLockSimulator(
           lock_manager.get(), num_managers, num_lock_object, request_size,
           think_time_type, do_random_backoff));
+    } else if (workload_type == "hotspot-exclusive") {
+      simulator.reset(new HotspotExclusiveLockSimulator(
+          lock_manager.get(), num_managers, num_lock_object, request_size,
+          think_time_type, do_random_backoff));
     } else if (workload_type == "tpcc-uniform") {
       simulator.reset(new TPCCLockSimulator(lock_manager.get(), num_managers,
                                             kTPCCNumObjects, think_time_type,
@@ -219,7 +224,8 @@ int main(int argc, char** argv) {
 
   // Start lock simulators
   std::vector<std::unique_ptr<Poco::Thread>> user_threads;
-  if (workload_type == "hotspot" || workload_type == "tpcc-hotspot") {
+  if (workload_type == "hotspot" || workload_type == "hotspot-exclusive" ||
+      workload_type == "tpcc-hotspot") {
     if (rank != 0) {
       for (int i = 0; i < num_users; ++i) {
         std::unique_ptr<Poco::Thread> user_thread(new Poco::Thread);

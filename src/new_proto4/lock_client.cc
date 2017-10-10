@@ -764,6 +764,7 @@ bool LockClient::SendLockRequest(Context* context, const LockRequest& request) {
   Message* msg = context->send_message_buffer->GetMessage();
 
   msg->type = Message::LOCK_REQUEST;
+  msg->seq_no = request.seq_no;
   msg->target_node_id = remote_lm_id_;
   msg->owner_node_id = local_owner_id_;
   msg->lock_type = request.lock_type;
@@ -871,6 +872,7 @@ bool LockClient::SendUnlockRequest(Context* context,
   Message* msg = context->send_message_buffer->GetMessage();
 
   msg->type = Message::UNLOCK_REQUEST;
+  msg->seq_no = request.seq_no;
   msg->target_node_id = remote_lm_id_;
   msg->owner_node_id = local_owner_id_;
   msg->lock_type = request.lock_type;

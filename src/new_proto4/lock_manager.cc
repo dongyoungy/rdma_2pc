@@ -220,7 +220,7 @@ int LockManager::InitializeLockClients() {
   if (lock_mode_ == PROXY_QUEUE || lock_mode_ == PROXY_RETRY) {
     wait_queues_ = new LockWaitQueue*[num_lock_object_];
     for (int i = 0; i < num_lock_object_; ++i) {
-      wait_queues_[i] = new LockWaitQueue(users.size() + 1);
+      wait_queues_[i] = new LockWaitQueue(MAX_LOCAL_THREADS);
     }
     // wait_queues_.reserve(num_lock_object_);
     // for (int i = 0; i < num_lock_object_; ++i) {
@@ -822,20 +822,20 @@ int LockManager::LockLocallyWithQueue(Context* context, Message* message) {
     }
   }
 
-  // unlock locally on lock table
   pthread_mutex_unlock(lock_mutex_[obj_index]);
+  //// unlock locally on lock table
 
 send_lock_result:
 
   // send result back to the client only if successful
   if (context) {
-    // if (lock_result == SUCCESS) {
-    if (SendLockRequestResult(context, seq_no, owner_user_id, lock_type,
-                              obj_index, lock_result)) {
-      cerr << "LockLocally() failed." << endl;
-      return -1;
+    if (lock_result == SUCCESS) {
+      if (SendLockRequestResult(context, seq_no, owner_user_id, lock_type,
+                                obj_index, lock_result)) {
+        cerr << "LockLocally() failed." << endl;
+        return -1;
+      }
     }
-    //}
   } else {
     // if context is NULL, it means it is a local workload
     if (lock_result == SUCCESS) {
@@ -1031,7 +1031,7 @@ int LockManager::UnlockLocallyWithRetry(Context* context, Message* message) {
 int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
   LockResult lock_result = FAILURE;
   int seq_no = message->seq_no;
-  // uint32_t owner_node_id = message->owner_node_id;
+  uint32_t owner_node_id = message->owner_node_id;
   uintptr_t owner_user_id = message->owner_user_id;
   int obj_index = message->obj_index;
   LockType lock_type = message->lock_type;
@@ -1066,7 +1066,7 @@ int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
 
   // Notify waiting users
   if (lock_result == SUCCESS) {
-    LockWaitElement* elem = queue->Pop();
+    LockWaitElement* elem = queue->Front();
     if (elem) {
       // CommunicationClient* client =
       // communication_clients_[MAX_USER*elem->home_id+elem->user_id];
@@ -1075,17 +1075,13 @@ int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
       exclusive = (uint32_t)((*lock_object) >> 32);
       shared = (uint32_t)(*lock_object);
       if (exclusive == 0 && elem->type == SHARED) {
-        if (exclusive != 0) {
-          cerr << "exclusive should be zero." << endl;
-          lock_result = FAILURE;
-        }
         shared += 1;
         *lock_object = ((uint64_t)exclusive) << 32 | shared;
         client->GrantLock(elem->seq_no, elem->target_node_id,
                           elem->owner_user_id, obj_index, elem->type);
+        queue->Pop();
         elem = queue->Front();
         while (elem && elem->type == SHARED) {
-          queue->Pop();
           shared += 1;
           *lock_object = ((uint64_t)exclusive) << 32 | shared;
           // client =
@@ -1093,20 +1089,18 @@ int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
           client = communication_clients_[elem->owner_node_id];
           client->GrantLock(elem->seq_no, elem->target_node_id,
                             elem->owner_user_id, obj_index, elem->type);
+          queue->Pop();
           elem = queue->Front();
         }
       } else if (exclusive == 0 && shared == 0 && elem->type == EXCLUSIVE) {
         exclusive = (uint32_t)((*lock_object) >> 32);
         shared = (uint32_t)(*lock_object);
-        if (exclusive != 0 || shared != 0) {
-          cerr << "exclusive and shared both should be zero." << endl;
-          lock_result = FAILURE;
-        }
         exclusive = lock_value;
         *lock_object = ((uint64_t)exclusive) << 32 | shared;
 
         client->GrantLock(elem->seq_no, elem->target_node_id,
                           elem->owner_user_id, obj_index, elem->type);
+        queue->Pop();
       }
     }
   }
@@ -1333,7 +1327,6 @@ int LockManager::NotifyUnlockRequestResult(int seq_no, uintptr_t user_id,
 }
 
 int LockManager::SendMessage(Context* context) {
-  Poco::Mutex::ScopedLock lock(mutex_);
   struct ibv_send_wr send_work_request;
   struct ibv_send_wr* bad_work_request;
   struct ibv_sge sge;
@@ -1369,7 +1362,6 @@ int LockManager::SendMessage(Context* context) {
 
 // Post receive to get message from clients
 int LockManager::ReceiveMessage(Context* context) {
-  Poco::Mutex::ScopedLock lock(mutex_);
   struct ibv_recv_wr receive_work_request;
   struct ibv_recv_wr* bad_work_request;
   struct ibv_sge sge;
@@ -1511,7 +1503,6 @@ int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
 
   if (work_completion->opcode & IBV_WC_RECV) {
     Message* message = context->receive_message_buffer->GetMessage();
-    // context->receive_message_buffer->Rotate();
     // Post receive first.
     ReceiveMessage(context);
 

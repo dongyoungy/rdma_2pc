@@ -15,8 +15,8 @@ CommunicationClient::CommunicationClient(const string& work_dir,
 // destructor
 CommunicationClient::~CommunicationClient() {}
 
-int CommunicationClient::GrantLock(int seq_no, int releasing_node_id,
-                                   int target_node_id, int obj_index,
+int CommunicationClient::GrantLock(int seq_no, int target_node_id,
+                                   uintptr_t user_id, int obj_index,
                                    LockType lock_type) {
   Poco::Mutex::ScopedLock lock(communication_mutex_);
   while (is_waiting_ack_) {
@@ -28,7 +28,7 @@ int CommunicationClient::GrantLock(int seq_no, int releasing_node_id,
   msg->seq_no = seq_no;
   msg->lock_type = lock_type;
   msg->obj_index = obj_index;
-  msg->releasing_node_id = releasing_node_id;
+  msg->owner_user_id = user_id;
   msg->target_node_id = target_node_id;
 
   is_waiting_ack_ = true;

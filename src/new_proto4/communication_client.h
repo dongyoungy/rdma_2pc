@@ -16,7 +16,7 @@ class CommunicationClient : public Client {
                       uint32_t local_user_count, int remote_lm_id);
   ~CommunicationClient();
 
-  int GrantLock(int seq_no, int releasing_node_id, int target_node_id,
+  int GrantLock(int seq_no, int target_node_id, uintptr_t owner_user_id,
                 int obj_index, LockType lock_type);
   int RejectLock(int seq_no, int target_node_id, uintptr_t owner_user_id,
                  int obj_index, LockType lock_type);
