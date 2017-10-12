@@ -33,11 +33,12 @@ struct CPUUsage {
 int main(int argc, char** argv) {
   MPI_Init(&argc, &argv);
 
-  if (argc != 11) {
+  if (argc != 12) {
     cout << "USAGE: " << argv[0] << " <work_dir> <num_lock_object> <duration>"
          << " <request_size> <num_users> <lock_mode>"
          << " <num_retry>"
-         << " <workload_type> <think_time_type> <enable_random_backoff> "
+         << " <workload_type> <think_time_type> <think_time_duration> "
+            "<enable_random_backoff> "
          << endl;
     exit(1);
   }
@@ -65,6 +66,7 @@ int main(int argc, char** argv) {
   int num_retry = atoi(argv[k++]);
   string workload_type = argv[k++];
   string think_time_type = argv[k++];
+  int think_time_duration = atoi(argv[k++]);
   string random_backoff_str = argv[k++];
 
   if (num_managers > 32) {
@@ -182,6 +184,7 @@ int main(int argc, char** argv) {
       cerr << "Unknown workload: " << workload_type << endl;
       exit(-2);
     }
+    simulator->SetThinkTimeDuration(think_time_duration);
     lock_manager->RegisterUser(i + 1, simulator.get());
     temp_user = simulator.get();
     users.push_back(std::move(simulator));
@@ -544,7 +547,8 @@ int main(int argc, char** argv) {
     cout << "Max Latency = " << total_max_latency << " us" << endl;
 
     // Print as CVS at the end.
-    cout << "Workload, Think Time, Lock Mode, # Nodes, # Objects Per Node, "
+    cout << "Workload, Think Time Type, Think Time Duration, Lock Mode, # "
+            "Nodes, # Objects Per Node, "
          << "# Retry, "
          << "Uses Backoff, "
          << "Avg. CPU Usage, Tx Count, Tx Count With Contention, "
@@ -566,10 +570,11 @@ int main(int argc, char** argv) {
          << "Avg. Contention Count (type 5), "
          << "Avg. Contention Count (type 6), "
          << "Max Latency" << endl;
-    cout << workload_type << "," << think_time_type << "," << lock_mode_str
-         << "," << num_managers << "," << num_lock_object << "," << num_retry
-         << "," << random_backoff_str << "," << average_cpu_usage << ","
-         << total_count << "," << total_count_with_contention << ","
+    cout << workload_type << "," << think_time_type << ","
+         << think_time_duration << "," << lock_mode_str << "," << num_managers
+         << "," << num_lock_object << "," << num_retry << ","
+         << random_backoff_str << "," << average_cpu_usage << "," << total_count
+         << "," << total_count_with_contention << ","
          << total_count_with_backoff << "," << average_throughput << ","
          << throughput_99pct << "," << max_throughput << ","
          << total_average_latency << "," << total_average_99pct_latency << ","

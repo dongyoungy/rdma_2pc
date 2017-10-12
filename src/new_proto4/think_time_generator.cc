@@ -3,9 +3,13 @@
 namespace rdma {
 namespace proto {
 
-ThinkTimeGenerator::ThinkTimeGenerator(std::string type) {
+ThinkTimeGenerator::ThinkTimeGenerator(std::string type, int duration) {
   if (type == "zero") {
     type_ = ZERO;
+    duration_ = 0;
+  } else if (type == "simple") {
+    type_ = SIMPLE;
+    duration_ = duration;
   } else if (type == "normal") {
     type_ = NORMAL;
     normal_dist_ = std::normal_distribution<float>(100.0f, 50.0f);
@@ -18,8 +22,9 @@ ThinkTimeGenerator::ThinkTimeGenerator(std::string type) {
 
 int ThinkTimeGenerator::GetTime() {
   switch (type_) {
-    case ZERO: {
-      return 0;
+    case ZERO:
+    case SIMPLE: {
+      return duration_;
       break;
     }
     case NORMAL: {

@@ -15,7 +15,8 @@ LockSimulator::LockSimulator(LockManager* manager, int num_nodes,
       do_random_backoff_(do_random_backoff),
       count_(0),
       backoff_count_(0),
-      seq_count_(0) {
+      seq_count_(0),
+      think_time_duration_(0) {
   latency_.reserve(kTransactionMax);
   contention_latency_.reserve(kTransactionMax);
   backoff_time_.reserve(kTransactionMax);
@@ -25,6 +26,10 @@ LockSimulator::LockSimulator(LockManager* manager, int num_nodes,
 }
 
 LockSimulator::~LockSimulator() {}
+
+void LockSimulator::SetThinkTimeDuration(int duration) {
+  think_time_duration_ = duration;
+}
 
 void LockSimulator::run() {
   // Initialize requests array if empty.
@@ -38,7 +43,7 @@ void LockSimulator::run() {
   }
 
   // Initialize think time generator.
-  ThinkTimeGenerator think_time_gen(think_time_type_);
+  ThinkTimeGenerator think_time_gen(think_time_type_, think_time_duration_);
 
   bool job_done = false;
   {

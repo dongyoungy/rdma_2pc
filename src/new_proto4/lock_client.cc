@@ -422,7 +422,7 @@ int LockClient::PollSharedToExclusive(LockRequest* request) {
 int LockClient::PollExclusiveToShared(LockRequest* request) {
   ++user_retry_count_[request->user_id];
   const string& rule = LockManager::GetExclusiveSharedRule();
-  uint32_t value = request->read_buffer;
+  uint32_t value = request->exclusive;
   if (rule == "poll") {
     if (value == 0) {
       //++total_lock_success_with_poll_;
@@ -640,15 +640,9 @@ int LockClient::ReadRemotely(Context* context, const LockRequest& request) {
   current_request->task = READ;
   lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
-  if (current_request->read_target == READ_ALL) {
-    sge.addr = (uintptr_t)&current_request->read_buffer2;
-    sge.length = sizeof(uint64_t);
-    sge.lkey = current_request->read_buffer2_mr->lkey;
-  } else {
-    sge.addr = (uintptr_t)&current_request->read_buffer;
-    sge.length = sizeof(uint32_t);
-    sge.lkey = current_request->read_buffer_mr->lkey;
-  }
+  sge.addr = (uintptr_t)&current_request->read_buffer2;
+  sge.length = sizeof(uint64_t);
+  sge.lkey = current_request->read_buffer2_mr->lkey;
 
   send_work_request.wr_id = (uint64_t)current_request;
   send_work_request.num_sge = 1;
@@ -660,11 +654,11 @@ int LockClient::ReadRemotely(Context* context, const LockRequest& request) {
   send_work_request.wr.rdma.remote_addr =
       (uint64_t)context->lock_table_mr->addr +
       (current_request->obj_index * sizeof(uint64_t));
-  if (current_request->read_target == READ_EXCLUSIVE) {
-    // reading exclusive portion of the lock object
-    // add 4 bytes here because of BIG-ENDIAN?
-    send_work_request.wr.rdma.remote_addr += 4;
-  }  // otherwise, read exclusive portion.
+  // if (current_request->read_target == READ_EXCLUSIVE) {
+  //// reading exclusive portion of the lock object
+  //// add 4 bytes here because of BIG-ENDIAN?
+  // send_work_request.wr.rdma.remote_addr += 4;
+  //}  // otherwise, read exclusive portion.
 
   clock_gettime(CLOCK_MONOTONIC, &start_rdma_read_);
 

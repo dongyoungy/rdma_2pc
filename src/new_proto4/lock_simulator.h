@@ -40,6 +40,7 @@ class LockSimulator : public Poco::Runnable {
   virtual void run();  // for Poco::Runnable
 
   void Stop();
+  void SetThinkTimeDuration(int duration);
   uint64_t GetCount() const;
   uint64_t GetCountWithContention() const;
   uint64_t GetCountWithBackoff() const;
@@ -93,6 +94,7 @@ class LockSimulator : public Poco::Runnable {
   uint64_t backoff_count_;
   bool is_done_;
   int seq_count_;
+  int think_time_duration_;
 
   Poco::Mutex mutex_;
 };

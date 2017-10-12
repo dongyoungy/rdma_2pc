@@ -23,7 +23,7 @@ enum LockMode {
   REMOTE_D2LM_V2
 };
 enum Task { LOCK, UNLOCK, READ, READ_UNLOCK, READ_LOCK, RESET, UNDO, LEAVE };
-enum ThinkTimeType { ZERO, NORMAL, UNKNOWN };
+enum ThinkTimeType { ZERO, NORMAL, SIMPLE, UNKNOWN };
 enum LockStatus { IDLE, LOCKING, UNLOCKING, INVALID };
 
 const uint64_t kTransactionMax = 100000000;
@@ -31,7 +31,7 @@ const uint32_t kMaxBackoff = 1000000;  // microseconds
 const uint32_t kBaseBackoff = 100;     // microseconds
 const uint64_t kTPCCNumObjects = 700000;
 
-const uint32_t kDRTMSharedLimit = 3;
+const uint32_t kDRTMSharedLimit = 10;
 
 const int kValueIdx = 0;
 const int kLeaverIdx = 1;

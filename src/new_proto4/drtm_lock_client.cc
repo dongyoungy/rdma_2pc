@@ -226,7 +226,13 @@ int DRTMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
                          (double)start_rdma_read_.tv_nsec);
     total_rdma_read_time_ += time_taken;
     // polling result
-    uint32_t value = request->read_buffer;
+    uint64_t value = request->read_buffer2;
+    uint32_t exclusive, shared;
+    exclusive = (uint32_t)((value) >> 32);
+    shared = (uint32_t)value;
+    request->exclusive = exclusive;
+    request->shared = shared;
+
     if (user_retry_count_[request->user_id] >= LockManager::GetPollRetry()) {
       user_retry_count_[request->user_id] = 0;
       local_manager_->NotifyLockRequestResult(
@@ -235,7 +241,7 @@ int DRTMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     } else {
       if (request->read_target == READ_SHARED) {
         // Polling on Sh_X -> proceed if value is zero
-        if (value == 0) {
+        if (shared == 0) {
           user_retry_count_[request->user_id] = 0;
           local_manager_->NotifyLockRequestResult(
               request->seq_no, request->user_id, request->lock_type,
