@@ -77,6 +77,8 @@ LockManager::LockManager(const string& work_dir, uint32_t rank, int num_manager,
   // lock_mode_table_[i] = LockManager::LOCK_REMOTE;
   //}
 
+  // lock_table_[0] =
+  //(uint64_t)5 << 48 | (uint64_t)4 << 32 | (uint64_t)3 << 16 | 2;
   // initialize local lock mutex
   lock_mutex_ = new pthread_mutex_t*[num_lock_object_];
   pthread_mutex_init(&msg_mutex_, NULL);
@@ -823,19 +825,19 @@ int LockManager::LockLocallyWithQueue(Context* context, Message* message) {
   }
 
   pthread_mutex_unlock(lock_mutex_[obj_index]);
-  //// unlock locally on lock table
+//// unlock locally on lock table
 
 send_lock_result:
 
   // send result back to the client only if successful
   if (context) {
-    if (lock_result == SUCCESS) {
-      if (SendLockRequestResult(context, seq_no, owner_user_id, lock_type,
-                                obj_index, lock_result)) {
-        cerr << "LockLocally() failed." << endl;
-        return -1;
-      }
+    // if (lock_result == SUCCESS) {
+    if (SendLockRequestResult(context, seq_no, owner_user_id, lock_type,
+                              obj_index, lock_result)) {
+      cerr << "LockLocally() failed." << endl;
+      return -1;
     }
+    //}
   } else {
     // if context is NULL, it means it is a local workload
     if (lock_result == SUCCESS) {
@@ -1047,7 +1049,26 @@ int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
   shared = (uint32_t)(*lock_object);
 
   // remove it from the queue as well if exists
-  // int num_elem = queue->RemoveAllElements(owner_node_id, lock_type);
+  int num_elem = queue->RemoveAllElements(owner_node_id, lock_type);
+  if (num_elem > 0) {
+    // unlock locally on lock table
+    pthread_mutex_unlock(lock_mutex_[obj_index]);
+    lock_result = SUCCESS;
+
+    // send result back to the client
+    if (context) {
+      if (SendUnlockRequestResult(context, seq_no, owner_user_id, lock_type,
+                                  obj_index, lock_result)) {
+        cerr << "UnlockLocally(): SendUnlockRequestResult() failed." << endl;
+        return -1;
+      }
+    } else {
+      // if context is NULL, it means it is a local workload
+      this->NotifyUnlockRequestResult(seq_no, owner_user_id, lock_type, id_,
+                                      obj_index, lock_result);
+    }
+    return 0;
+  }
 
   // unlocking shared lock
   if (lock_type == SHARED) {
@@ -1406,10 +1427,11 @@ void LockManager::BuildQueuePairAttr(Context* context,
                                      struct ibv_exp_qp_init_attr* attributes) {
   memset(attributes, 0x00, sizeof(*attributes));
 
-  struct ibv_exp_device_attr device_attr;
+  struct ibv_device_attr device_attr;
   int ret = 0;
-  if ((ret = ibv_exp_query_device(context->device_context, &device_attr))) {
-    cerr << "ibv_exp_query_device() failed: " << strerror(ret) << endl;
+  if ((ret = ibv_query_device(context->device_context, &device_attr))) {
+    cerr << "LockManager::ibv_exp_query_device() failed: " << strerror(ret)
+         << endl;
     exit(-1);
   }
 
@@ -1421,18 +1443,18 @@ void LockManager::BuildQueuePairAttr(Context* context,
   attributes->cap.max_recv_wr = 4096;
   attributes->cap.max_send_sge = 4;
   attributes->cap.max_recv_sge = 4;
-  if (device_attr.exp_atomic_cap == IBV_EXP_ATOMIC_HCA ||
-      device_attr.exp_atomic_cap == IBV_EXP_ATOMIC_GLOB) {
+  if (device_attr.atomic_cap == IBV_ATOMIC_HCA ||
+      device_attr.atomic_cap == IBV_ATOMIC_GLOB) {
     attributes->comp_mask = IBV_EXP_QP_INIT_ATTR_PD;
     is_atomic_hca_reply_be_ = false;
-  } else if (device_attr.exp_atomic_cap == IBV_EXP_ATOMIC_HCA_REPLY_BE) {
-    attributes->comp_mask =
-        IBV_EXP_QP_INIT_ATTR_PD | IBV_EXP_QP_INIT_ATTR_CREATE_FLAGS;
-    attributes->max_atomic_arg = sizeof(uint64_t);
-    attributes->exp_create_flags = IBV_EXP_QP_CREATE_ATOMIC_BE_REPLY;
-    is_atomic_hca_reply_be_ = true;
+    //} else if (device_attr.exp_atomic_cap == IBV_EXP_ATOMIC_HCA_REPLY_BE) {
+    // attributes->comp_mask =
+    // IBV_EXP_QP_INIT_ATTR_PD | IBV_EXP_QP_INIT_ATTR_CREATE_FLAGS;
+    // attributes->max_atomic_arg = sizeof(uint64_t);
+    // attributes->exp_create_flags = IBV_EXP_QP_CREATE_ATOMIC_BE_REPLY;
+    // is_atomic_hca_reply_be_ = true;
   } else {
-    cerr << "atomic operation not supported: " << device_attr.exp_atomic_cap
+    cerr << "atomic operation not supported: " << device_attr.atomic_cap
          << endl;
   }
 }

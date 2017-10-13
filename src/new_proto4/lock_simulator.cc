@@ -102,7 +102,7 @@ void LockSimulator::run() {
             auto lock_future =
                 manager_->GetLockResult(uintptr_t(this))->get_future();
             auto future_status =
-                lock_future.wait_for(std::chrono::milliseconds(10));
+                lock_future.wait_for(std::chrono::milliseconds(100));
             if (future_status == std::future_status::timeout) {
               manager_->SetLockStatusInvalid(requests_[i]->lm_id,
                                              requests_[i]->obj_index);
@@ -393,7 +393,7 @@ void LockSimulator::CreateRequest() {
   // Generate random requests.
   for (int i = 0; i < request_size_; ++i) {
     requests_[i]->seq_no = seq_count_++;
-    requests_[i]->user_id = (uintptr_t)this;
+    requests_[i]->user_id = (uintptr_t) this;
     requests_[i]->owner_node_id = manager_->GetID();
     requests_[i]->task = LOCK;
     requests_[i]->lm_id = 1 + (rng_.next() % num_nodes_);

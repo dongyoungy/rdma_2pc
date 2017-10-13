@@ -23,7 +23,11 @@ class D2LMLockClient : public LockClient {
   bool Read(Context* context, const LockRequest& request);
   bool ReadForReset(Context* context, const LockRequest& request);
   bool Reset(Context* context, const LockRequest& request);
+  bool ResetForDeadlock(Context* context, const LockRequest& request,
+                        uint64_t from, uint64_t to);
   bool Undo(Context* context, const LockRequest& request);
+  uint64_t GetLockValue(uint16_t exclusive_number, uint16_t shared_number,
+                        uint16_t exclusive_max, uint16_t shared_max) const;
   virtual int HandleWorkCompletion(struct ibv_wc* work_completion);
 
   std::map<uintptr_t, std::map<int, bool>> do_reset_;

@@ -20,7 +20,8 @@ void TPCCLockSimulator::CreateRequest() {
     requests_[i]->seq_no = seq_count_++;
     requests_[i]->lm_id += 1;  // node starts from 1.
     requests_[i]->contention_count = 0;
-    requests_[i]->user_id = (uintptr_t)this;
+    requests_[i]->contention_count2 = 0;
+    requests_[i]->user_id = (uintptr_t) this;
   }
 }
 

@@ -22,16 +22,27 @@ enum LockMode {
   REMOTE_D2LM_V1,
   REMOTE_D2LM_V2
 };
-enum Task { LOCK, UNLOCK, READ, READ_UNLOCK, READ_LOCK, RESET, UNDO, LEAVE };
+enum Task {
+  LOCK,
+  UNLOCK,
+  READ,
+  READ_UNLOCK,
+  READ_LOCK,
+  RESET,
+  UNDO,
+  LEAVE,
+  RESET_FOR_DEADLOCK
+};
 enum ThinkTimeType { ZERO, NORMAL, SIMPLE, UNKNOWN };
 enum LockStatus { IDLE, LOCKING, UNLOCKING, INVALID };
 
 const uint64_t kTransactionMax = 100000000;
-const uint32_t kMaxBackoff = 1000000;  // microseconds
-const uint32_t kBaseBackoff = 100;     // microseconds
+const uint32_t kMaxBackoff = 100000;  // microseconds
+const uint32_t kBaseBackoff = 10;     // microseconds
 const uint64_t kTPCCNumObjects = 700000;
 
-const uint32_t kDRTMSharedLimit = 10;
+const uint32_t kDRTMSharedLimit = 16;
+const int kD2LMDeadlockLimit = 100000;
 
 const int kValueIdx = 0;
 const int kLeaverIdx = 1;
@@ -63,7 +74,7 @@ static const int POLL_RETRY = 3;
 
 // static const int MAX_MESSAGE_BUFFER_SIZE = 128;
 // static const int MAX_LOCK_REQUESTS = 64;
-static const int MAX_LOCAL_THREADS = 256;
+static const int MAX_LOCAL_THREADS = 128;
 
 static const int ERR_MORE_THAN_ONE_NODE = 1;
 

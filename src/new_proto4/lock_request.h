@@ -18,6 +18,7 @@ struct LockRequest {
     read_target = other.read_target;
     obj_index = other.obj_index;
     lock_type = other.lock_type;
+    deadlock_count = other.deadlock_count;
     contention_count = other.contention_count;
     contention_count2 = other.contention_count2;
     contention_count3 = other.contention_count3;
@@ -26,8 +27,11 @@ struct LockRequest {
     contention_count6 = other.contention_count6;
     task = other.task;
     prev_value = other.prev_value;
+    reset_from = other.reset_from;
     exclusive_number = other.exclusive_number;
     shared_number = other.shared_number;
+    last_exclusive_number = other.last_exclusive_number;
+    last_shared_number = other.last_shared_number;
     exclusive_leave = other.exclusive_leave;
     shared_leave = other.shared_leave;
     exclusive_max = other.exclusive_max;
@@ -42,6 +46,8 @@ struct LockRequest {
       obj_index = other.obj_index;
       owner_node_id = other.owner_node_id;
       lock_type = other.lock_type;
+      deadlock_count = other.deadlock_count;
+      reset_from = other.reset_from;
       contention_count = other.contention_count;
       contention_count2 = other.contention_count2;
       contention_count3 = other.contention_count3;
@@ -50,6 +56,8 @@ struct LockRequest {
       contention_count6 = other.contention_count6;
       task = other.task;
       prev_value = other.prev_value;
+      last_exclusive_number = other.last_exclusive_number;
+      last_shared_number = other.last_shared_number;
       exclusive_number = other.exclusive_number;
       shared_number = other.shared_number;
       exclusive_leave = other.exclusive_leave;
@@ -70,6 +78,7 @@ struct LockRequest {
   Task task;           // lock, unlock
   ReadType read_target;
   int retry;
+  int deadlock_count;
   int contention_count;
   int contention_count2;
   int contention_count3;
@@ -78,6 +87,7 @@ struct LockRequest {
   int contention_count6;
   bool is_retry;
   uint64_t original_value;
+  uint64_t reset_from;
   struct ibv_mr* original_value_mr;
   uint32_t read_buffer;
   struct ibv_mr* read_buffer_mr;
@@ -93,6 +103,8 @@ struct LockRequest {
   std::unique_ptr<uint64_t[]> buffer;
   struct ibv_mr* buffer_mr;
 
+  uint16_t last_exclusive_number = 0;
+  uint16_t last_shared_number = 0;
   uint16_t exclusive_number = 0;
   uint16_t shared_number = 0;
   uint16_t exclusive_leave = 0;

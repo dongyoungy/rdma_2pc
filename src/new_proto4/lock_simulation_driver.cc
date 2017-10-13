@@ -31,6 +31,7 @@ struct CPUUsage {
 };
 
 int main(int argc, char** argv) {
+  // MPI_Init(&argc, &argv);
   MPI_Init(&argc, &argv);
 
   if (argc != 12) {
@@ -264,9 +265,8 @@ int main(int argc, char** argv) {
         current_total_count += current_counts[j];
       }
       uint64_t current_throughput = current_total_count - last_total_count;
-#ifdef DEBUG
-      cout << "throughput = " << current_throughput << endl;
-#endif
+      cout << "current throughput = " << current_throughput << endl;
+
       throughputs.push_back(current_throughput);
       if (current_throughput > max_throughput) {
         max_throughput = current_throughput;
@@ -294,7 +294,7 @@ int main(int argc, char** argv) {
   }
   for (size_t i = 0; i < user_threads.size(); ++i) {
     try {
-      user_threads[i]->join(5000);
+      user_threads[i]->join(30000);
     } catch (Poco::Exception& e) {
       std::cerr << e.displayText() << std::endl;
     }
