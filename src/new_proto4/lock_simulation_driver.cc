@@ -103,7 +103,7 @@ int main(int argc, char** argv) {
     LockManager::SetExclusiveExclusiveRule("fail");
   } else if (lock_mode_str == "ncosed") {
     lock_mode = REMOTE_NOTIFY;
-  } else if (strncasecmp(lock_mode_str.c_str(), "drtm", 4) == 0) {
+  } else if (strncasecmp(lock_mode_str.c_str(), "d2lm", 4) == 0) {
     lock_mode = REMOTE_D2LM_V2;
     Poco::StringTokenizer tokenizer(lock_mode_str, "_",
                                     Poco::StringTokenizer::TOK_TRIM);
