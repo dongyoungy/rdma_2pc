@@ -1710,16 +1710,6 @@ double LockManager::GetAverageRDMAReadCount() const {
   return total_count / num_clients;
 }
 
-double LockManager::GetAverageRDMAAtomicCount() const {
-  double num_clients = lock_clients_.size();
-  double total_count = 0.0;
-  map<uint64_t, LockClient*>::const_iterator it;
-  for (it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
-    total_count += (double)it->second->GetRDMAAtomicCount();
-  }
-  return total_count / num_clients;
-}
-
 uint64_t LockManager::GetTotalRDMAReadCount() const {
   uint64_t total_count = 0;
   map<uint64_t, LockClient*>::const_iterator it;
@@ -1778,16 +1768,30 @@ uint64_t LockManager::GetTotalRDMAWriteCount() const {
   return total_count;
 }
 
-uint64_t LockManager::GetTotalRDMAAtomicCount() const {
+uint64_t LockManager::GetTotalRDMAAtomicCASCount() const {
   uint64_t total_count = 0;
   map<uint64_t, LockClient*>::const_iterator it;
   map<uint64_t, CommunicationClient*>::const_iterator it2;
   for (it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
-    total_count += it->second->GetRDMAAtomicCount();
+    total_count += it->second->GetRDMAAtomicCASCount();
   }
   for (it2 = communication_clients_.begin();
        it2 != communication_clients_.end(); ++it2) {
-    total_count += it2->second->GetRDMAAtomicCount();
+    total_count += it2->second->GetRDMAAtomicCASCount();
+  }
+  return total_count;
+}
+
+uint64_t LockManager::GetTotalRDMAAtomicFACount() const {
+  uint64_t total_count = 0;
+  map<uint64_t, LockClient*>::const_iterator it;
+  map<uint64_t, CommunicationClient*>::const_iterator it2;
+  for (it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
+    total_count += it->second->GetRDMAAtomicFACount();
+  }
+  for (it2 = communication_clients_.begin();
+       it2 != communication_clients_.end(); ++it2) {
+    total_count += it2->second->GetRDMAAtomicFACount();
   }
   return total_count;
 }

@@ -99,6 +99,7 @@ void LockSimulator::run() {
           // Handle queued case.
           bool timeout = false;
           if (result_info.result == QUEUED) {
+            ++contention_count;
             auto lock_future =
                 manager_->GetLockResult(uintptr_t(this))->get_future();
             auto future_status =

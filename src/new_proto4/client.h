@@ -45,7 +45,8 @@ class Client {
   uint64_t GetRDMARecvCount() const;
   uint64_t GetRDMAReadCount() const;
   uint64_t GetRDMAWriteCount() const;
-  uint64_t GetRDMAAtomicCount() const;
+  uint64_t GetRDMAAtomicFACount() const;
+  uint64_t GetRDMAAtomicCASCount() const;
   uint64_t GetNumLockContention() const;
   uint64_t GetNumLockSuccess() const;
   uint64_t GetNumLockSuccessWithPoll() const;
@@ -53,7 +54,6 @@ class Client {
 
   double GetAveragePollWhenSuccess() const;
   double GetAverageRDMAReadTime() const;
-  double GetAverageRDMAAtomicTime() const;
   double GetTotalRDMAReadTime() const;
   double GetTotalRDMAAtomicTime() const;
 
@@ -77,7 +77,8 @@ class Client {
 
   uint64_t num_rdma_send_;
   uint64_t num_rdma_recv_;
-  uint64_t num_rdma_atomic_;
+  uint64_t num_rdma_atomic_fa_;
+  uint64_t num_rdma_atomic_cas_;
   uint64_t num_rdma_read_;
   uint64_t num_rdma_write_;
 

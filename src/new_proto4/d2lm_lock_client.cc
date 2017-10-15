@@ -3,6 +3,7 @@
 namespace rdma {
 namespace proto {
 
+int D2LMLockClient::kD2LMDeadlockLimit = 100000;
 // constructor
 D2LMLockClient::D2LMLockClient(const string& work_dir,
                                LockManager* local_manager,
@@ -12,6 +13,7 @@ D2LMLockClient::D2LMLockClient(const string& work_dir,
 // destructor
 D2LMLockClient::~D2LMLockClient() {}
 
+void D2LMLockClient::SetDeadLockLimit(int limit) { kD2LMDeadlockLimit = limit; }
 uint64_t D2LMLockClient::GetLockValue(uint16_t exclusive_number,
                                       uint16_t shared_number,
                                       uint16_t exclusive_max,
@@ -89,6 +91,7 @@ bool D2LMLockClient::Lock(Context* context, const LockRequest& request) {
     cerr << "Lock(): ibv_exp_post_send() failed: " << strerror(ret) << endl;
     return false;
   }
+  ++num_rdma_atomic_fa_;
 
   return true;
 }
@@ -149,7 +152,7 @@ bool D2LMLockClient::Unlock(Context* context, const LockRequest& request) {
     cerr << "Unlock(): ibv_exp_post_send() failed: " << strerror(ret) << endl;
     return false;
   }
-  ++num_rdma_atomic_;
+  ++num_rdma_atomic_fa_;
   return true;
 }
 
@@ -187,6 +190,7 @@ bool D2LMLockClient::Read(Context* context, const LockRequest& request) {
     cerr << "Read(): ibv_exp_post_send() failed: " << strerror(ret) << endl;
     return -1;
   }
+  ++num_rdma_read_;
 
   return 0;
 }
@@ -226,6 +230,7 @@ bool D2LMLockClient::ReadForReset(Context* context,
     cerr << "Read(): ibv_exp_post_send() failed: " << strerror(ret) << endl;
     return -1;
   }
+  ++num_rdma_read_;
 
   return 0;
 }
@@ -268,7 +273,7 @@ bool D2LMLockClient::Reset(Context* context, const LockRequest& request) {
     cerr << "Reset(): ibv_exp_post_send() failed: " << strerror(ret) << endl;
     return false;
   }
-  ++num_rdma_atomic_;
+  ++num_rdma_atomic_cas_;
   return true;
 }
 
@@ -313,7 +318,7 @@ bool D2LMLockClient::ResetForDeadlock(Context* context,
          << endl;
     return false;
   }
-  ++num_rdma_atomic_;
+  ++num_rdma_atomic_cas_;
   return true;
 }
 
@@ -373,6 +378,7 @@ bool D2LMLockClient::Undo(Context* context, const LockRequest& request) {
     cerr << "Undo(): ibv_exp_post_send() failed: " << strerror(ret) << endl;
     return false;
   }
+  ++num_rdma_atomic_fa_;
 
   return true;
 }

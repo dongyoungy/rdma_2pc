@@ -17,6 +17,8 @@ class D2LMLockClient : public LockClient {
   virtual bool RequestLock(const LockRequest& request, LockMode lock_mode);
   virtual bool RequestUnlock(const LockRequest& request, LockMode lock_mode);
 
+  static void SetDeadLockLimit(int limit);
+
  protected:
   bool Lock(Context* context, const LockRequest& request);
   bool Unlock(Context* context, const LockRequest& request);
@@ -29,6 +31,8 @@ class D2LMLockClient : public LockClient {
   uint64_t GetLockValue(uint16_t exclusive_number, uint16_t shared_number,
                         uint16_t exclusive_max, uint16_t shared_max) const;
   virtual int HandleWorkCompletion(struct ibv_wc* work_completion);
+
+  static int kD2LMDeadlockLimit;
 
   std::map<uintptr_t, std::map<int, bool>> do_reset_;
   std::map<uintptr_t, std::map<int, uint64_t>> reset_value_;

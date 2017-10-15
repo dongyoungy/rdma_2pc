@@ -36,7 +36,8 @@ Client::Client(const string& work_dir, LockManager* local_manager,
   num_rdma_recv_ = 0;
   num_rdma_write_ = 0;
   num_rdma_read_ = 0;
-  num_rdma_atomic_ = 0;
+  num_rdma_atomic_fa_ = 0;
+  num_rdma_atomic_cas_ = 0;
 
   local_owner_id_ = local_manager_->GetID();
   local_owner_bitvector_id_ = pow(2, local_manager_->GetID() - 1);
@@ -293,7 +294,6 @@ int Client::SendMessage(Context* context) {
   }
 
   context->send_message_buffer->Rotate();
-  ++num_send_message_;
   ++num_rdma_send_;
   pthread_mutex_unlock(&msg_mutex_);
 
@@ -339,7 +339,6 @@ int Client::ReceiveMessage(Context* context) {
                       ((double)start_receive_message_.tv_sec * 1e+9 +
                        (double)start_receive_message_.tv_nsec);
   total_receive_message_time_ += time_taken;
-  ++num_receive_message_;
   ++num_rdma_recv_;
 
   return 0;
@@ -533,7 +532,8 @@ uint64_t Client::GetRDMAReadCount() const { return num_rdma_read_; }
 
 uint64_t Client::GetRDMAWriteCount() const { return num_rdma_write_; }
 
-uint64_t Client::GetRDMAAtomicCount() const { return num_rdma_atomic_; }
+uint64_t Client::GetRDMAAtomicCASCount() const { return num_rdma_atomic_cas_; }
+uint64_t Client::GetRDMAAtomicFACount() const { return num_rdma_atomic_fa_; }
 
 uint64_t Client::GetNumLockContention() const { return total_lock_contention_; }
 
@@ -555,10 +555,6 @@ double Client::GetTotalRDMAAtomicTime() const {
 
 double Client::GetAverageRDMAReadTime() const {
   return total_rdma_read_time_ / (double)num_rdma_read_;
-}
-
-double Client::GetAverageRDMAAtomicTime() const {
-  return total_rdma_atomic_time_ / (double)num_rdma_atomic_;
 }
 
 double Client::GetAveragePollWhenSuccess() const {

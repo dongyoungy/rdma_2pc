@@ -36,6 +36,12 @@ struct LockRequest {
     shared_leave = other.shared_leave;
     exclusive_max = other.exclusive_max;
     shared_max = other.shared_max;
+
+    rdma_send = other.rdma_send;
+    rdma_atomic_cas = other.rdma_atomic_cas;
+    rdma_atomic_fa = other.rdma_atomic_fa;
+    rdma_write = other.rdma_write;
+    rdma_read = other.rdma_read;
   }
   LockRequest& operator=(const LockRequest& other) {
     if (this != &other) {
@@ -64,6 +70,12 @@ struct LockRequest {
       shared_leave = other.shared_leave;
       exclusive_max = other.exclusive_max;
       shared_max = other.shared_max;
+
+      rdma_send = other.rdma_send;
+      rdma_atomic_cas = other.rdma_atomic_cas;
+      rdma_atomic_fa = other.rdma_atomic_fa;
+      rdma_write = other.rdma_write;
+      rdma_read = other.rdma_read;
     }
     return *this;
   }
@@ -100,9 +112,6 @@ struct LockRequest {
   uint32_t exclusive;
   uint32_t shared;
 
-  std::unique_ptr<uint64_t[]> buffer;
-  struct ibv_mr* buffer_mr;
-
   uint16_t last_exclusive_number = 0;
   uint16_t last_shared_number = 0;
   uint16_t exclusive_number = 0;
@@ -111,6 +120,13 @@ struct LockRequest {
   uint16_t shared_leave = 0;
   uint16_t exclusive_max = 0;
   uint16_t shared_max = 0;
+
+  // RDMA stats
+  uint64_t rdma_send = 0;
+  uint64_t rdma_atomic_cas = 0;
+  uint64_t rdma_atomic_fa = 0;
+  uint64_t rdma_write = 0;
+  uint64_t rdma_read = 0;
 };
 
 }  // namespace proto

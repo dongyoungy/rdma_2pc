@@ -42,7 +42,6 @@ const uint32_t kBaseBackoff = 10;     // microseconds
 const uint64_t kTPCCNumObjects = 700000;
 
 const uint32_t kDRTMSharedLimit = 16;
-const int kD2LMDeadlockLimit = 100000;
 
 const int kValueIdx = 0;
 const int kLeaverIdx = 1;

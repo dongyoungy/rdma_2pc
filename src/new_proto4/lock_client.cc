@@ -606,6 +606,7 @@ bool LockClient::LockRemotely(Context* context, const LockRequest& request) {
   if (current_request->lock_type == SHARED) {
     send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
     send_work_request.wr.atomic.compare_add = 1;
+    ++num_rdma_atomic_fa_;
   } else if (current_request->lock_type == EXCLUSIVE) {
     send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_CMP_AND_SWP;
     exclusive = local_owner_id_;
@@ -613,6 +614,7 @@ bool LockClient::LockRemotely(Context* context, const LockRequest& request) {
     uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
     send_work_request.wr.atomic.compare_add = 0;
     send_work_request.wr.atomic.swap = new_value;
+    ++num_rdma_atomic_cas_;
   }
 
   send_work_request.wr.atomic.remote_addr =
@@ -627,7 +629,6 @@ bool LockClient::LockRemotely(Context* context, const LockRequest& request) {
          << endl;
     return false;
   }
-  ++num_rdma_atomic_;
   return true;
 }
 
@@ -732,12 +733,14 @@ bool LockClient::UnlockRemotely(Context* context, const LockRequest& request,
   if (current_request->lock_type == SHARED) {
     send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
     send_work_request.wr.atomic.compare_add = -1;
+    ++num_rdma_atomic_fa_;
   } else if (current_request->lock_type == EXCLUSIVE) {
     send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_CMP_AND_SWP;
     shared = 0;
     uint64_t prev_value = ((uint64_t)local_owner_id_) << 32 | shared;
     send_work_request.wr.atomic.compare_add = prev_value;
     send_work_request.wr.atomic.swap = 0;
+    ++num_rdma_atomic_cas_;
   }
   send_work_request.wr.atomic.remote_addr =
       (uint64_t)context->lock_table_mr->addr +
@@ -753,7 +756,6 @@ bool LockClient::UnlockRemotely(Context* context, const LockRequest& request,
          << endl;
     return false;
   }
-  ++num_rdma_atomic_;
   return true;
 }
 

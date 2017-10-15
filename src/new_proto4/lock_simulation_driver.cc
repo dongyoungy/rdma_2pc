@@ -8,9 +8,11 @@
 #include <numeric>
 #include <vector>
 
+#include "Poco/NumberParser.h"
+#include "Poco/StringTokenizer.h"
 #include "Poco/Thread.h"
 
-#include "d2lm_lock_manager.h"
+#include "d2lm_lock_client.h"
 #include "hotspot_exclusive_lock_simulator.h"
 #include "hotspot_lock_simulator.h"
 #include "lock_manager.h"
@@ -70,6 +72,7 @@ int main(int argc, char** argv) {
   int think_time_duration = atoi(argv[k++]);
   string random_backoff_str = argv[k++];
 
+  int d2lm_deadlock_limit = 0;
   LockMode lock_mode = PROXY_RETRY;
   // if (lock_mode_str == "proxy-retry") {
   // lock_mode = PROXY_RETRY;
@@ -100,10 +103,15 @@ int main(int argc, char** argv) {
     LockManager::SetExclusiveExclusiveRule("fail");
   } else if (lock_mode_str == "ncosed") {
     lock_mode = REMOTE_NOTIFY;
-  } else if (lock_mode_str == "d2lm_1") {
-    lock_mode = REMOTE_D2LM_V1;
-  } else if (lock_mode_str == "d2lm_2") {
+  } else if (strncasecmp(lock_mode_str.c_str(), "drtm", 4) == 0) {
     lock_mode = REMOTE_D2LM_V2;
+    Poco::StringTokenizer tokenizer(lock_mode_str, "_",
+                                    Poco::StringTokenizer::TOK_TRIM);
+    if (tokenizer.count() != 2) {
+      cerr << "Incorrect number of tokens for D2LM." << endl;
+      exit(ERROR_INVALID_LOCK_MODE);
+    }
+    d2lm_deadlock_limit = Poco::NumberParser::parse(tokenizer[1]);
   } else {
     cerr << "Invalid lock mode: " << lock_mode_str << endl;
     exit(ERROR_INVALID_LOCK_MODE);
@@ -131,10 +139,12 @@ int main(int argc, char** argv) {
     cout << "# Requests per Tx = " << request_size << endl;
     cout << "# Lock Objects = " << num_lock_object << endl;
     cout << "Lock Mode = " << lock_mode_str << endl;
+    cout << "D2LM Deadlock Limit = " << d2lm_deadlock_limit << endl;
   }
 
   LockManager::SetFailRetry(num_retry);
   LockManager::SetPollRetry(num_retry);
+  D2LMLockClient::SetDeadLockLimit(d2lm_deadlock_limit);
   std::unique_ptr<LockManager> lock_manager(
       new LockManager(argv[1], rank, num_managers, num_lock_object, lock_mode));
 
@@ -380,6 +390,22 @@ int main(int argc, char** argv) {
   uint64_t total_count_with_contention = 0;
   uint64_t count_with_backoff = 0;
   uint64_t total_count_with_backoff = 0;
+
+  // RDMA stats
+  uint64_t rdma_read = lock_manager->GetTotalRDMAReadCount();
+  uint64_t rdma_write = lock_manager->GetTotalRDMAWriteCount();
+  uint64_t rdma_send = lock_manager->GetTotalRDMASendCount();
+  uint64_t rdma_recv = lock_manager->GetTotalRDMARecvCount();
+  uint64_t rdma_atomic_fa = lock_manager->GetTotalRDMAAtomicFACount();
+  uint64_t rdma_atomic_cas = lock_manager->GetTotalRDMAAtomicCASCount();
+  uint64_t total_rdma_read = 0;
+  uint64_t total_rdma_write = 0;
+  uint64_t total_rdma_send = 0;
+  uint64_t total_rdma_recv = 0;
+  uint64_t total_rdma_atomic_fa = 0;
+  uint64_t total_rdma_atomic_cas = 0;
+  uint64_t total_rdma_op = 0;
+
   for (int i = 0; i < num_users; ++i) {
     users[i]->SortLatency();
     count += users[i]->GetCount();
@@ -475,6 +501,19 @@ int main(int argc, char** argv) {
   MPI_Reduce(&count_with_backoff, &total_count_with_backoff, 1,
              MPI_LONG_LONG_INT, MPI_SUM, 0, MPI_COMM_WORLD);
 
+  MPI_Reduce(&rdma_read, &total_rdma_read, 1, MPI_LONG_LONG_INT, MPI_SUM, 0,
+             MPI_COMM_WORLD);
+  MPI_Reduce(&rdma_write, &total_rdma_write, 1, MPI_LONG_LONG_INT, MPI_SUM, 0,
+             MPI_COMM_WORLD);
+  MPI_Reduce(&rdma_send, &total_rdma_send, 1, MPI_LONG_LONG_INT, MPI_SUM, 0,
+             MPI_COMM_WORLD);
+  MPI_Reduce(&rdma_recv, &total_rdma_recv, 1, MPI_LONG_LONG_INT, MPI_SUM, 0,
+             MPI_COMM_WORLD);
+  MPI_Reduce(&rdma_atomic_cas, &total_rdma_atomic_cas, 1, MPI_LONG_LONG_INT,
+             MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&rdma_atomic_fa, &total_rdma_atomic_fa, 1, MPI_LONG_LONG_INT,
+             MPI_SUM, 0, MPI_COMM_WORLD);
+
   if (rank == 0) {
     average_cpu_usage /= num_managers;
     total_average_latency /= num_managers;
@@ -487,6 +526,11 @@ int main(int argc, char** argv) {
     total_average_99pct_latency_with_backoff /= num_managers;
     total_average_999pct_latency_with_backoff /= num_managers;
     total_average_backoff_time /= num_managers;
+
+    total_rdma_op = total_rdma_read + total_rdma_write + total_rdma_send +
+                    total_rdma_recv + total_rdma_atomic_fa +
+                    total_rdma_atomic_cas;
+
     // Sort throughputs.
     std::sort(throughputs.begin(), throughputs.end());
     total_throughput =
@@ -540,6 +584,13 @@ int main(int argc, char** argv) {
     cout << "Avg. Contention Count (type 6) = "
          << total_average_contention_count6 << endl;
     cout << "Max Latency = " << total_max_latency << " us" << endl;
+    cout << "Total RDMA Read = " << total_rdma_read << endl;
+    cout << "Total RDMA Write = " << total_rdma_write << endl;
+    cout << "Total RDMA Send = " << total_rdma_send << endl;
+    cout << "Total RDMA Recv = " << total_rdma_recv << endl;
+    cout << "Total RDMA CAS = " << total_rdma_atomic_cas << endl;
+    cout << "Total RDMA FA = " << total_rdma_atomic_fa << endl;
+    cout << "Total RDMA Op = " << total_rdma_op << endl;
 
     // Print as CVS at the end.
     cout << "Workload, Think Time Type, Think Time Duration, Lock Mode, # "
@@ -564,7 +615,14 @@ int main(int argc, char** argv) {
          << "Avg. Contention Count (type 4), "
          << "Avg. Contention Count (type 5), "
          << "Avg. Contention Count (type 6), "
-         << "Max Latency" << endl;
+         << "Max Latency, "
+         << "RDMA Read, "
+         << "RDMA Write, "
+         << "RDMA Send, "
+         << "RDMA Recv, "
+         << "RDMA CAS, "
+         << "RDMA FA, "
+         << "RDMA Total" << endl;
     cout << workload_type << "," << think_time_type << ","
          << think_time_duration << "," << lock_mode_str << "," << num_managers
          << "," << num_lock_object << "," << num_retry << ","
@@ -591,7 +649,10 @@ int main(int argc, char** argv) {
          << total_average_contention_count3 << ","
          << total_average_contention_count4 << ","
          << total_average_contention_count5 << ","
-         << total_average_contention_count6 << "," << total_max_latency << endl;
+         << total_average_contention_count6 << "," << total_max_latency << ","
+         << total_rdma_read << "," << total_rdma_write << "," << total_rdma_send
+         << "," << total_rdma_recv << "," << total_rdma_atomic_cas << ","
+         << total_rdma_atomic_fa << "," << total_rdma_op << "," << endl;
   }
   MPI_Finalize();
 }

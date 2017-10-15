@@ -117,7 +117,8 @@ class LockManager : public Poco::Runnable {
   uint64_t GetTotalRDMASendCount() const;
   uint64_t GetTotalRDMARecvCount() const;
   uint64_t GetTotalRDMAWriteCount() const;
-  uint64_t GetTotalRDMAAtomicCount() const;
+  uint64_t GetTotalRDMAAtomicCASCount() const;
+  uint64_t GetTotalRDMAAtomicFACount() const;
 
   double GetTotalRDMAReadTime() const;
   double GetTotalRDMAAtomicTime() const;

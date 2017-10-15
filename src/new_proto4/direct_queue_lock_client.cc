@@ -83,7 +83,7 @@ bool DirectQueueLockClient::LockRemotely(Context* context,
     return false;
   }
 
-  ++num_rdma_atomic_;
+  ++num_rdma_atomic_fa_;
 
   return true;
 }
@@ -151,7 +151,7 @@ bool DirectQueueLockClient::UnlockRemotely(Context* context,
          << endl;
     return false;
   }
-  ++num_rdma_atomic_;
+  ++num_rdma_atomic_fa_;
   return true;
 }
 
