@@ -222,8 +222,9 @@ int LockManager::InitializeLockClients() {
   if (lock_mode_ == PROXY_QUEUE || lock_mode_ == PROXY_RETRY) {
     wait_queues_ = new LockWaitQueue*[num_lock_object_];
     for (int i = 0; i < num_lock_object_; ++i) {
-      wait_queues_[i] = new LockWaitQueue(MAX_LOCAL_THREADS);
+      wait_queues_[i] = new LockWaitQueue();
     }
+    LockWaitQueue::InitializePool();
     // wait_queues_.reserve(num_lock_object_);
     // for (int i = 0; i < num_lock_object_; ++i) {
     // LockWaitQueue* queue = new LockWaitQueue(users.size()+1); // +36 is for
@@ -767,6 +768,7 @@ int LockManager::LockLocallyWithRetry(Context* context, Message* message) {
 }
 
 int LockManager::LockLocallyWithQueue(Context* context, Message* message) {
+  Poco::Mutex::ScopedLock lock(mutex_);
   LockResult lock_result = FAILURE;
   int seq_no = message->seq_no;
   uint32_t target_node_id = id_;
@@ -1031,6 +1033,7 @@ int LockManager::UnlockLocallyWithRetry(Context* context, Message* message) {
 }
 
 int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
+  Poco::Mutex::ScopedLock lock(mutex_);
   LockResult lock_result = FAILURE;
   int seq_no = message->seq_no;
   uint32_t owner_node_id = message->owner_node_id;
@@ -1283,10 +1286,15 @@ int LockManager::NotifyLockRequestResult(int seq_no, uintptr_t user_id,
 
   Poco::Mutex::ScopedLock lock(mutex_);
   LockResultInfo result_info(result, contention_count);
-  auto& status = lock_status_map_[target_node_id][obj_index];
-  if (status.seq_no == seq_no && status.status == LOCKING &&
-      status.user_id == user_id) {
+  auto* status = &lock_status_map_[target_node_id][obj_index];
+  if (status->seq_no == seq_no && status->status == LOCKING &&
+      status->user_id == user_id) {
     lock_result_map_[user_id].set_value(result_info);
+    if (result == SUCCESS || result == SUCCESS_FROM_QUEUED) {
+      status->status = LOCKED;
+    } else if (result == QUEUED) {
+      lock_result_map_[user_id] = std::promise<LockResultInfo>();
+    }
   } else {
 #ifdef VERBOSE
     cout << "path9: incorrect lock status: " << id_ << "," << status.seq_no
@@ -1294,10 +1302,6 @@ int LockManager::NotifyLockRequestResult(int seq_no, uintptr_t user_id,
 #endif
   }
   // lock_status_map_[target_node_id].erase(obj_index);
-
-  if (result == QUEUED) {
-    lock_result_map_[user_id] = std::promise<LockResultInfo>();
-  }
 
   // keep the user id if it has been queued
   // if (result == RESULT_QUEUED) {
@@ -1313,16 +1317,18 @@ int LockManager::NotifyLockRequestResult(int seq_no, uintptr_t user_id,
                                          LockResult result) {
   Poco::Mutex::ScopedLock lock(mutex_);
   LockResultInfo result_info(result, stat);
-  auto& status = lock_status_map_[target_node_id][obj_index];
-  if (status.seq_no == seq_no && status.status == LOCKING &&
-      status.user_id == user_id) {
+  auto* status = &lock_status_map_[target_node_id][obj_index];
+  if (status->seq_no == seq_no && status->status == LOCKING &&
+      status->user_id == user_id) {
+    // lock_result_map_[user_id].set_value(result_info);
     lock_result_map_[user_id].set_value(result_info);
+    if (result == SUCCESS || result == SUCCESS_FROM_QUEUED) {
+      status->status = LOCKED;
+    } else if (result == QUEUED) {
+      lock_result_map_[user_id] = std::promise<LockResultInfo>();
+    }
   }
   // lock_status_map_[target_node_id].erase(obj_index);
-
-  if (result == QUEUED) {
-    lock_result_map_[user_id] = std::promise<LockResultInfo>();
-  }
 
   return 0;
 }
@@ -1332,15 +1338,19 @@ int LockManager::NotifyUnlockRequestResult(int seq_no, uintptr_t user_id,
                                            int target_node_id, int obj_index,
                                            LockResult result) {
   Poco::Mutex::ScopedLock lock(mutex_);
-  auto& status = lock_status_map_[target_node_id][obj_index];
-  if (status.seq_no == seq_no && status.status == UNLOCKING &&
-      status.user_id == user_id) {
+  auto* status = &lock_status_map_[target_node_id][obj_index];
+  if (status->seq_no == seq_no && status->status == UNLOCKING &&
+      status->user_id == user_id) {
+    // lock_result_map_[user_id].set_value(LockResultInfo(result, 0));
     lock_result_map_[user_id].set_value(LockResultInfo(result, 0));
+    if (result == SUCCESS) {
+      status->status = UNLOCKED;
+    }
   } else {
     cerr << "Unlock failure. (5): " << seq_no << "," << id_ << ","
          << target_node_id << "," << obj_index << "," << user_id << endl;
-    cerr << "Status = " << status.seq_no << "," << status.status << ","
-         << status.user_id << endl;
+    cerr << "Status = " << status->seq_no << "," << status->status << ","
+         << status->user_id << endl;
     lock_result_map_[user_id].set_value(LockResultInfo(FAILURE, 0));
   }
   lock_status_map_[target_node_id].erase(obj_index);

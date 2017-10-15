@@ -6,6 +6,7 @@
 #include <list>
 #include <queue>
 #include <vector>
+#include "Poco/Mutex.h"
 #include "lock_wait_element.h"
 
 using namespace std;
@@ -15,7 +16,7 @@ namespace proto {
 
 class LockWaitQueue {
  public:
-  LockWaitQueue(int max_size);
+  LockWaitQueue();
   ~LockWaitQueue();
   int RemoveAllElements(uint32_t owner_node_id, int type);
   int Insert(int seq_no, uint32_t target_node_id, uint32_t owner_node_id,
@@ -25,12 +26,17 @@ class LockWaitQueue {
   LockWaitElement* Pop();
   LockWaitElement* Front();
   inline int GetSize() const { return size_; }
+  static void InitializePool();
 
  private:
+  static LockWaitElement* GetElementFromPool();
+  static void PushElementToPool(LockWaitElement* elem);
+
+  static list<LockWaitElement*> pool_;
+  static Poco::Mutex pool_mutex_;
+
   list<LockWaitElement*> queue_;
-  list<LockWaitElement*> pool_;
   int size_;
-  int max_size_;
   pthread_mutex_t mutex_;
 };
 

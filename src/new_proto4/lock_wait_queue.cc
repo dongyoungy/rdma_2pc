@@ -3,27 +3,18 @@
 namespace rdma {
 namespace proto {
 
+std::list<LockWaitElement*> LockWaitQueue::pool_;
+Poco::Mutex LockWaitQueue::pool_mutex_;
+
 // constructor
-LockWaitQueue::LockWaitQueue(int max_size) {
-  max_size_ = max_size;
+LockWaitQueue::LockWaitQueue() {
   size_ = 0;
 
-  // initialize the memory pool
-  for (int i = 0; i < max_size_; ++i) {
-    LockWaitElement* elem = new LockWaitElement;
-    pool_.push_back(elem);
-  }
   pthread_mutex_init(&mutex_, NULL);
 }
 
 // destructor
 LockWaitQueue::~LockWaitQueue() {
-  // clean pool
-  while (!pool_.empty()) {
-    LockWaitElement* elem = pool_.back();
-    delete elem;
-    pool_.pop_back();
-  }
   // clean queue
   while (!queue_.empty()) {
     LockWaitElement* elem = queue_.back();
@@ -32,13 +23,32 @@ LockWaitQueue::~LockWaitQueue() {
   }
 }
 
+void LockWaitQueue::InitializePool() {
+  // initialize the memory pool
+  for (int i = 0; i < MAX_WAIT_QUEUE_POOL_SIZE; ++i) {
+    LockWaitElement* elem = new LockWaitElement;
+    pool_.push_back(elem);
+  }
+}
+
+LockWaitElement* LockWaitQueue::GetElementFromPool() {
+  Poco::Mutex::ScopedLock lock(pool_mutex_);
+  LockWaitElement* elem = pool_.front();
+  pool_.pop_front();
+  return elem;
+}
+
+void LockWaitQueue::PushElementToPool(LockWaitElement* elem) {
+  Poco::Mutex::ScopedLock lock(pool_mutex_);
+  pool_.push_back(elem);
+}
+
 // insert new element into the queue
 int LockWaitQueue::Insert(int seq_no, uint32_t target_node_id,
                           uint32_t owner_node_id, uintptr_t owner_user_id,
                           LockType type) {
   pthread_mutex_lock(&mutex_);
-  LockWaitElement* elem = pool_.front();
-  pool_.pop_front();
+  LockWaitElement* elem = LockWaitQueue::GetElementFromPool();
 
   elem->seq_no = seq_no;
   elem->target_node_id = target_node_id;
@@ -62,7 +72,7 @@ LockWaitElement* LockWaitQueue::Pop() {
   LockWaitElement* elem = queue_.front();
   queue_.pop_front();
   --size_;
-  pool_.push_back(elem);
+  LockWaitQueue::PushElementToPool(elem);
   pthread_mutex_unlock(&mutex_);
 
   return elem;

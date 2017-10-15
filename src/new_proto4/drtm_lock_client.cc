@@ -43,7 +43,7 @@ int DRTMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
                                           message->lock_mode);
     } else if (message->type == Message::LOCK_REQUEST_RESULT) {
       // cout << "received lock request result." << endl;
-      Poco::Mutex::ScopedLock lock(lock_mutex_);
+      // Poco::Mutex::ScopedLock lock(lock_mutex_);
       message_in_progress_ = false;
 
       local_manager_->NotifyLockRequestResult(
@@ -51,7 +51,7 @@ int DRTMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           remote_lm_id_, message->obj_index, 0, message->lock_result);
     } else if (message->type == Message::UNLOCK_REQUEST_RESULT) {
       // cout << "received unlock request result" << endl;
-      Poco::Mutex::ScopedLock lock(lock_mutex_);
+      // Poco::Mutex::ScopedLock lock(lock_mutex_);
       message_in_progress_ = false;
 
       local_manager_->NotifyUnlockRequestResult(

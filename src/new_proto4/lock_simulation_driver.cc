@@ -70,11 +70,6 @@ int main(int argc, char** argv) {
   int think_time_duration = atoi(argv[k++]);
   string random_backoff_str = argv[k++];
 
-  if (num_managers > 32) {
-    cerr << "# of nodes must be less than 33" << endl;
-    exit(-1);
-  }
-
   LockMode lock_mode = PROXY_RETRY;
   // if (lock_mode_str == "proxy-retry") {
   // lock_mode = PROXY_RETRY;

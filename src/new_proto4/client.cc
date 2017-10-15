@@ -365,7 +365,8 @@ int Client::RegisterMemoryRegion(Context* context) {
                  IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
                      IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
   if (context->original_value_mr == NULL) {
-    cerr << "ibv_reg_mr() failed for original_value_mr." << endl;
+    cerr << "ibv_reg_mr() failed for original_value_mr: " << strerror(errno)
+         << endl;
     return -1;
   }
   for (int i = 0; i < MAX_LOCAL_THREADS; ++i) {
@@ -376,19 +377,20 @@ int Client::RegisterMemoryRegion(Context* context) {
                    IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
                        IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
     if (request->original_value_mr == NULL) {
-      cerr << "ibv_reg_mr() failed for request->original_value_mr." << endl;
+      cerr << "ibv_reg_mr() failed for request->original_value_mr: "
+           << strerror(errno) << endl;
       return -1;
     }
 
-    request->read_buffer_mr =
-        ibv_reg_mr(context->protection_domain, &request->read_buffer,
-                   sizeof(request->read_buffer),
-                   IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
-                       IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
-    if (request->read_buffer_mr == NULL) {
-      cerr << "ibv_reg_mr() failed for read_buffer_mr." << endl;
-      return -1;
-    }
+    // request->read_buffer_mr =
+    // ibv_reg_mr(context->protection_domain, &request->read_buffer,
+    // sizeof(request->read_buffer),
+    // IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
+    // IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
+    // if (request->read_buffer_mr == NULL) {
+    // cerr << "ibv_reg_mr() failed for read_buffer_mr." << endl;
+    // return -1;
+    //}
 
     request->read_buffer2_mr =
         ibv_reg_mr(context->protection_domain, &request->read_buffer2,
@@ -396,21 +398,22 @@ int Client::RegisterMemoryRegion(Context* context) {
                    IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
                        IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
     if (request->read_buffer2_mr == NULL) {
-      cerr << "ibv_reg_mr() failed for read_buffer2_mr." << endl;
+      cerr << "ibv_reg_mr() failed for read_buffer2_mr: " << strerror(errno)
+           << endl;
       return -1;
     }
 
     // std::unique_ptr<uint64_t[]> buffer(new uint64_t[kNumFields]);
-    request->buffer.reset(new uint64_t[kNumFields]);
-    request->buffer_mr =
-        ibv_reg_mr(context->protection_domain, request->buffer.get(),
-                   sizeof(uint64_t) * kNumFields,
-                   IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
-                       IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
-    if (request->buffer_mr == NULL) {
-      cerr << "ibv_reg_mr() failed for buffer_mr." << endl;
-      return -1;
-    }
+    // request->buffer.reset(new uint64_t[kNumFields]);
+    // request->buffer_mr =
+    // ibv_reg_mr(context->protection_domain, request->buffer.get(),
+    // sizeof(uint64_t) * kNumFields,
+    // IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
+    // IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
+    // if (request->buffer_mr == NULL) {
+    // cerr << "ibv_reg_mr() failed for buffer_mr." << endl;
+    // return -1;
+    //}
   }
 
   context->read_buffer_mr =
@@ -419,7 +422,8 @@ int Client::RegisterMemoryRegion(Context* context) {
                  IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
                      IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
   if (context->read_buffer_mr == NULL) {
-    cerr << "ibv_reg_mr() failed for read_buffer_mr." << endl;
+    cerr << "ibv_reg_mr() failed for read_buffer_mr: " << strerror(errno)
+         << endl;
     return -1;
   }
 
@@ -429,7 +433,8 @@ int Client::RegisterMemoryRegion(Context* context) {
                  IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
                      IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
   if (context->read_buffer2_mr == NULL) {
-    cerr << "ibv_reg_mr() failed for read_buffer2_mr." << endl;
+    cerr << "ibv_reg_mr() failed for read_buffer2_mr: " << strerror(errno)
+         << endl;
     return -1;
   }
 

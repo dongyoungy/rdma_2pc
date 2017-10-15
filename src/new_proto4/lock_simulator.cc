@@ -104,10 +104,12 @@ void LockSimulator::run() {
             auto future_status =
                 lock_future.wait_for(std::chrono::milliseconds(100));
             if (future_status == std::future_status::timeout) {
+              // sleep(5);
               manager_->SetLockStatusInvalid(requests_[i]->lm_id,
                                              requests_[i]->obj_index);
               // Revert acquired + queued locks.
               RevertLocks(i);
+              i = 0;
               timeout = true;
             } else if (future_status == std::future_status::ready) {
               result_info = lock_future.get();

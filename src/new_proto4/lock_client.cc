@@ -79,7 +79,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
                                           message->lock_mode);
     } else if (message->type == Message::LOCK_REQUEST_RESULT) {
       // cout << "received lock request result." << endl;
-      Poco::Mutex::ScopedLock lock(lock_mutex_);
+      // Poco::Mutex::ScopedLock lock(lock_mutex_);
       message_in_progress_ = false;
 
       local_manager_->NotifyLockRequestResult(
@@ -87,7 +87,7 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           remote_lm_id_, message->obj_index, 0, message->lock_result);
     } else if (message->type == Message::UNLOCK_REQUEST_RESULT) {
       // cout << "received unlock request result" << endl;
-      Poco::Mutex::ScopedLock lock(lock_mutex_);
+      // Poco::Mutex::ScopedLock lock(lock_mutex_);
       message_in_progress_ = false;
 
       local_manager_->NotifyUnlockRequestResult(
@@ -284,10 +284,15 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
                          (double)start_rdma_read_.tv_nsec);
     total_rdma_read_time_ += time_taken;
     // polling result
-    uint32_t value = request->read_buffer;
+    uint64_t value = request->read_buffer2;
+    uint32_t exclusive, shared;
+    exclusive = (uint32_t)((value) >> 32);
+    shared = (uint32_t)value;
+    request->exclusive = exclusive;
+    request->shared = shared;
     if (request->read_target == READ_SHARED) {
       // Polling on Sh_X -> proceed if value is zero
-      if (value == 0) {
+      if (shared == 0) {
         user_retry_count_[request->user_id] = 0;
         local_manager_->NotifyLockRequestResult(
             request->seq_no, request->user_id, request->lock_type,

@@ -454,6 +454,9 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               request->seq_no, request->user_id, request->lock_type,
               remote_lm_id_, request->obj_index, request->contention_count,
               FAILURE);
+          if (do_reset_[request->user_id][request->obj_index]) {
+            this->Reset(context_, *request);
+          }
         } else {
           uint64_t from, to;
           if (request->lock_type == EXCLUSIVE) {
