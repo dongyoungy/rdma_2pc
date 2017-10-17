@@ -3,10 +3,11 @@
 namespace rdma {
 namespace proto {
 
-LockSimulator::LockSimulator(LockManager* manager, int num_nodes,
+LockSimulator::LockSimulator(LockManager* manager, int id, int num_nodes,
                              int num_objects, int request_size,
                              string think_time_type, bool do_random_backoff)
     : manager_(manager),
+      id_(id),
       num_nodes_(num_nodes),
       num_objects_(num_objects),
       request_size_(request_size),
@@ -26,6 +27,8 @@ LockSimulator::LockSimulator(LockManager* manager, int num_nodes,
 }
 
 LockSimulator::~LockSimulator() {}
+
+int LockSimulator::GetID() const { return id_; }
 
 void LockSimulator::SetThinkTimeDuration(int duration) {
   think_time_duration_ = duration;
@@ -54,7 +57,7 @@ void LockSimulator::run() {
 
   Poco::Timestamp job_start;
   auto job_start_time = job_start.epochTime();
-  cerr << "job start time (" << uintptr_t(this)
+  cerr << "job start time (" << id_
        << ") = " << asctime(localtime(&job_start_time)) << endl;
 
   // Keep requesting locks until done.
@@ -93,20 +96,18 @@ void LockSimulator::run() {
           if (do_random_backoff_) {
             time_spent_backoff += PerformRandomBackoff(attempt);
             ++backoff_count_;
-            backoff_done = true;
           }
         } else {
           // Handle queued case.
           bool timeout = false;
           if (result_info.result == QUEUED) {
             ++contention_count;
-            auto lock_future =
-                manager_->GetLockResult(uintptr_t(this))->get_future();
+            auto lock_future = manager_->GetLockResult(id_)->get_future();
             auto future_status =
                 lock_future.wait_for(std::chrono::milliseconds(100));
             if (future_status == std::future_status::timeout) {
               // sleep(5);
-              manager_->SetLockStatusInvalid(requests_[i]->lm_id,
+              manager_->SetLockStatusInvalid(id_, requests_[i]->lm_id,
                                              requests_[i]->obj_index);
               // Revert acquired + queued locks.
               RevertLocks(i);
@@ -198,7 +199,7 @@ void LockSimulator::run() {
       job_done = is_done_;
     }
   }
-  cout << "Simulator " << manager_->GetID() << " done" << endl;
+  cout << "Simulator " << id_ << " done" << endl;
   std::flush(cout);
 }
 
@@ -246,6 +247,8 @@ void LockSimulator::Stop() {
 }
 
 uint64_t LockSimulator::GetCount() const { return count_; }
+
+uint64_t LockSimulator::GetBackoffCount() const { return backoff_count_; }
 
 uint64_t LockSimulator::GetCountWithContention() const {
   return contention_latency_.size();
@@ -396,7 +399,7 @@ void LockSimulator::CreateRequest() {
   // Generate random requests.
   for (int i = 0; i < request_size_; ++i) {
     requests_[i]->seq_no = seq_count_++;
-    requests_[i]->user_id = (uintptr_t) this;
+    requests_[i]->user_id = id_;
     requests_[i]->owner_node_id = manager_->GetID();
     requests_[i]->task = LOCK;
     requests_[i]->lm_id = 1 + (rng_.next() % num_nodes_);

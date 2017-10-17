@@ -74,7 +74,8 @@ class LockManager : public Poco::Runnable {
   int NotifyUnlockRequestResult(int seq_no, uintptr_t user_id,
                                 LockType lock_type, int target_node_id,
                                 int obj_index, LockResult result);
-  void SetLockStatusInvalid(uint32_t node_id, uint32_t obj_index);
+  void SetLockStatusInvalid(uintptr_t user_id, uint32_t node_id,
+                            uint32_t obj_index);
 
   // used by NCOSED.
   int SendNCOSEDLockRequest(int seq_no, int current_owner_id, int node_id,
@@ -234,7 +235,7 @@ class LockManager : public Poco::Runnable {
   void DestroyListener();
 
   // each client connects to each lock manager in the cluster
-  map<uint64_t, LockClient*> lock_clients_;
+  std::unordered_map<uint64_t, LockClient*> lock_clients_;
   map<uint64_t, LockClient*> notify_lock_clients_;
   set<Context*> context_set_;
   vector<pthread_t*> lock_client_threads_;
@@ -261,9 +262,14 @@ class LockManager : public Poco::Runnable {
   LocalWorkQueue<Message>* local_work_queue_;
   pthread_t local_work_poller_;
 
-  std::map<uintptr_t, std::promise<LockResultInfo>> lock_result_map_;
-  std::unordered_map<uint32_t, std::unordered_map<uint32_t, LockStatusInfo>>
-      lock_status_map_;
+  // std::map<uintptr_t, std::promise<LockResultInfo>> lock_result_map_;
+  // std::unordered_map<
+  // uintptr_t, std::unordered_map<
+  // uint32_t, std::unordered_map<uint32_t, LockStatusInfo>>>
+  // lock_status_map_;
+  std::promise<LockResultInfo>* lock_result_map_;
+  LockStatusInfo* lock_status_map_;
+  LockClient** lock_clients_map_;
 
   // local lock manager
   // LocalLockManager* llm_;
@@ -299,7 +305,7 @@ class LockManager : public Poco::Runnable {
   double num_local_shared_lock_;
   uint16_t port_;
   size_t data_size_;
-  Poco::Mutex mutex_;
+  Poco::FastMutex* mutex_;
   pthread_mutex_t** lock_mutex_;
   pthread_mutex_t msg_mutex_;
   pthread_mutex_t poll_mutex_;

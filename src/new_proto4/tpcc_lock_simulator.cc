@@ -3,11 +3,12 @@
 namespace rdma {
 namespace proto {
 
-TPCCLockSimulator::TPCCLockSimulator(LockManager* manager, int num_nodes,
-                                     int num_objects, string think_time_type,
+TPCCLockSimulator::TPCCLockSimulator(LockManager* manager, int id,
+                                     int num_nodes, int num_objects,
+                                     string think_time_type,
                                      bool do_random_backoff,
                                      int home_warehouse_id)
-    : LockSimulator(manager, num_nodes, num_objects, 128, think_time_type,
+    : LockSimulator(manager, id, num_nodes, num_objects, 128, think_time_type,
                     do_random_backoff),
       home_warehouse_id_(home_warehouse_id) {
   tpcc_lock_gen_.reset(new TPCCLockGen(home_warehouse_id_, num_nodes));
@@ -21,7 +22,7 @@ void TPCCLockSimulator::CreateRequest() {
     requests_[i]->lm_id += 1;  // node starts from 1.
     requests_[i]->contention_count = 0;
     requests_[i]->contention_count2 = 0;
-    requests_[i]->user_id = (uintptr_t) this;
+    requests_[i]->user_id = id_;
   }
 }
 

@@ -92,13 +92,15 @@ LockWaitElement* LockWaitQueue::Front() {
 }
 
 // remove all elements from queue that match the given condition
-int LockWaitQueue::RemoveAllElements(uint32_t owner_node_id, int type) {
+int LockWaitQueue::RemoveAllElements(uint32_t owner_node_id, uintptr_t user_id,
+                                     int type) {
   int num_elem = 0;
   list<LockWaitElement*>::iterator it;
   pthread_mutex_lock(&mutex_);
   for (it = queue_.begin(); it != queue_.end();) {
     LockWaitElement* elem = *it;
-    if (elem->type == type && elem->owner_node_id == owner_node_id) {
+    if (elem->type == type && elem->owner_node_id == owner_node_id &&
+        elem->owner_user_id == user_id) {
       // erase it from the queue
       it = queue_.erase(it);
       --size_;

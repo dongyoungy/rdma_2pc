@@ -118,11 +118,11 @@ int DRTMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
         }
       }
     } else if (request->task == UNLOCK) {
-      if (exclusive == request->owner_node_id && shared == 0) {
+      if (exclusive == request->user_id && shared == 0) {
         local_manager_->NotifyUnlockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
             remote_lm_id_, request->obj_index, SUCCESS);
-      } else if (exclusive == request->owner_node_id && shared != 0) {
+      } else if (exclusive == request->user_id && shared != 0) {
         ++request->contention_count;
         local_manager_->NotifyUnlockRequestResult(
             request->seq_no, request->user_id, request->lock_type,

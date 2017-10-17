@@ -78,8 +78,12 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       local_manager_->UpdateLockModeTable(message->manager_id,
                                           message->lock_mode);
     } else if (message->type == Message::LOCK_REQUEST_RESULT) {
-      // cout << "received lock request result." << endl;
       // Poco::Mutex::ScopedLock lock(lock_mutex_);
+      //{
+      // Poco::Mutex::ScopedLock lock(lock_mutex_);
+      // cout << "received lock request result." << endl;
+      // lock_cond_.signal();
+      //}
       message_in_progress_ = false;
 
       local_manager_->NotifyLockRequestResult(
@@ -87,7 +91,11 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           remote_lm_id_, message->obj_index, 0, message->lock_result);
     } else if (message->type == Message::UNLOCK_REQUEST_RESULT) {
       // cout << "received unlock request result" << endl;
+      //{
       // Poco::Mutex::ScopedLock lock(lock_mutex_);
+      // cout << "received unlock request result." << endl;
+      // lock_cond_.signal();
+      //}
       message_in_progress_ = false;
 
       local_manager_->NotifyUnlockRequestResult(
@@ -154,11 +162,11 @@ int LockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
         }
       }
     } else if (request->task == UNLOCK) {
-      if (exclusive == request->owner_node_id && shared == 0) {
+      if (exclusive == request->user_id && shared == 0) {
         local_manager_->NotifyUnlockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
             remote_lm_id_, request->obj_index, SUCCESS);
-      } else if (exclusive == request->owner_node_id && shared != 0) {
+      } else if (exclusive == request->user_id && shared != 0) {
         ++request->contention_count;
         local_manager_->NotifyUnlockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
@@ -571,7 +579,6 @@ bool LockClient::LockRemotely(Context* context, const LockRequest& request) {
   LockRequest* current_request = lock_requests_[lock_request_idx_].get();
   *current_request = request;
   current_request->task = LOCK;
-  current_request->owner_node_id = local_owner_id_;
   lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
   sge.addr = (uintptr_t)&current_request->original_value;
@@ -609,7 +616,7 @@ bool LockClient::LockRemotely(Context* context, const LockRequest& request) {
     ++num_rdma_atomic_fa_;
   } else if (current_request->lock_type == EXCLUSIVE) {
     send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_CMP_AND_SWP;
-    exclusive = local_owner_id_;
+    exclusive = current_request->user_id;
     shared = 0;
     uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
     send_work_request.wr.atomic.compare_add = 0;
@@ -642,7 +649,6 @@ int LockClient::ReadRemotely(Context* context, const LockRequest& request) {
 
   LockRequest* current_request = lock_requests_[lock_request_idx_].get();
   *current_request = request;
-  current_request->owner_node_id = local_owner_id_;
   current_request->task = READ;
   lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
@@ -693,7 +699,6 @@ bool LockClient::UnlockRemotely(Context* context, const LockRequest& request,
 
   LockRequest* current_request = lock_requests_[lock_request_idx_].get();
   *current_request = request;
-  current_request->owner_node_id = local_owner_id_;
   current_request->is_undo = is_undo;
   current_request->is_retry = retry;
   current_request->task = UNLOCK;
@@ -737,7 +742,7 @@ bool LockClient::UnlockRemotely(Context* context, const LockRequest& request,
   } else if (current_request->lock_type == EXCLUSIVE) {
     send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_CMP_AND_SWP;
     shared = 0;
-    uint64_t prev_value = ((uint64_t)local_owner_id_) << 32 | shared;
+    uint64_t prev_value = ((uint64_t)current_request->user_id) << 32 | shared;
     send_work_request.wr.atomic.compare_add = prev_value;
     send_work_request.wr.atomic.swap = 0;
     ++num_rdma_atomic_cas_;
@@ -781,6 +786,7 @@ bool LockClient::SendLockRequest(Context* context, const LockRequest& request) {
 
 bool LockClient::SendNCOSEDLockRelease(const LockRequest& request) {
   Poco::Mutex::ScopedLock lock(lock_mutex_);
+
   Message* msg = context_->send_message_buffer->GetMessage();
 
   msg->type = Message::NCOSED_LOCK_RELEASE;

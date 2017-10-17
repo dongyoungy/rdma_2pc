@@ -2,6 +2,7 @@
 #define RDMA_PROTO_D2LM_LOCK_CLIENT_H
 
 #include <cmath>
+#include "Poco/Random.h"
 #include "lock_client.h"
 
 using namespace std;
@@ -18,6 +19,7 @@ class D2LMLockClient : public LockClient {
   virtual bool RequestUnlock(const LockRequest& request, LockMode lock_mode);
 
   static void SetDeadLockLimit(int limit);
+  static void SetReadBackoff(bool backoff);
 
  protected:
   bool Lock(Context* context, const LockRequest& request);
@@ -33,9 +35,14 @@ class D2LMLockClient : public LockClient {
   virtual int HandleWorkCompletion(struct ibv_wc* work_completion);
 
   static int kD2LMDeadlockLimit;
+  static bool kDoReadBackoff;
 
   std::map<uintptr_t, std::map<int, bool>> do_reset_;
   std::map<uintptr_t, std::map<int, uint64_t>> reset_value_;
+
+ private:
+  void PerformReadBackoff(const LockRequest& request);
+  Poco::Random rng_;
 };
 
 }  // namespace proto

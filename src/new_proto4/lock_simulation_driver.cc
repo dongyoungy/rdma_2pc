@@ -73,6 +73,7 @@ int main(int argc, char** argv) {
   string random_backoff_str = argv[k++];
 
   int d2lm_deadlock_limit = 0;
+  bool d2lm_do_read_backoff = false;
   LockMode lock_mode = PROXY_RETRY;
   // if (lock_mode_str == "proxy-retry") {
   // lock_mode = PROXY_RETRY;
@@ -107,11 +108,12 @@ int main(int argc, char** argv) {
     lock_mode = REMOTE_D2LM_V2;
     Poco::StringTokenizer tokenizer(lock_mode_str, "_",
                                     Poco::StringTokenizer::TOK_TRIM);
-    if (tokenizer.count() != 2) {
+    if (tokenizer.count() < 2) {
       cerr << "Incorrect number of tokens for D2LM." << endl;
       exit(ERROR_INVALID_LOCK_MODE);
     }
     d2lm_deadlock_limit = Poco::NumberParser::parse(tokenizer[1]);
+    d2lm_do_read_backoff = (tokenizer.count() == 3) ? true : false;
   } else {
     cerr << "Invalid lock mode: " << lock_mode_str << endl;
     exit(ERROR_INVALID_LOCK_MODE);
@@ -127,12 +129,14 @@ int main(int argc, char** argv) {
     exit(ERROR_INVALID_RANDOM_BACKOFF);
   }
 
-  if (workload_type == "tpcc-uniform" || workload_type == "tpcc-hotspot") {
+  if (workload_type == "tpcc-uniform" || workload_type == "tpcc-hotspot" ||
+      workload_type == "tpcc-dist") {
     num_lock_object = kTPCCNumObjects;
   }
 
   if (rank == 0) {
     cout << "# of Nodes = " << num_managers << endl;
+    cout << "# Users per node = " << num_users << endl;
     cout << "Type of Workload = " << workload_type << endl;
     cout << "Type of Think Time = " << think_time_type << endl;
     cout << "Duration = " << duration << " s" << endl;
@@ -140,11 +144,14 @@ int main(int argc, char** argv) {
     cout << "# Lock Objects = " << num_lock_object << endl;
     cout << "Lock Mode = " << lock_mode_str << endl;
     cout << "D2LM Deadlock Limit = " << d2lm_deadlock_limit << endl;
+    cout << "D2LM Perform Read Backoff = "
+         << (d2lm_do_read_backoff ? "TRUE" : "FALSE") << endl;
   }
 
   LockManager::SetFailRetry(num_retry);
   LockManager::SetPollRetry(num_retry);
   D2LMLockClient::SetDeadLockLimit(d2lm_deadlock_limit);
+  D2LMLockClient::SetReadBackoff(d2lm_do_read_backoff);
   std::unique_ptr<LockManager> lock_manager(
       new LockManager(argv[1], rank, num_managers, num_lock_object, lock_mode));
 
@@ -160,30 +167,35 @@ int main(int argc, char** argv) {
   std::vector<std::unique_ptr<LockSimulator>> users;
   LockSimulator* temp_user;
   for (int i = 0; i < num_users; ++i) {
+    int id = (rank * num_users) + (i + 1);
     std::unique_ptr<LockSimulator> simulator;
     // TODO: Add other simulators.
     if (workload_type == "simple") {
-      simulator.reset(new LockSimulator(lock_manager.get(), num_managers,
+      simulator.reset(new LockSimulator(lock_manager.get(), id, num_managers,
                                         num_lock_object, request_size,
                                         think_time_type, do_random_backoff));
     } else if (workload_type == "test") {
-      simulator.reset(new TestLockSimulator(lock_manager.get(), num_managers,
-                                            num_lock_object, think_time_type,
-                                            do_random_backoff));
+      simulator.reset(new TestLockSimulator(
+          lock_manager.get(), id, num_managers, num_lock_object,
+          think_time_type, do_random_backoff));
     } else if (workload_type == "hotspot") {
       simulator.reset(new HotspotLockSimulator(
-          lock_manager.get(), num_managers, num_lock_object, request_size,
+          lock_manager.get(), id, num_managers, num_lock_object, request_size,
           think_time_type, do_random_backoff));
     } else if (workload_type == "hotspot-exclusive") {
       simulator.reset(new HotspotExclusiveLockSimulator(
-          lock_manager.get(), num_managers, num_lock_object, request_size,
+          lock_manager.get(), id, num_managers, num_lock_object, request_size,
           think_time_type, do_random_backoff));
     } else if (workload_type == "tpcc-uniform") {
-      simulator.reset(new TPCCLockSimulator(lock_manager.get(), num_managers,
-                                            kTPCCNumObjects, think_time_type,
-                                            do_random_backoff, rank));
+      simulator.reset(new TPCCLockSimulator(
+          lock_manager.get(), id, num_managers, kTPCCNumObjects,
+          think_time_type, do_random_backoff, id % num_managers));
+    } else if (workload_type == "tpcc-dist") {
+      simulator.reset(new TPCCLockSimulator(
+          lock_manager.get(), id, num_managers / 2, kTPCCNumObjects,
+          think_time_type, do_random_backoff, id % (num_managers / 2)));
     } else if (workload_type == "tpcc-hotspot") {
-      simulator.reset(new TPCCLockSimulator(lock_manager.get(), 1,
+      simulator.reset(new TPCCLockSimulator(lock_manager.get(), id, 1,
                                             kTPCCNumObjects, think_time_type,
                                             do_random_backoff, 0));
     } else {
@@ -236,6 +248,14 @@ int main(int argc, char** argv) {
   if (workload_type == "hotspot" || workload_type == "hotspot-exclusive" ||
       workload_type == "tpcc-hotspot") {
     if (rank != 0) {
+      for (int i = 0; i < num_users; ++i) {
+        std::unique_ptr<Poco::Thread> user_thread(new Poco::Thread);
+        user_thread->start(*users[i]);
+        user_threads.push_back(std::move(user_thread));
+      }
+    }
+  } else if (workload_type == "tpcc-dist") {
+    if (rank >= num_managers / 2) {
       for (int i = 0; i < num_users; ++i) {
         std::unique_ptr<Poco::Thread> user_thread(new Poco::Thread);
         user_thread->start(*users[i]);
@@ -386,6 +406,8 @@ int main(int argc, char** argv) {
   uint64_t throughput_99pct = 0;
   uint64_t count = 0;
   uint64_t total_count = 0;
+  uint64_t backoff_count = 0;
+  uint64_t total_backoff_count = 0;
   uint64_t count_with_contention = 0;
   uint64_t total_count_with_contention = 0;
   uint64_t count_with_backoff = 0;
@@ -409,6 +431,7 @@ int main(int argc, char** argv) {
   for (int i = 0; i < num_users; ++i) {
     users[i]->SortLatency();
     count += users[i]->GetCount();
+    backoff_count += users[i]->GetBackoffCount();
     count_with_contention += users[i]->GetCountWithContention();
     count_with_backoff += users[i]->GetCountWithBackoff();
     average_latency += users[i]->GetAverageLatency();
@@ -496,6 +519,8 @@ int main(int argc, char** argv) {
 
   MPI_Reduce(&count, &total_count, 1, MPI_LONG_LONG_INT, MPI_SUM, 0,
              MPI_COMM_WORLD);
+  MPI_Reduce(&backoff_count, &total_backoff_count, 1, MPI_LONG_LONG_INT,
+             MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Reduce(&count_with_contention, &total_count_with_contention, 1,
              MPI_LONG_LONG_INT, MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Reduce(&count_with_backoff, &total_count_with_backoff, 1,
@@ -542,6 +567,7 @@ int main(int argc, char** argv) {
     cout << "Tx Count With Contention = " << total_count_with_contention
          << endl;
     cout << "Tx Count With Backoff = " << total_count_with_backoff << endl;
+    cout << "Backoff Count = " << total_backoff_count << endl;
     cout << "Avg. Throughput = " << average_throughput << endl;
     cout << "99pct Throughput = " << throughput_99pct << endl;
     cout << "Max Throughput = " << max_throughput << endl;
@@ -594,11 +620,12 @@ int main(int argc, char** argv) {
 
     // Print as CVS at the end.
     cout << "Workload, Think Time Type, Think Time Duration, Lock Mode, # "
-            "Nodes, # Objects Per Node, "
+            "Nodes, # Users Per Node, # Objects Per Node, "
          << "# Retry, "
-         << "Uses Backoff, "
+         << "Uses Random Backoff, "
          << "Avg. CPU Usage, Tx Count, Tx Count With Contention, "
          << "Tx Count With Backoff, "
+         << "Backoff Count, "
          << "Avg. Throughput, 99pct Throughput, Max Throughput, "
          << "Avg. Latency, Avg. 99pct Latency, Avg. 99.9pct Latency, "
          << "Avg. Latency With Contention, "
@@ -625,14 +652,14 @@ int main(int argc, char** argv) {
          << "RDMA Total" << endl;
     cout << workload_type << "," << think_time_type << ","
          << think_time_duration << "," << lock_mode_str << "," << num_managers
-         << "," << num_lock_object << "," << num_retry << ","
-         << random_backoff_str << "," << average_cpu_usage << "," << total_count
-         << "," << total_count_with_contention << ","
-         << total_count_with_backoff << "," << average_throughput << ","
-         << throughput_99pct << "," << max_throughput << ","
-         << total_average_latency << "," << total_average_99pct_latency << ","
-         << total_average_999pct_latency << ","
-         << total_average_latency_with_contention << ","
+         << "," << num_users << "," << num_lock_object << "," << num_retry
+         << "," << random_backoff_str << "," << average_cpu_usage << ","
+         << total_count << "," << total_count_with_contention << ","
+         << total_count_with_backoff << "," << total_backoff_count << ","
+         << average_throughput << "," << throughput_99pct << ","
+         << max_throughput << "," << total_average_latency << ","
+         << total_average_99pct_latency << "," << total_average_999pct_latency
+         << "," << total_average_latency_with_contention << ","
          << total_average_99pct_latency_with_contention << ","
          << total_average_999pct_latency_with_contention << ","
          << total_average_latency_with_backoff << ","

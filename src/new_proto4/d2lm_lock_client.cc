@@ -4,16 +4,22 @@ namespace rdma {
 namespace proto {
 
 int D2LMLockClient::kD2LMDeadlockLimit = 100000;
+bool D2LMLockClient::kDoReadBackoff = false;
 // constructor
 D2LMLockClient::D2LMLockClient(const string& work_dir,
                                LockManager* local_manager,
                                uint32_t local_user_count, uint32_t remote_lm_id)
-    : LockClient(work_dir, local_manager, local_user_count, remote_lm_id) {}
+    : LockClient(work_dir, local_manager, local_user_count, remote_lm_id) {
+  rng_.seed();
+}
 
 // destructor
 D2LMLockClient::~D2LMLockClient() {}
 
 void D2LMLockClient::SetDeadLockLimit(int limit) { kD2LMDeadlockLimit = limit; }
+
+void D2LMLockClient::SetReadBackoff(bool backoff) { kDoReadBackoff = backoff; }
+
 uint64_t D2LMLockClient::GetLockValue(uint16_t exclusive_number,
                                       uint16_t shared_number,
                                       uint16_t exclusive_max,
@@ -34,8 +40,22 @@ bool D2LMLockClient::RequestUnlock(const LockRequest& request,
   return this->Unlock(context_, request);
 }
 
+void D2LMLockClient::PerformReadBackoff(const LockRequest& request) {
+  if (!kDoReadBackoff) return;
+
+  double sleep_time =
+      (request.deadlock_count > 0)
+          ? kD2LMBaseReadBackoff * pow(2.0, request.deadlock_count - 1)
+          : 0;
+
+  if (sleep_time > 0) {
+    int time = rng_.next(std::min((int)kD2LMMaxReadBackoff, (int)sleep_time));
+    std::this_thread::sleep_for(std::chrono::microseconds(time));
+  }
+}
+
 bool D2LMLockClient::Lock(Context* context, const LockRequest& request) {
-  Poco::Mutex::ScopedLock lock(lock_mutex_);
+  Poco::FastMutex::ScopedLock lock(fast_mutex_);
 
   struct ibv_exp_send_wr send_work_request;
   struct ibv_exp_send_wr* bad_work_request;
@@ -97,7 +117,7 @@ bool D2LMLockClient::Lock(Context* context, const LockRequest& request) {
 }
 
 bool D2LMLockClient::Unlock(Context* context, const LockRequest& request) {
-  Poco::Mutex::ScopedLock lock(lock_mutex_);
+  Poco::FastMutex::ScopedLock lock(fast_mutex_);
 
   struct ibv_exp_send_wr send_work_request;
   struct ibv_exp_send_wr* bad_work_request;
@@ -157,7 +177,7 @@ bool D2LMLockClient::Unlock(Context* context, const LockRequest& request) {
 }
 
 bool D2LMLockClient::Read(Context* context, const LockRequest& request) {
-  Poco::Mutex::ScopedLock lock(lock_mutex_);
+  Poco::FastMutex::ScopedLock lock(fast_mutex_);
   struct ibv_exp_send_wr send_work_request;
   struct ibv_exp_send_wr* bad_work_request;
   struct ibv_sge sge;
@@ -197,7 +217,7 @@ bool D2LMLockClient::Read(Context* context, const LockRequest& request) {
 
 bool D2LMLockClient::ReadForReset(Context* context,
                                   const LockRequest& request) {
-  Poco::Mutex::ScopedLock lock(lock_mutex_);
+  Poco::FastMutex::ScopedLock lock(fast_mutex_);
   struct ibv_exp_send_wr send_work_request;
   struct ibv_exp_send_wr* bad_work_request;
   struct ibv_sge sge;
@@ -236,7 +256,7 @@ bool D2LMLockClient::ReadForReset(Context* context,
 }
 
 bool D2LMLockClient::Reset(Context* context, const LockRequest& request) {
-  Poco::Mutex::ScopedLock lock(lock_mutex_);
+  Poco::FastMutex::ScopedLock lock(fast_mutex_);
   struct ibv_exp_send_wr send_work_request;
   struct ibv_exp_send_wr* bad_work_request;
   struct ibv_sge sge;
@@ -280,7 +300,7 @@ bool D2LMLockClient::Reset(Context* context, const LockRequest& request) {
 bool D2LMLockClient::ResetForDeadlock(Context* context,
                                       const LockRequest& request, uint64_t from,
                                       uint64_t to) {
-  Poco::Mutex::ScopedLock lock(lock_mutex_);
+  Poco::FastMutex::ScopedLock lock(fast_mutex_);
   struct ibv_exp_send_wr send_work_request;
   struct ibv_exp_send_wr* bad_work_request;
   struct ibv_sge sge;
@@ -323,7 +343,7 @@ bool D2LMLockClient::ResetForDeadlock(Context* context,
 }
 
 bool D2LMLockClient::Undo(Context* context, const LockRequest& request) {
-  Poco::Mutex::ScopedLock lock(lock_mutex_);
+  Poco::FastMutex::ScopedLock lock(fast_mutex_);
 
   struct ibv_exp_send_wr send_work_request;
   struct ibv_exp_send_wr* bad_work_request;
@@ -538,6 +558,7 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
                 SUCCESS);
           } else {
             ++request->contention_count;
+            PerformReadBackoff(*request);
             this->Read(context_, *request);
           }
         }
@@ -562,6 +583,7 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
                 SUCCESS);
           } else {
             ++request->contention_count;
+            PerformReadBackoff(*request);
             this->Read(context_, *request);
           }
         }
@@ -628,6 +650,7 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
                                current_exclusive_max, current_shared_max);
               this->ResetForDeadlock(context_, *request, from, to);
             } else {
+              PerformReadBackoff(*request);
               this->Read(context_, *request);
             }
           }
@@ -666,6 +689,7 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
                                current_exclusive_max, current_shared_max);
               this->ResetForDeadlock(context_, *request, from, to);
             } else {
+              PerformReadBackoff(*request);
               this->Read(context_, *request);
             }
           }

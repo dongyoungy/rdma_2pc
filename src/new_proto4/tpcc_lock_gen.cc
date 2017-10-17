@@ -93,7 +93,8 @@ int TPCCLockGen::GenerateNewOrder(
   // "createOrder": "INSERT INTO ORDERS
   // (O_ID, O_D_ID, O_W_ID, O_C_ID, O_ENTRY_D, O_CARRIER_ID, O_OL_CNT,
   // O_ALL_LOCAL) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-  int o_id = c_id;
+  // int o_id = c_id;
+  int o_id = rand_r(&seed_) % NUM_ROW_ORDER;
   requests[req_idx]->lm_id = w_id;
   requests[req_idx]->lock_type = EXCLUSIVE;
   requests[req_idx]->obj_index = ORDER_START_IDX + o_id;
@@ -102,7 +103,8 @@ int TPCCLockGen::GenerateNewOrder(
 
   // "createNewOrder": "INSERT INTO NEW_ORDER (NO_O_ID, NO_D_ID, NO_W_ID) VALUES
   // (?, ?, ?)"
-  int n_o_id = o_id;
+  // int n_o_id = o_id;
+  int n_o_id = rand_r(&seed_) % NUM_ROW_ORDER;
   requests[req_idx]->lm_id = w_id;
   requests[req_idx]->lock_type = EXCLUSIVE;
   requests[req_idx]->obj_index = NEW_ORDER_START_IDX + n_o_id;

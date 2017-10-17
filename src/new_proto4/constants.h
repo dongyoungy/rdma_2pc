@@ -42,6 +42,8 @@ const uint32_t kBaseBackoff = 10;     // microseconds
 const uint64_t kTPCCNumObjects = 700000;
 
 const uint32_t kDRTMSharedLimit = 16;
+const int kD2LMBaseReadBackoff = 5;
+const int kD2LMMaxReadBackoff = 50;
 
 const int kValueIdx = 0;
 const int kLeaverIdx = 1;
@@ -73,8 +75,9 @@ static const int POLL_RETRY = 3;
 
 // static const int MAX_MESSAGE_BUFFER_SIZE = 128;
 // static const int MAX_LOCK_REQUESTS = 64;
-static const int MAX_LOCAL_THREADS = 16;
+static const int MAX_LOCAL_THREADS = 32;
 static const int MAX_WAIT_QUEUE_POOL_SIZE = 4096;
+static const int MAX_USER = 65536;
 
 static const int ERR_MORE_THAN_ONE_NODE = 1;
 

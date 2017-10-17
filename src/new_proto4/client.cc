@@ -588,6 +588,12 @@ void* Client::PollCompletionQueue(void* arg) {
       context->client->HandleWorkCompletion(&wc);
     }
 
+    // while ((ret = ibv_poll_cq(cq, 32, &wc[0])) > 0) {
+    // for (int i = 0; i < ret; ++i) {
+    // context->client->HandleWorkCompletion(&wc[i]);
+    //}
+    //}
+
     if (ret < 0) {
       cerr << "ibv_poll_cq() failed" << endl;
     }

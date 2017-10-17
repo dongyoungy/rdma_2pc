@@ -8,9 +8,9 @@ namespace proto {
 
 class HotspotLockSimulator : public LockSimulator {
  public:
-  HotspotLockSimulator(LockManager* manager, int num_nodes, int num_objects,
-                       int request_size, std::string think_time_type,
-                       bool do_random_backoff);
+  HotspotLockSimulator(LockManager* manager, int id, int num_nodes,
+                       int num_objects, int request_size,
+                       std::string think_time_type, bool do_random_backoff);
 
  protected:
   virtual void CreateRequest();

@@ -84,6 +84,11 @@ LockManager::LockManager(const string& work_dir, uint32_t rank, int num_manager,
   pthread_mutex_init(&msg_mutex_, NULL);
   pthread_mutex_init(&poll_mutex_, NULL);
   pthread_mutex_init(&seq_mutex_, NULL);
+
+  lock_result_map_ = new std::promise<LockResultInfo>[MAX_USER];
+  lock_status_map_ = new LockStatusInfo[MAX_USER];
+  lock_clients_map_ = new LockClient*[MAX_USER * num_manager_ * 2];
+  mutex_ = new Poco::FastMutex[MAX_USER];
 }
 
 // destructor
@@ -167,8 +172,8 @@ int LockManager::InitializeLockClients() {
   int ret = 0;
   temp_lock_clients_ = new LockClient*[num_manager_ + 1];
   for (int i = 1; i <= num_manager_; ++i) {
-    for (int j = 0; j < 1; ++j) {
-      // for (unsigned int j = 0; j < users.size(); ++j) {
+    // for (int j = 0; j < 1; ++j) {
+    for (unsigned int j = 0; j < users.size(); ++j) {
       LockSimulator* user = users[j];
       pthread_t* client_thread = new pthread_t;
       LockClient* client;
@@ -192,9 +197,10 @@ int LockManager::InitializeLockClients() {
         return -1;
       }
 
-      // lock_clients_[MAX_USER*i+user->GetID()] = client;
-      lock_clients_[i] = client;
-      temp_lock_clients_[i] = client;
+      lock_clients_[MAX_USER * i + user->GetID()] = client;
+      lock_clients_map_[MAX_USER * i + user->GetID()] = client;
+      // lock_clients_[i] = client;
+      // temp_lock_clients_[i] = client;
       lock_client_threads_.push_back(client_thread);
 
       if (ret) {
@@ -337,8 +343,7 @@ void LockManager::DestroyListener() {
 }
 
 void LockManager::Stop() {
-  map<uint64_t, LockClient*>::const_iterator it;
-  for (it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
+  for (auto it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
     it->second->Stop();
   }
   terminate_ = true;
@@ -629,14 +634,26 @@ int LockManager::NotifyLockMode(Context* context) {
 
 const Poco::Optional<std::promise<LockResultInfo>*> LockManager::Lock(
     const LockRequest& request) {
-  Poco::Mutex::ScopedLock lock(mutex_);
-  lock_result_map_[request.user_id] = std::promise<LockResultInfo>();
+  // LockClient* lock_client;
+  // std::promise<LockResultInfo>* result;
+  //{
+  // lock_result_map_[request.user_id] = std::promise<LockResultInfo>();
+  // LockStatusInfo status(request.seq_no, request.user_id, LOCKING);
+  // lock_status_map_[request.user_id][request.lm_id][request.obj_index] =
+  // status;
+  //// LockClient* lock_client = lock_clients_[request.lm_id];
+  // lock_client = lock_clients_[request.lm_id * MAX_USER + request.user_id];
+  // result = &lock_result_map_[request.user_id];
+  //}
+  Poco::FastMutex::ScopedLock lock(mutex_[request.user_id % MAX_USER]);
   LockStatusInfo status(request.seq_no, request.user_id, LOCKING);
-  lock_status_map_[request.lm_id][request.obj_index] = status;
-  LockClient* lock_client = lock_clients_[request.lm_id];
+  lock_status_map_[request.user_id % MAX_USER] = status;
+  lock_result_map_[request.user_id % MAX_USER] = std::promise<LockResultInfo>();
+  LockClient* lock_client =
+      lock_clients_map_[MAX_USER * request.lm_id + request.user_id];
+  std::promise<LockResultInfo>* result = &lock_result_map_[request.user_id];
   if (lock_client->RequestLock(request, lock_mode_table_[request.lm_id])) {
-    return Poco::Optional<std::promise<LockResultInfo>*>(
-        &lock_result_map_[request.user_id]);
+    return Poco::Optional<std::promise<LockResultInfo>*>(result);
   } else {
     return Poco::Optional<std::promise<LockResultInfo>*>();
   }
@@ -644,14 +661,28 @@ const Poco::Optional<std::promise<LockResultInfo>*> LockManager::Lock(
 
 const Poco::Optional<std::promise<LockResultInfo>*> LockManager::Unlock(
     const LockRequest& request) {
-  Poco::Mutex::ScopedLock lock(mutex_);
-  lock_result_map_[request.user_id] = std::promise<LockResultInfo>();
+  // LockClient* lock_client;
+  // std::promise<LockResultInfo>* result;
+  //{
+  // Poco::FastMutex::ScopedLock lock(mutex_);
+  // lock_result_map_[request.user_id] = std::promise<LockResultInfo>();
+  // LockStatusInfo status(request.seq_no, request.user_id, UNLOCKING);
+  // lock_status_map_[request.user_id][request.lm_id][request.obj_index] =
+  // status;
+  //// LockClient* lock_client = lock_clients_[request.lm_id];
+  // lock_client = lock_clients_[request.lm_id * MAX_USER + request.user_id];
+  // result = &lock_result_map_[request.user_id];
+  //}
+  Poco::FastMutex::ScopedLock lock(mutex_[request.user_id % MAX_USER]);
   LockStatusInfo status(request.seq_no, request.user_id, UNLOCKING);
-  lock_status_map_[request.lm_id][request.obj_index] = status;
-  LockClient* lock_client = lock_clients_[request.lm_id];
+  lock_status_map_[request.user_id % MAX_USER] = status;
+  lock_result_map_[request.user_id % MAX_USER] = std::promise<LockResultInfo>();
+  LockClient* lock_client =
+      lock_clients_map_[MAX_USER * request.lm_id + request.user_id];
+  std::promise<LockResultInfo>* result =
+      &lock_result_map_[request.user_id % MAX_USER];
   if (lock_client->RequestUnlock(request, lock_mode_table_[request.lm_id])) {
-    return Poco::Optional<std::promise<LockResultInfo>*>(
-        &lock_result_map_[request.user_id]);
+    return Poco::Optional<std::promise<LockResultInfo>*>(result);
   } else {
     return Poco::Optional<std::promise<LockResultInfo>*>();
   }
@@ -768,7 +799,6 @@ int LockManager::LockLocallyWithRetry(Context* context, Message* message) {
 }
 
 int LockManager::LockLocallyWithQueue(Context* context, Message* message) {
-  Poco::Mutex::ScopedLock lock(mutex_);
   LockResult lock_result = FAILURE;
   int seq_no = message->seq_no;
   uint32_t target_node_id = id_;
@@ -776,7 +806,7 @@ int LockManager::LockLocallyWithQueue(Context* context, Message* message) {
   uintptr_t owner_user_id = message->owner_user_id;
   int obj_index = message->obj_index;
   LockType lock_type = message->lock_type;
-  uint32_t lock_value = message->owner_node_id;
+  uint32_t lock_value = message->owner_user_id;
   LockWaitQueue* queue = wait_queues_[obj_index];
 
   uint64_t* lock_object = NULL;
@@ -1033,7 +1063,6 @@ int LockManager::UnlockLocallyWithRetry(Context* context, Message* message) {
 }
 
 int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
-  Poco::Mutex::ScopedLock lock(mutex_);
   LockResult lock_result = FAILURE;
   int seq_no = message->seq_no;
   uint32_t owner_node_id = message->owner_node_id;
@@ -1041,7 +1070,7 @@ int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
   int obj_index = message->obj_index;
   LockType lock_type = message->lock_type;
   LockWaitQueue* queue = wait_queues_[obj_index];
-  uint32_t lock_value = message->owner_node_id;
+  uint32_t lock_value = message->owner_user_id;
 
   // lock locally on lock table
   pthread_mutex_lock(lock_mutex_[obj_index]);
@@ -1052,7 +1081,8 @@ int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
   shared = (uint32_t)(*lock_object);
 
   // remove it from the queue as well if exists
-  int num_elem = queue->RemoveAllElements(owner_node_id, lock_type);
+  int num_elem =
+      queue->RemoveAllElements(owner_node_id, owner_user_id, lock_type);
   if (num_elem > 0) {
     // unlock locally on lock table
     pthread_mutex_unlock(lock_mutex_[obj_index]);
@@ -1095,7 +1125,7 @@ int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
       // CommunicationClient* client =
       // communication_clients_[MAX_USER*elem->home_id+elem->user_id];
       CommunicationClient* client = communication_clients_[elem->owner_node_id];
-      lock_value = (uint32_t)elem->owner_node_id;
+      lock_value = (uint32_t)elem->owner_user_id;
       exclusive = (uint32_t)((*lock_object) >> 32);
       shared = (uint32_t)(*lock_object);
       if (exclusive == 0 && elem->type == SHARED) {
@@ -1263,13 +1293,17 @@ int LockManager::UnlockLocalDirect(uint32_t user_id, LockType lock_type,
 }
 
 std::promise<LockResultInfo>* LockManager::GetLockResult(uintptr_t user_id) {
-  Poco::Mutex::ScopedLock lock(mutex_);
-  return &lock_result_map_[user_id];
+  // Poco::FastMutex::ScopedLock lock(mutex_);
+  Poco::FastMutex::ScopedLock lock(mutex_[user_id % MAX_USER]);
+  return &lock_result_map_[user_id % MAX_USER];
 }
 
-void LockManager::SetLockStatusInvalid(uint32_t node_id, uint32_t obj_index) {
-  Poco::Mutex::ScopedLock lock(mutex_);
-  lock_status_map_[node_id][obj_index].status = INVALID;
+void LockManager::SetLockStatusInvalid(uintptr_t user_id, uint32_t node_id,
+                                       uint32_t obj_index) {
+  // Poco::FastMutex::ScopedLock lock(mutex_);
+  // lock_status_map_[user_id][node_id][obj_index].status = INVALID;
+  Poco::FastMutex::ScopedLock lock(mutex_[user_id % MAX_USER]);
+  lock_status_map_[user_id % MAX_USER].status = INVALID;
 }
 
 int LockManager::NotifyLockRequestResult(int seq_no, uintptr_t user_id,
@@ -1284,21 +1318,24 @@ int LockManager::NotifyLockRequestResult(int seq_no, uintptr_t user_id,
   // user->NotifyResult(seq_no, LockManager::TASK_LOCK, lock_type, obj_index,
   // result);
 
-  Poco::Mutex::ScopedLock lock(mutex_);
+  // Poco::FastMutex::ScopedLock lock(mutex_);
+  // auto* status = &lock_status_map_[user_id][target_node_id][obj_index];
+
+  Poco::FastMutex::ScopedLock lock(mutex_[user_id % MAX_USER]);
+  auto* status = &lock_status_map_[user_id % MAX_USER];
   LockResultInfo result_info(result, contention_count);
-  auto* status = &lock_status_map_[target_node_id][obj_index];
   if (status->seq_no == seq_no && status->status == LOCKING &&
       status->user_id == user_id) {
-    lock_result_map_[user_id].set_value(result_info);
+    lock_result_map_[user_id % MAX_USER].set_value(result_info);
     if (result == SUCCESS || result == SUCCESS_FROM_QUEUED) {
       status->status = LOCKED;
     } else if (result == QUEUED) {
-      lock_result_map_[user_id] = std::promise<LockResultInfo>();
+      lock_result_map_[user_id % MAX_USER] = std::promise<LockResultInfo>();
     }
   } else {
 #ifdef VERBOSE
-    cout << "path9: incorrect lock status: " << id_ << "," << status.seq_no
-         << "," << status.status << endl;
+    cout << "path9: incorrect lock status: " << id_ << "," << status->seq_no
+         << "," << status->status << endl;
 #endif
   }
   // lock_status_map_[target_node_id].erase(obj_index);
@@ -1315,17 +1352,20 @@ int LockManager::NotifyLockRequestResult(int seq_no, uintptr_t user_id,
                                          LockType lock_type, int target_node_id,
                                          int obj_index, LockStat stat,
                                          LockResult result) {
-  Poco::Mutex::ScopedLock lock(mutex_);
+  // Poco::FastMutex::ScopedLock lock(mutex_);
+  // auto* status = &lock_status_map_[user_id][target_node_id][obj_index];
+
+  Poco::FastMutex::ScopedLock lock(mutex_[user_id % MAX_USER]);
   LockResultInfo result_info(result, stat);
-  auto* status = &lock_status_map_[target_node_id][obj_index];
+  auto* status = &lock_status_map_[user_id % MAX_USER];
   if (status->seq_no == seq_no && status->status == LOCKING &&
       status->user_id == user_id) {
     // lock_result_map_[user_id].set_value(result_info);
-    lock_result_map_[user_id].set_value(result_info);
+    lock_result_map_[user_id % MAX_USER].set_value(result_info);
     if (result == SUCCESS || result == SUCCESS_FROM_QUEUED) {
       status->status = LOCKED;
     } else if (result == QUEUED) {
-      lock_result_map_[user_id] = std::promise<LockResultInfo>();
+      lock_result_map_[user_id % MAX_USER] = std::promise<LockResultInfo>();
     }
   }
   // lock_status_map_[target_node_id].erase(obj_index);
@@ -1337,12 +1377,15 @@ int LockManager::NotifyUnlockRequestResult(int seq_no, uintptr_t user_id,
                                            LockType lock_type,
                                            int target_node_id, int obj_index,
                                            LockResult result) {
-  Poco::Mutex::ScopedLock lock(mutex_);
-  auto* status = &lock_status_map_[target_node_id][obj_index];
+  // Poco::FastMutex::ScopedLock lock(mutex_);
+  // auto* status = &lock_status_map_[user_id][target_node_id][obj_index];
+
+  Poco::FastMutex::ScopedLock lock(mutex_[user_id % MAX_USER]);
+  auto* status = &lock_status_map_[user_id % MAX_USER];
   if (status->seq_no == seq_no && status->status == UNLOCKING &&
       status->user_id == user_id) {
     // lock_result_map_[user_id].set_value(LockResultInfo(result, 0));
-    lock_result_map_[user_id].set_value(LockResultInfo(result, 0));
+    lock_result_map_[user_id % MAX_USER].set_value(LockResultInfo(result, 0));
     if (result == SUCCESS) {
       status->status = UNLOCKED;
     }
@@ -1351,9 +1394,9 @@ int LockManager::NotifyUnlockRequestResult(int seq_no, uintptr_t user_id,
          << target_node_id << "," << obj_index << "," << user_id << endl;
     cerr << "Status = " << status->seq_no << "," << status->status << ","
          << status->user_id << endl;
-    lock_result_map_[user_id].set_value(LockResultInfo(FAILURE, 0));
+    lock_result_map_[user_id % MAX_USER].set_value(LockResultInfo(FAILURE, 0));
   }
-  lock_status_map_[target_node_id].erase(obj_index);
+  // lock_status_map_[user_id][target_node_id].erase(obj_index);
   return 0;
 }
 
@@ -1623,8 +1666,7 @@ uint64_t LockManager::GetRequestLockCallCount() const {
 
 uint64_t LockManager::GetTotalLockContention() const {
   uint64_t count = 0;
-  map<uint64_t, LockClient*>::const_iterator it;
-  for (it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
+  for (auto it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
     count += it->second->GetNumLockContention();
   }
   return count;
@@ -1632,8 +1674,7 @@ uint64_t LockManager::GetTotalLockContention() const {
 
 uint64_t LockManager::GetTotalLockSuccessWithPoll() const {
   uint64_t count = 0;
-  map<uint64_t, LockClient*>::const_iterator it;
-  for (it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
+  for (auto it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
     count += it->second->GetNumLockSuccessWithPoll();
   }
   return count;
@@ -1641,8 +1682,7 @@ uint64_t LockManager::GetTotalLockSuccessWithPoll() const {
 
 uint64_t LockManager::GetTotalSumPollWhenSuccess() const {
   uint64_t count = 0;
-  map<uint64_t, LockClient*>::const_iterator it;
-  for (it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
+  for (auto it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
     count += it->second->GetSumPollWhenSuccess();
   }
   return count;
@@ -1663,8 +1703,7 @@ double LockManager::GetAverageLocalExclusiveLockTime() const {
 double LockManager::GetAverageRemoteExclusiveLockTime() const {
   double num_clients = lock_clients_.size();
   double total_time = 0.0;
-  map<uint64_t, LockClient*>::const_iterator it;
-  for (it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
+  for (auto it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
     total_time += it->second->GetAverageRemoteExclusiveLockTime();
   }
   return total_time / num_clients;
@@ -1673,8 +1712,7 @@ double LockManager::GetAverageRemoteExclusiveLockTime() const {
 double LockManager::GetAverageRemoteSharedLockTime() const {
   double num_clients = lock_clients_.size();
   double total_time = 0.0;
-  map<uint64_t, LockClient*>::const_iterator it;
-  for (it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
+  for (auto it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
     total_time += it->second->GetAverageRemoteSharedLockTime();
   }
   return total_time / num_clients;
@@ -1683,8 +1721,7 @@ double LockManager::GetAverageRemoteSharedLockTime() const {
 double LockManager::GetAverageSendMessageTime() const {
   double num_clients = lock_clients_.size();
   double total_time = 0.0;
-  map<uint64_t, LockClient*>::const_iterator it;
-  for (it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
+  for (auto it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
     total_time += it->second->GetAverageSendMessageTime();
   }
   return total_time / num_clients;
@@ -1693,8 +1730,7 @@ double LockManager::GetAverageSendMessageTime() const {
 double LockManager::GetAverageReceiveMessageTime() const {
   double num_clients = lock_clients_.size();
   double total_time = 0.0;
-  map<uint64_t, LockClient*>::const_iterator it;
-  for (it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
+  for (auto it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
     total_time += it->second->GetAverageReceiveMessageTime();
   }
   return total_time / num_clients;
@@ -1703,8 +1739,7 @@ double LockManager::GetAverageReceiveMessageTime() const {
 double LockManager::GetAverageRDMAReadCount() const {
   double num_clients = lock_clients_.size();
   double total_count = 0.0;
-  map<uint64_t, LockClient*>::const_iterator it;
-  for (it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
+  for (auto it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
     total_count += (double)it->second->GetRDMAReadCount();
   }
   return total_count / num_clients;
@@ -1712,9 +1747,8 @@ double LockManager::GetAverageRDMAReadCount() const {
 
 uint64_t LockManager::GetTotalRDMAReadCount() const {
   uint64_t total_count = 0;
-  map<uint64_t, LockClient*>::const_iterator it;
   map<uint64_t, CommunicationClient*>::const_iterator it2;
-  for (it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
+  for (auto it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
     total_count += it->second->GetRDMAReadCount();
   }
   for (it2 = communication_clients_.begin();
@@ -1726,9 +1760,8 @@ uint64_t LockManager::GetTotalRDMAReadCount() const {
 
 uint64_t LockManager::GetTotalRDMARecvCount() const {
   uint64_t total_count = 0;
-  map<uint64_t, LockClient*>::const_iterator it;
   map<uint64_t, CommunicationClient*>::const_iterator it2;
-  for (it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
+  for (auto it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
     total_count += it->second->GetRDMARecvCount();
   }
   for (it2 = communication_clients_.begin();
@@ -1741,9 +1774,8 @@ uint64_t LockManager::GetTotalRDMARecvCount() const {
 
 uint64_t LockManager::GetTotalRDMASendCount() const {
   uint64_t total_count = 0;
-  map<uint64_t, LockClient*>::const_iterator it;
   map<uint64_t, CommunicationClient*>::const_iterator it2;
-  for (it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
+  for (auto it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
     total_count += it->second->GetRDMASendCount();
   }
   for (it2 = communication_clients_.begin();
@@ -1756,9 +1788,8 @@ uint64_t LockManager::GetTotalRDMASendCount() const {
 
 uint64_t LockManager::GetTotalRDMAWriteCount() const {
   uint64_t total_count = 0;
-  map<uint64_t, LockClient*>::const_iterator it;
   map<uint64_t, CommunicationClient*>::const_iterator it2;
-  for (it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
+  for (auto it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
     total_count += it->second->GetRDMAWriteCount();
   }
   for (it2 = communication_clients_.begin();
@@ -1770,9 +1801,8 @@ uint64_t LockManager::GetTotalRDMAWriteCount() const {
 
 uint64_t LockManager::GetTotalRDMAAtomicCASCount() const {
   uint64_t total_count = 0;
-  map<uint64_t, LockClient*>::const_iterator it;
   map<uint64_t, CommunicationClient*>::const_iterator it2;
-  for (it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
+  for (auto it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
     total_count += it->second->GetRDMAAtomicCASCount();
   }
   for (it2 = communication_clients_.begin();
@@ -1784,9 +1814,8 @@ uint64_t LockManager::GetTotalRDMAAtomicCASCount() const {
 
 uint64_t LockManager::GetTotalRDMAAtomicFACount() const {
   uint64_t total_count = 0;
-  map<uint64_t, LockClient*>::const_iterator it;
   map<uint64_t, CommunicationClient*>::const_iterator it2;
-  for (it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
+  for (auto it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
     total_count += it->second->GetRDMAAtomicFACount();
   }
   for (it2 = communication_clients_.begin();
@@ -1798,8 +1827,7 @@ uint64_t LockManager::GetTotalRDMAAtomicFACount() const {
 
 double LockManager::GetTotalRDMAReadTime() const {
   double total_time = 0.0;
-  map<uint64_t, LockClient*>::const_iterator it;
-  for (it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
+  for (auto it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
     total_time += it->second->GetTotalRDMAReadTime();
   }
   return total_time;
@@ -1807,16 +1835,14 @@ double LockManager::GetTotalRDMAReadTime() const {
 
 double LockManager::GetTotalRDMAAtomicTime() const {
   double total_time = 0.0;
-  map<uint64_t, LockClient*>::const_iterator it;
-  for (it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
+  for (auto it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
     total_time += it->second->GetTotalRDMAAtomicTime();
   }
   return total_time;
 }
 
 bool LockManager::IsClientsInitialized() const {
-  map<uint64_t, LockClient*>::const_iterator it;
-  for (it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
+  for (auto it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
     if (!it->second->IsInitialized()) {
       return false;
     }
@@ -1886,7 +1912,7 @@ void* LockManager::PollLocalWorkQueue(void* arg) {
 }
 
 void LockManager::ResetSharedReleaseCount(int node_id, int obj_index) {
-  Poco::Mutex::ScopedLock lock(mutex_);
+  // Poco::FastMutex::ScopedLock lock(mutex_);
   shared_release_count_map_[node_id].erase(obj_index);
   shared_remaining_map_[node_id].erase(obj_index);
 }
@@ -1897,7 +1923,7 @@ int LockManager::SendNCOSEDLockRequest(int seq_no, int current_owner_id,
                                        uintptr_t request_user_id,
                                        int shared_remaining,
                                        LockType lock_type) {
-  Poco::Mutex::ScopedLock lock(mutex_);
+  // Poco::FastMutex::ScopedLock lock(mutex_);
   LockClient* lock_client = lock_clients_[current_owner_id];
 
   if (!lock_client->SendNCOSEDLockRequest(seq_no, node_id, obj_index,
@@ -1910,7 +1936,7 @@ int LockManager::SendNCOSEDLockRequest(int seq_no, int current_owner_id,
 }
 
 int LockManager::SendNCOSEDLockRelease(const LockRequest& request) {
-  Poco::Mutex::ScopedLock lock(mutex_);
+  // Poco::FastMutex::ScopedLock lock(mutex_);
   if (request.lock_type == EXCLUSIVE) {
     cerr << "LockManager::SendNCOSEDLockRelease(): must be shared." << endl;
     exit(ERROR_INVALID_LOCK_TYPE);
@@ -1922,7 +1948,7 @@ int LockManager::SendNCOSEDLockRelease(const LockRequest& request) {
 }
 
 int LockManager::SendNCOSEDLockReleaseSuccess(const LockRequest& request) {
-  Poco::Mutex::ScopedLock lock(mutex_);
+  // Poco::FastMutex::ScopedLock lock(mutex_);
   if (request.lock_type == EXCLUSIVE) {
     cerr << "LockManager::SendNCOSEDLockRelease(): must be shared." << endl;
     exit(ERROR_INVALID_LOCK_TYPE);
@@ -1935,9 +1961,11 @@ int LockManager::SendNCOSEDLockReleaseSuccess(const LockRequest& request) {
 }
 
 int LockManager::HandleNCOSEDLockGrant(const Message& msg) {
-  Poco::Mutex::ScopedLock lock(mutex_);
+  // Poco::FastMutex::ScopedLock lock(mutex_);
   LockResultInfo result_info(SUCCESS, 0);
-  auto& status = lock_status_map_[msg.node_id][msg.obj_index];
+  // auto& status =
+  // lock_status_map_[msg.owner_user_id][msg.node_id][msg.obj_index];
+  auto& status = lock_status_map_[msg.owner_user_id];
 #ifdef VERBOSE
   if (id_ == 3) {
     cout << "path8: HandleNCOSEDLockGrant(): " << id_ << "," << msg.seq_no
@@ -1960,7 +1988,7 @@ int LockManager::HandleNCOSEDLockGrant(const Message& msg) {
 }
 
 int LockManager::HandleNCOSEDLockRelease(const Message& msg) {
-  Poco::Mutex::ScopedLock lock(mutex_);
+  // Poco::FastMutex::ScopedLock lock(mutex_);
   ++shared_release_count_map_[msg.node_id][msg.obj_index];
   --shared_remaining_map_[msg.node_id][msg.obj_index];
 
@@ -1976,7 +2004,7 @@ int LockManager::HandleNCOSEDLockRelease(const Message& msg) {
 }
 
 int LockManager::HandleNCOSEDLockReleaseSuccess(const Message& msg) {
-  Poco::Mutex::ScopedLock lock(mutex_);
+  // Poco::FastMutex::ScopedLock lock(mutex_);
   LockType type = msg.lock_type;
   if (msg.lock_type == BOTH) {
     type = SHARED;
@@ -1991,7 +2019,7 @@ int LockManager::HandleNCOSEDLockReleaseSuccess(const Message& msg) {
 }
 
 int LockManager::SendNCOSEDLockGrant(int node_id, int obj_index) {
-  Poco::Mutex::ScopedLock lock(mutex_);
+  // Poco::FastMutex::ScopedLock lock(mutex_);
   if (node_id != 1) {
     cerr << "WRONG1" << endl;
     exit(-1);
@@ -2030,7 +2058,7 @@ int LockManager::SendNCOSEDLockGrant(int node_id, int obj_index) {
 }
 
 int LockManager::HandleNCOSEDLockRequest(const Message& msg) {
-  Poco::Mutex::ScopedLock lock(mutex_);
+  // Poco::FastMutex::ScopedLock lock(mutex_);
   // Set information necessary to pass the lock first.
   next_seq_no_map_[msg.node_id][msg.obj_index] = msg.seq_no;
   next_node_id_map_[msg.node_id][msg.obj_index] = msg.request_node_id;

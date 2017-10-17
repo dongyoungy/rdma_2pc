@@ -2,6 +2,7 @@
 #define RDMA_PROTO_LOCK_CLIENT_H
 
 #include <unordered_map>
+#include "Poco/Condition.h"
 #include "Poco/Mutex.h"
 #include "client.h"
 
@@ -64,6 +65,8 @@ class LockClient : public Client {
   std::map<int, uintptr_t> queued_user_;
 
   Poco::Mutex lock_mutex_;
+  Poco::FastMutex fast_mutex_;
+  Poco::Condition lock_cond_;
   volatile bool message_in_progress_;
   map<uint32_t, uint32_t> waitlist_;
 };

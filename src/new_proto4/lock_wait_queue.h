@@ -18,7 +18,7 @@ class LockWaitQueue {
  public:
   LockWaitQueue();
   ~LockWaitQueue();
-  int RemoveAllElements(uint32_t owner_node_id, int type);
+  int RemoveAllElements(uint32_t owner_node_id, uintptr_t user_id, int type);
   int Insert(int seq_no, uint32_t target_node_id, uint32_t owner_node_id,
              uintptr_t owner_user_id, LockType type);
   void PrintAll();

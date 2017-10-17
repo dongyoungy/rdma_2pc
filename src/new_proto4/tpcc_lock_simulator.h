@@ -12,9 +12,9 @@ namespace proto {
 
 class TPCCLockSimulator : public LockSimulator {
  public:
-  TPCCLockSimulator(LockManager* manager, int num_nodes, int num_objects,
-                    string think_time_type, bool do_random_backoff,
-                    int home_warehouse_id);
+  TPCCLockSimulator(LockManager* manager, int id, int num_nodes,
+                    int num_objects, string think_time_type,
+                    bool do_random_backoff, int home_warehouse_id);
 
  protected:
   virtual void CreateRequest();

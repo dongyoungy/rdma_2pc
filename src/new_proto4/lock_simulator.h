@@ -33,15 +33,17 @@ class LockManager;
 // Default LockSimulator.
 class LockSimulator : public Poco::Runnable {
  public:
-  LockSimulator(LockManager* manager, int num_nodes, int num_objects,
+  LockSimulator(LockManager* manager, int id, int num_nodes, int num_objects,
                 int request_size, string think_time_type,
                 bool run_random_backoff);
   ~LockSimulator();
   virtual void run();  // for Poco::Runnable
 
+  int GetID() const;
   void Stop();
   void SetThinkTimeDuration(int duration);
   uint64_t GetCount() const;
+  uint64_t GetBackoffCount() const;
   uint64_t GetCountWithContention() const;
   uint64_t GetCountWithBackoff() const;
 
@@ -84,6 +86,7 @@ class LockSimulator : public Poco::Runnable {
   std::vector<LockStat> stats_;
   std::vector<std::unique_ptr<LockRequest>> requests_;
   LockRequest** temp_requests_;
+  int id_;
   int num_nodes_;
   int num_objects_;
   int request_size_;
