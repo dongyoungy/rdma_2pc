@@ -89,6 +89,8 @@ LockManager::LockManager(const string& work_dir, uint32_t rank, int num_manager,
   lock_status_map_ = new LockStatusInfo[MAX_USER];
   lock_clients_map_ = new LockClient*[MAX_USER * num_manager_ * 2];
   mutex_ = new Poco::FastMutex[MAX_USER];
+
+  backup_node_for_ = 0;
 }
 
 // destructor
@@ -105,6 +107,31 @@ void LockManager::run() { this->Run(); }
 int LockManager::GetID() const { return id_; }
 
 int LockManager::GetRank() const { return rank_; }
+
+int LockManager::GetBackupNodeFor() const { return backup_node_for_; }
+
+void LockManager::SetBackupNodeFor(int node) { backup_node_for_ = node; }
+
+bool LockManager::HasStopped() const { return terminate_; }
+
+CommunicationClient* LockManager::GetCommunicationClient(int index) {
+  return communication_clients_[index];
+}
+
+int LockManager::ReplaceRemoteNode() {
+  int prev_id = id_;
+  id_ = backup_node_for_;
+
+  for (auto it = communication_clients_.begin();
+       it != communication_clients_.end(); ++it) {
+    if (it->first != (unsigned)backup_node_for_) {
+      it->second->SendTakeover(prev_id, id_);
+    }
+  }
+  backup_node_for_ = 0;
+
+  return FUNC_SUCCESS;
+}
 
 int LockManager::Initialize() {
   for (int i = 0; i < num_lock_object_; ++i) {
@@ -171,6 +198,7 @@ int LockManager::RegisterUser(uint32_t user_id, LockSimulator* user) {
 int LockManager::InitializeLockClients() {
   int ret = 0;
   temp_lock_clients_ = new LockClient*[num_manager_ + 1];
+  remote_manager_availability_ = new bool[num_manager_ + 1];
   for (int i = 1; i <= num_manager_; ++i) {
     // for (int j = 0; j < 1; ++j) {
     for (unsigned int j = 0; j < users.size(); ++j) {
@@ -223,6 +251,7 @@ int LockManager::InitializeLockClients() {
     }
     communication_clients_[i] = comm_client;
     communication_client_threads_.push_back(comm_client_thread);
+    remote_manager_availability_[i] = true;
   }
   // initialize lock wait queues, one for each lock object
   if (lock_mode_ == PROXY_QUEUE || lock_mode_ == PROXY_RETRY) {
@@ -247,7 +276,23 @@ int LockManager::InitializeLockClients() {
     return -1;
   }
 
+  if (backup_node_for_ > 0) {
+#ifdef DEBUG
+    cout << "LM: " << id_ << " checking LM " << backup_node_for_ << endl;
+#endif
+    ret = pthread_create(&node_checking_thread_, NULL, &LockManager::CheckNodes,
+                         (void*)this);
+    if (ret) {
+      perror("LockManager::pthread_create()");
+      return -1;
+    }
+  }
+
   return 0;
+}
+
+void LockManager::SetRemoteManagerAvailability(int index) {
+  remote_manager_availability_[index] = false;
 }
 
 int LockManager::PrintInfo() {
@@ -462,12 +507,13 @@ int LockManager::DisableRemoteAtomicAccess() {
   struct ibv_qp_attr attr;
   memset(&attr, 0x00, sizeof(attr));
 
-  attr.qp_access_flags = IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE;
+  // attr.qp_access_flags = IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE;
+  attr.qp_state = IBV_QPS_ERR;
 
   for (set<Context*>::iterator it = context_set_.begin();
        it != context_set_.end(); ++it) {
     Context* context = *it;
-    if (ibv_modify_qp(context->queue_pair, &attr, IBV_QP_ACCESS_FLAGS)) {
+    if (ibv_modify_qp(context->queue_pair, &attr, IBV_QP_STATE)) {
       cerr << "ibv_modify_qp() failed." << endl;
       return -1;
     }
@@ -652,7 +698,8 @@ const Poco::Optional<std::promise<LockResultInfo>*> LockManager::Lock(
   LockClient* lock_client =
       lock_clients_map_[MAX_USER * request.lm_id + request.user_id];
   std::promise<LockResultInfo>* result = &lock_result_map_[request.user_id];
-  if (lock_client->RequestLock(request, lock_mode_table_[request.lm_id])) {
+  if (remote_manager_availability_[request.lm_id] &&
+      lock_client->RequestLock(request, lock_mode_table_[request.lm_id])) {
     return Poco::Optional<std::promise<LockResultInfo>*>(result);
   } else {
     return Poco::Optional<std::promise<LockResultInfo>*>();
@@ -681,7 +728,8 @@ const Poco::Optional<std::promise<LockResultInfo>*> LockManager::Unlock(
       lock_clients_map_[MAX_USER * request.lm_id + request.user_id];
   std::promise<LockResultInfo>* result =
       &lock_result_map_[request.user_id % MAX_USER];
-  if (lock_client->RequestUnlock(request, lock_mode_table_[request.lm_id])) {
+  if (remote_manager_availability_[request.lm_id] &&
+      lock_client->RequestUnlock(request, lock_mode_table_[request.lm_id])) {
     return Poco::Optional<std::promise<LockResultInfo>*>(result);
   } else {
     return Poco::Optional<std::promise<LockResultInfo>*>();
@@ -857,7 +905,7 @@ int LockManager::LockLocallyWithQueue(Context* context, Message* message) {
   }
 
   pthread_mutex_unlock(lock_mutex_[obj_index]);
-//// unlock locally on lock table
+  //// unlock locally on lock table
 
 send_lock_result:
 
@@ -1571,8 +1619,8 @@ int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
   Context* context = (Context*)work_completion->wr_id;
 
   if (work_completion->status != IBV_WC_SUCCESS) {
-    cerr << "(LockManager) Work completion status is not IBV_WC_SUCCESS."
-         << endl;
+    cerr << "(LockManager) Work completion status is not IBV_WC_SUCCESS: "
+         << work_completion->status << endl;
     return -1;
   }
 
@@ -1627,11 +1675,34 @@ int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
       this->HandleNCOSEDLockRelease(*message);
     } else if (message->type == Message::NCOSED_LOCK_RELEASE_SUCCESS) {
       this->HandleNCOSEDLockReleaseSuccess(*message);
+    } else if (message->type == Message::HEARTBEAT) {
+    } else if (message->type == Message::TAKEOVER) {
+      this->HandleTakeover(*message);
     } else {
       cerr << "Unknown message type: " << message->type << endl;
       return FUNC_FAIL;
     }
   }
+  return FUNC_SUCCESS;
+}
+
+int LockManager::HandleTakeover(const Message& msg) {
+  int from = msg.node_from;
+  int to = msg.node_to;
+
+  cout << "LM " << id_ << " processing takeover of LM " << from << " to " << to
+       << endl;
+  for (unsigned int j = 0; j < users.size(); ++j) {
+    LockSimulator* user = users[j];
+    lock_clients_[MAX_USER * to + user->GetID()] =
+        lock_clients_[MAX_USER * from + user->GetID()];
+    lock_clients_map_[MAX_USER * to + user->GetID()] =
+        lock_clients_map_[MAX_USER * from + user->GetID()];
+  }
+  communication_clients_[to] = communication_clients_[from];
+
+  remote_manager_availability_[to] = true;
+
   return FUNC_SUCCESS;
 }
 
@@ -2118,6 +2189,31 @@ LockMode LockManager::GetLockMode() const { return current_lock_mode_; }
 void* LockManager::RunLockClient(void* args) {
   Client* client = static_cast<Client*>(args);
   client->Run();
+  return NULL;
+}
+
+void* LockManager::CheckNodes(void* args) {
+  LockManager* manager = static_cast<LockManager*>(args);
+  CommunicationClient* communication_client;
+  int node_to_check = manager->GetBackupNodeFor();
+  if (node_to_check > 0) {
+    communication_client = manager->GetCommunicationClient(node_to_check);
+  }
+  cout << "CheckNode running: " << manager->GetID() << endl;
+  while (!manager->HasStopped() && node_to_check > 0) {
+    if (communication_client->IsRemoteNodeDead()) {
+      manager->ReplaceRemoteNode();
+      break;
+    }
+    Poco::Thread::sleep(1000);
+    if (communication_client->IsInitialized()) {
+      communication_client->SendHeartbeat();
+    } else {
+      cout << "CommunicationClient Not initialized yet." << endl;
+    }
+  }
+  cout << "CheckNode done: " << manager->GetID() << endl;
+
   return NULL;
 }
 

@@ -75,6 +75,7 @@ void LockSimulator::run() {
     int attempt = 0;
     int time_spent_backoff = 0;
     bool backoff_done = false;
+    bool lock_success = true;
     Poco::Timestamp lock_start;
     last_lock_start_time_.update();
     while (i < request_size_) {
@@ -142,40 +143,45 @@ void LockSimulator::run() {
         contention_count5 += result_info.stat.contention_count5;
         contention_count6 += result_info.stat.contention_count6;
       } else {
-        exit(-1);
+        // This mean node has died.
+        --i;
+        lock_success = false;
+        break;
       }
     }
-    Poco::Timestamp::TimeDiff latency = lock_start.elapsed();
-    latency_.push_back(latency);  // microseconds.
-    LockStat s(contention_count, contention_count2, contention_count3,
-               contention_count4, contention_count5, contention_count6);
-    stats_.push_back(s);
+    if (lock_success) {
+      Poco::Timestamp::TimeDiff latency = lock_start.elapsed();
+      latency_.push_back(latency);  // microseconds.
+      LockStat s(contention_count, contention_count2, contention_count3,
+                 contention_count4, contention_count5, contention_count6);
+      stats_.push_back(s);
 
-    ++count_;
-    if (time_spent_backoff > 0) {
-      backoff_time_.push_back(time_spent_backoff);
-    }
-    if (backoff_done) {
-      backoff_latency_.push_back(latency);
-    } else if ((contention_count + contention_count2 + contention_count3 +
-                contention_count4 + contention_count5 + contention_count6) >
-               0) {
-      contention_latency_.push_back(latency);
-    }
+      ++count_;
+      if (time_spent_backoff > 0) {
+        backoff_time_.push_back(time_spent_backoff);
+      }
+      if (backoff_done) {
+        backoff_latency_.push_back(latency);
+      } else if ((contention_count + contention_count2 + contention_count3 +
+                  contention_count4 + contention_count5 + contention_count6) >
+                 0) {
+        contention_latency_.push_back(latency);
+      }
 
-    // Enforce think time.
-    int think_time = think_time_gen.GetTime();
-    if (think_time == -1) {
-      cerr << "Unknown think time generator: " << think_time_type_ << endl;
-      exit(ERROR_UNKNOWN_THINK_TIME_TYPE);
-    } else if (think_time > 0) {
-      // Sleeps for 'think_time' microseconds.
-      // Note that the accuracy of this sleep is not guaranteed.
-      std::this_thread::sleep_for(std::chrono::microseconds(think_time));
+      // Enforce think time.
+      int think_time = think_time_gen.GetTime();
+      if (think_time == -1) {
+        cerr << "Unknown think time generator: " << think_time_type_ << endl;
+        exit(ERROR_UNKNOWN_THINK_TIME_TYPE);
+      } else if (think_time > 0) {
+        // Sleeps for 'think_time' microseconds.
+        // Note that the accuracy of this sleep is not guaranteed.
+        std::this_thread::sleep_for(std::chrono::microseconds(think_time));
+      }
+      i = request_size_ - 1;
     }
 
     // unlock.
-    i = request_size_ - 1;
     while (i >= 0) {
       auto& lock_result = manager_->Unlock(*requests_[i]);
       if (lock_result.isSpecified()) {
@@ -188,8 +194,9 @@ void LockSimulator::run() {
           exit(ERROR_UNLOCK_FAIL);
         }
       } else {
-        cerr << "Unlock failure. (2)" << endl;
-        exit(ERROR_UNLOCK_FAIL);
+        // This means target node has been failed.
+        --i;
+        continue;
       }
     }
 

@@ -21,6 +21,7 @@
 
 #include "Poco/Optional.h"
 #include "Poco/Runnable.h"
+#include "Poco/Thread.h"
 
 #include "client.h"
 #include "constants.h"
@@ -76,6 +77,7 @@ class LockManager : public Poco::Runnable {
                                 int obj_index, LockResult result);
   void SetLockStatusInvalid(uintptr_t user_id, uint32_t node_id,
                             uint32_t obj_index);
+  int HandleTakeover(const Message& msg);
 
   // used by NCOSED.
   int SendNCOSEDLockRequest(int seq_no, int current_owner_id, int node_id,
@@ -93,8 +95,12 @@ class LockManager : public Poco::Runnable {
 
   int GetID() const;
   int GetRank() const;
+  int GetBackupNodeFor() const;
+  void SetBackupNodeFor(int node);
+  int ReplaceRemoteNode();
   LockMode GetLockMode() const;
   void SetTerminate(bool terminate);
+  bool HasStopped() const;
   inline int GetNumManager() const { return num_manager_; }
   inline int GetNumUser() const { return num_user_; }
   inline int GetNumTotalUser() const { return num_total_user_; }
@@ -130,9 +136,14 @@ class LockManager : public Poco::Runnable {
 
   int SwitchToLocal();
   int SwitchToRemote();
+  int DisableRemoteAtomicAccess();
+  int EnableRemoteAtomicAccess();
+  void SetRemoteManagerAvailability(int index);
+  CommunicationClient* GetCommunicationClient(int index);
   static void* PollCompletionQueue(void* context);
   static void* PollLocalWorkQueue(void* arg);
   static void* RunLockClient(void* args);
+  static void* CheckNodes(void* args);
 
   inline static bool IsAtomicHCAReplyBe() { return is_atomic_hca_reply_be_; }
   inline static string GetSharedExclusiveRule() {
@@ -225,8 +236,6 @@ class LockManager : public Poco::Runnable {
   // int obj_index);
 
   int TryLock(Context* context, Message* message);
-  int DisableRemoteAtomicAccess();
-  int EnableRemoteAtomicAccess();
   int HandleWorkCompletion(struct ibv_wc* work_completion);
   int HandleEvent(struct rdma_cm_event* event);
   int HandleConnectRequest(struct rdma_cm_id* id);
@@ -270,6 +279,10 @@ class LockManager : public Poco::Runnable {
   std::promise<LockResultInfo>* lock_result_map_;
   LockStatusInfo* lock_status_map_;
   LockClient** lock_clients_map_;
+
+  int backup_node_for_;
+  bool* remote_manager_availability_;
+  pthread_t node_checking_thread_;
 
   // local lock manager
   // LocalLockManager* llm_;

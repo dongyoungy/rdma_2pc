@@ -9,7 +9,14 @@
 namespace rdma {
 namespace proto {
 
-enum LockResult { SUCCESS, FAILURE, RETRY, QUEUED, SUCCESS_FROM_QUEUED };
+enum LockResult {
+  SUCCESS,
+  FAILURE,
+  RETRY,
+  QUEUED,
+  SUCCESS_FROM_QUEUED,
+  NODE_FAILURE
+};
 enum LockType { NONE, SHARED, EXCLUSIVE, BOTH };
 enum ReadType { READ_SHARED, READ_EXCLUSIVE, READ_ALL };
 enum LockMode {

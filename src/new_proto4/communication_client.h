@@ -4,13 +4,14 @@
 #include "Poco/Condition.h"
 #include "Poco/Mutex.h"
 #include "client.h"
+#include "lock_client.h"
 
 using namespace std;
 
 namespace rdma {
 namespace proto {
 
-class CommunicationClient : public Client {
+class CommunicationClient : public LockClient {
  public:
   CommunicationClient(const string& work_dir, LockManager* local_manager,
                       uint32_t local_user_count, int remote_lm_id);
@@ -20,6 +21,10 @@ class CommunicationClient : public Client {
                 int obj_index, LockType lock_type);
   int RejectLock(int seq_no, int target_node_id, uintptr_t owner_user_id,
                  int obj_index, LockType lock_type);
+  int SendTakeover(int from, int to);
+
+  int SendHeartbeat();
+  bool IsRemoteNodeDead();
 
  protected:
   Poco::Mutex communication_mutex_;
@@ -27,6 +32,7 @@ class CommunicationClient : public Client {
   virtual int HandleWorkCompletion(struct ibv_wc* work_completion);
 
  private:
+  bool is_remote_node_dead_;
   volatile bool is_waiting_ack_;
 };
 

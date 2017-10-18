@@ -129,8 +129,7 @@ int main(int argc, char** argv) {
     exit(ERROR_INVALID_RANDOM_BACKOFF);
   }
 
-  if (workload_type == "tpcc-uniform" || workload_type == "tpcc-hotspot" ||
-      workload_type == "tpcc-dist") {
+  if (strncasecmp(workload_type.c_str(), "tpcc", 4) == 0) {
     num_lock_object = kTPCCNumObjects;
   }
 
@@ -198,6 +197,10 @@ int main(int argc, char** argv) {
       simulator.reset(new TPCCLockSimulator(lock_manager.get(), id, 1,
                                             kTPCCNumObjects, think_time_type,
                                             do_random_backoff, 0));
+    } else if (workload_type == "tpcc-failover") {
+      simulator.reset(new TPCCLockSimulator(
+          lock_manager.get(), id, 1, kTPCCNumObjects, think_time_type,
+          do_random_backoff, (rank - (num_managers / 2)) % (num_managers / 4)));
     } else {
       cerr << "Unknown workload: " << workload_type << endl;
       exit(-2);
@@ -208,6 +211,12 @@ int main(int argc, char** argv) {
     users.push_back(std::move(simulator));
   }
 
+  if (workload_type == "tpcc-failover") {
+    // back up node
+    if (rank >= num_managers / 4 && rank < num_managers / 2) {
+      lock_manager->SetBackupNodeFor(rank - (num_managers / 4) + 1);
+    }
+  }
   sleep(3);
 
   if (lock_manager->InitializeLockClients()) {
@@ -262,6 +271,14 @@ int main(int argc, char** argv) {
         user_threads.push_back(std::move(user_thread));
       }
     }
+  } else if (workload_type == "tpcc-failover") {
+    if (rank >= num_managers / 2) {
+      for (int i = 0; i < num_users; ++i) {
+        std::unique_ptr<Poco::Thread> user_thread(new Poco::Thread);
+        user_thread->start(*users[i]);
+        user_threads.push_back(std::move(user_thread));
+      }
+    }
   } else {
     for (int i = 0; i < num_users; ++i) {
       std::unique_ptr<Poco::Thread> user_thread(new Poco::Thread);
@@ -290,7 +307,7 @@ int main(int argc, char** argv) {
         current_total_count += current_counts[j];
       }
       uint64_t current_throughput = current_total_count - last_total_count;
-      cout << "current throughput = " << current_throughput << endl;
+      cout << i << "," << current_throughput << endl;
 
       throughputs.push_back(current_throughput);
       if (current_throughput > max_throughput) {
@@ -309,6 +326,29 @@ int main(int argc, char** argv) {
         // abort();
       }
 #endif
+    }
+    // Assume 32 nodes
+    if (i == 10 && rank == 0 && workload_type == "tpcc-failover") {
+      cout << i << ",Failing LM " << rank << endl;
+      lock_manager->DisableRemoteAtomicAccess();
+      lock_manager->Stop();
+    }
+    if (i == 20 && rank == 1 && workload_type == "tpcc-failover") {
+      cout << i << ",Failing LM " << rank << endl;
+      lock_manager->DisableRemoteAtomicAccess();
+      lock_manager->Stop();
+    }
+    if (i == 30 && (rank == 2 || rank == 3) &&
+        workload_type == "tpcc-failover") {
+      cout << i << ",Failing LM " << rank << endl;
+      lock_manager->DisableRemoteAtomicAccess();
+      lock_manager->Stop();
+    }
+    if (i == 40 && (rank >= 4 && rank <= 7) &&
+        workload_type == "tpcc-failover") {
+      cout << i << ",Failing LM " << rank << endl;
+      lock_manager->DisableRemoteAtomicAccess();
+      lock_manager->Stop();
     }
     MPI_Barrier(MPI_COMM_WORLD);
     Poco::Thread::sleep(1000);

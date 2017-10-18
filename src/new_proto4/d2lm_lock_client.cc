@@ -405,9 +405,50 @@ bool D2LMLockClient::Undo(Context* context, const LockRequest& request) {
 
 int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
   Context* context = (Context*)work_completion->wr_id;
-  if (work_completion->status != IBV_WC_SUCCESS) {
-    cerr << "Work completion status is not IBV_WC_SUCCESS: "
-         << work_completion->status << endl;
+
+  if (work_completion->status == IBV_WC_REM_INV_REQ_ERR ||
+      work_completion->status == IBV_WC_WR_FLUSH_ERR ||
+      work_completion->status == IBV_WC_RETRY_EXC_ERR) {
+    // LM failed.
+    // It should let local manager know that this particular remote lock manager
+    // is unavailable + any request that has been made also failed.
+    cerr << "(D2LMLockClient) Detected Node Failure: "
+         << work_completion->status << " from LM " << remote_lm_id_ << endl;
+    local_manager_->SetRemoteManagerAvailability(remote_lm_id_);
+
+    // Let the simulator know of the node failure.
+    if (work_completion->opcode == IBV_WC_FETCH_ADD) {
+      // either locking or unlocking
+      LockRequest* request = (LockRequest*)work_completion->wr_id;
+
+      switch (request->task) {
+        case LOCK: {
+          local_manager_->NotifyLockRequestResult(
+              request->seq_no, request->user_id, request->lock_type,
+              remote_lm_id_, request->obj_index, request->contention_count,
+              NODE_FAILURE);
+          break;
+        }
+        case UNLOCK: {
+          local_manager_->NotifyUnlockRequestResult(
+              request->seq_no, request->user_id, request->lock_type,
+              remote_lm_id_, request->obj_index, NODE_FAILURE);
+          break;
+        }
+        default: { break; }
+      }
+
+    } else if (work_completion->opcode == IBV_WC_RDMA_READ) {
+      // Must be reading for locking...
+      LockRequest* request = (LockRequest*)work_completion->wr_id;
+      local_manager_->NotifyLockRequestResult(
+          request->seq_no, request->user_id, request->lock_type, remote_lm_id_,
+          request->obj_index, request->contention_count, NODE_FAILURE);
+    }
+    return -1;
+  } else if (work_completion->status != IBV_WC_SUCCESS) {
+    cerr << "(D2LMLockClient) Work completion status is not IBV_WC_SUCCESS: "
+         << work_completion->status << " from LM " << remote_lm_id_ << endl;
     return -1;
   }
 

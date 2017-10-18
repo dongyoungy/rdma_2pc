@@ -26,7 +26,9 @@ class Message {
     NCOSED_LOCK_REQUEST,
     NCOSED_LOCK_GRANT,
     NCOSED_LOCK_RELEASE,
-    NCOSED_LOCK_RELEASE_SUCCESS
+    NCOSED_LOCK_RELEASE_SUCCESS,
+    HEARTBEAT,
+    TAKEOVER
   } type;
   Task task;
   LockType lock_type;
@@ -46,6 +48,10 @@ class Message {
   int request_node_id;
   int shared_remaining;
   uintptr_t request_user_id;
+
+  // used for failover - backup node takes over the ownership of a dead node.
+  int node_from;
+  int node_to;
 };
 
 }  // namespace proto
