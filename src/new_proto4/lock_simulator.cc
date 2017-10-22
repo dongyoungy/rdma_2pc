@@ -246,10 +246,10 @@ void LockSimulator::Stop() {
   is_done_ = true;
   auto time = last_lock_start_time_.epochTime();
   auto time2 = last_lock_try_time_.epochTime();
-  cerr << "last lock start time (" << uintptr_t(this)
-       << ") = " << asctime(localtime(&time)) << endl;
-  cerr << "last lock try time (" << uintptr_t(this)
-       << ") = " << asctime(localtime(&time2)) << endl;
+  cerr << "last lock start time (" << id_ << ") = " << asctime(localtime(&time))
+       << endl;
+  cerr << "last lock try time (" << id_ << ") = " << asctime(localtime(&time2))
+       << endl;
   cerr << "Backoff count = " << backoff_count_ << endl;
 }
 

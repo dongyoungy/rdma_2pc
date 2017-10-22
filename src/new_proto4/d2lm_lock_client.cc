@@ -43,14 +43,25 @@ bool D2LMLockClient::RequestUnlock(const LockRequest& request,
 void D2LMLockClient::PerformReadBackoff(const LockRequest& request) {
   if (!kDoReadBackoff) return;
 
-  double sleep_time =
-      (request.deadlock_count > 0)
-          ? kD2LMBaseReadBackoff * pow(2.0, request.deadlock_count - 1)
-          : 0;
+  // double sleep_time =
+  //(request.deadlock_count > 0)
+  //? kD2LMBaseReadBackoff * pow(2.0, request.deadlock_count - 1)
+  //: 0;
 
-  if (sleep_time > 0) {
-    int time = rng_.next(std::min((int)kD2LMMaxReadBackoff, (int)sleep_time));
-    std::this_thread::sleep_for(std::chrono::microseconds(time));
+  // if (sleep_time > 0) {
+  // int time = rng_.next(std::min((int)kD2LMMaxReadBackoff, (int)sleep_time));
+  // std::this_thread::sleep_for(std::chrono::microseconds(time));
+  //}
+  int sleep_time = 0;
+  int interval = 0;
+  if (request.lock_type == EXCLUSIVE) {
+    interval = (request.exclusive_max - request.exclusive_number) +
+               ((request.shared_max - request.shared_number) / 10);
+  } else if (request.lock_type == SHARED) {
+    interval = (request.exclusive_max - request.exclusive_number);
+  }
+  if (interval > 0) {
+    sleep_time = std::min(kD2LMMaxReadBackoff, interval * kD2LMBaseReadBackoff);
   }
 }
 
@@ -403,6 +414,68 @@ bool D2LMLockClient::Undo(Context* context, const LockRequest& request) {
   return true;
 }
 
+bool D2LMLockClient::UndoNumber(Context* context, const LockRequest& request) {
+  Poco::FastMutex::ScopedLock lock(fast_mutex_);
+
+  struct ibv_exp_send_wr send_work_request;
+  struct ibv_exp_send_wr* bad_work_request;
+  struct ibv_sge sge;
+
+  memset(&send_work_request, 0x00, sizeof(send_work_request));
+
+  LockRequest* current_request = lock_requests_[lock_request_idx_].get();
+  *current_request = request;
+  current_request->task = UNDO_NUMBER;
+  lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
+
+  sge.addr = (uint64_t)&current_request->original_value;
+  sge.length = sizeof(uint64_t);
+  sge.lkey = current_request->original_value_mr->lkey;
+
+  send_work_request.wr_id = (uintptr_t)current_request;
+  send_work_request.num_sge = 1;
+  send_work_request.sg_list = &sge;
+  send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
+  send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
+
+  uint64_t value = 1;
+  int bits_to_shift = 0;
+
+  switch (current_request->lock_type) {
+    case SHARED: {
+      bits_to_shift = kSharedNumberBitShift;
+      break;
+    }
+    case EXCLUSIVE: {
+      bits_to_shift = kExclusiveNumberBitShift;
+      break;
+    }
+    default: {
+      cerr << "Invalid lock type: " << current_request->lock_type << endl;
+      return false;
+      break;
+    }
+  }
+  uint64_t new_value = value << bits_to_shift;
+  send_work_request.wr.atomic.compare_add = (-1) * new_value;
+
+  send_work_request.wr.atomic.remote_addr =
+      (uint64_t)context->lock_table_mr->addr +
+      (current_request->obj_index * sizeof(uint64_t));
+  send_work_request.wr.atomic.rkey = context->lock_table_mr->rkey;
+
+  int ret = 0;
+  if ((ret = ibv_exp_post_send(context->queue_pair, &send_work_request,
+                               &bad_work_request))) {
+    cerr << "UndoNumber(): ibv_exp_post_send() failed: " << strerror(ret)
+         << endl;
+    return false;
+  }
+  ++num_rdma_atomic_fa_;
+
+  return true;
+}
+
 int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
   Context* context = (Context*)work_completion->wr_id;
 
@@ -633,13 +706,20 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
         exit(ERROR_INVALID_LOCK_TYPE);
       }
     } else if (request->task == UNLOCK) {
+      if (request->lock_type == SHARED &&
+          request->shared_number >= request->shared_max) {
+        this->UndoNumber(context_, *request);
+      } else if (request->lock_type == EXCLUSIVE &&
+                 request->exclusive_number >= request->exclusive_max) {
+        this->UndoNumber(context_, *request);
+      }
       local_manager_->NotifyUnlockRequestResult(
           request->seq_no, request->user_id, request->lock_type, remote_lm_id_,
           request->obj_index, SUCCESS);
       if (do_reset_[request->user_id][request->obj_index]) {
         this->Reset(context_, *request);
       }
-    } else {
+    } else if (request->task != UNDO_NUMBER) {
       cerr << "Invalid task_1: " << request->task << endl;
       exit(ERROR_INVALID_TASK);
     }

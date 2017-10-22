@@ -151,10 +151,10 @@ int main(int argc, char** argv) {
   LockManager::SetPollRetry(num_retry);
   D2LMLockClient::SetDeadLockLimit(d2lm_deadlock_limit);
   D2LMLockClient::SetReadBackoff(d2lm_do_read_backoff);
-  std::unique_ptr<LockManager> lock_manager(
-      new LockManager(argv[1], rank, num_managers, num_lock_object, lock_mode));
+  LockManager* lock_manager =
+      new LockManager(argv[1], rank, num_managers, num_lock_object, lock_mode);
 
-  LockManager* temp_manager = lock_manager.get();
+  LockManager* temp_manager = lock_manager;
   if (lock_manager->Initialize()) {
     cerr << "LockManager initialization failure." << endl;
     exit(-1);
@@ -163,52 +163,60 @@ int main(int argc, char** argv) {
   Poco::Thread manager_thread;
   manager_thread.start(*lock_manager);
 
-  std::vector<std::unique_ptr<LockSimulator>> users;
+  // std::vector<std::unique_ptr<LockSimulator>> users;
+  std::vector<LockSimulator*> users;
   LockSimulator* temp_user;
   for (int i = 0; i < num_users; ++i) {
     int id = (rank * num_users) + (i + 1);
-    std::unique_ptr<LockSimulator> simulator;
+    // std::unique_ptr<LockSimulator> simulator;
+    LockSimulator* simulator;
     // TODO: Add other simulators.
     if (workload_type == "simple") {
-      simulator.reset(new LockSimulator(lock_manager.get(), id, num_managers,
-                                        num_lock_object, request_size,
-                                        think_time_type, do_random_backoff));
+      simulator =
+          new LockSimulator(lock_manager, id, num_managers, num_lock_object,
+                            request_size, think_time_type, do_random_backoff);
     } else if (workload_type == "test") {
-      simulator.reset(new TestLockSimulator(
-          lock_manager.get(), id, num_managers, num_lock_object,
-          think_time_type, do_random_backoff));
+      simulator =
+          new TestLockSimulator(lock_manager, id, num_managers, num_lock_object,
+                                think_time_type, do_random_backoff);
     } else if (workload_type == "hotspot") {
-      simulator.reset(new HotspotLockSimulator(
-          lock_manager.get(), id, num_managers, num_lock_object, request_size,
-          think_time_type, do_random_backoff));
+      simulator = new HotspotLockSimulator(lock_manager, id, num_managers,
+                                           num_lock_object, request_size,
+                                           think_time_type, do_random_backoff);
     } else if (workload_type == "hotspot-exclusive") {
-      simulator.reset(new HotspotExclusiveLockSimulator(
-          lock_manager.get(), id, num_managers, num_lock_object, request_size,
-          think_time_type, do_random_backoff));
+      simulator = new HotspotExclusiveLockSimulator(
+          lock_manager, id, num_managers, num_lock_object, request_size,
+          think_time_type, do_random_backoff);
     } else if (workload_type == "tpcc-uniform") {
-      simulator.reset(new TPCCLockSimulator(
-          lock_manager.get(), id, num_managers, kTPCCNumObjects,
-          think_time_type, do_random_backoff, id % num_managers));
+      simulator = new TPCCLockSimulator(
+          lock_manager, id, num_managers, kTPCCNumObjects, think_time_type,
+          do_random_backoff, id % num_managers, false);
     } else if (workload_type == "tpcc-dist") {
-      simulator.reset(new TPCCLockSimulator(
-          lock_manager.get(), id, num_managers / 2, kTPCCNumObjects,
-          think_time_type, do_random_backoff, id % (num_managers / 2)));
+      simulator = new TPCCLockSimulator(lock_manager, id, 1, kTPCCNumObjects,
+                                        think_time_type, do_random_backoff,
+                                        id % (num_managers / 2), false);
     } else if (workload_type == "tpcc-hotspot") {
-      simulator.reset(new TPCCLockSimulator(lock_manager.get(), id, 1,
-                                            kTPCCNumObjects, think_time_type,
-                                            do_random_backoff, 0));
+      simulator =
+          new TPCCLockSimulator(lock_manager, id, 1, kTPCCNumObjects,
+                                think_time_type, do_random_backoff, 0, false);
     } else if (workload_type == "tpcc-failover") {
-      simulator.reset(new TPCCLockSimulator(
-          lock_manager.get(), id, 1, kTPCCNumObjects, think_time_type,
-          do_random_backoff, (rank - (num_managers / 2)) % (num_managers / 4)));
+      simulator = new TPCCLockSimulator(
+          lock_manager, id, 1, kTPCCNumObjects, think_time_type,
+          do_random_backoff, (rank - (num_managers / 2)) % (num_managers / 4),
+          false);
+    } else if (workload_type == "tpcc-random") {
+      simulator = new TPCCLockSimulator(
+          lock_manager, id, (num_managers / 2), kTPCCNumObjects,
+          think_time_type, do_random_backoff, id % (num_managers / 2), true);
     } else {
       cerr << "Unknown workload: " << workload_type << endl;
       exit(-2);
     }
     simulator->SetThinkTimeDuration(think_time_duration);
-    lock_manager->RegisterUser(i + 1, simulator.get());
-    temp_user = simulator.get();
-    users.push_back(std::move(simulator));
+    lock_manager->RegisterUser(i + 1, simulator);
+    temp_user = simulator;
+    // users.push_back(std::move(simulator));
+    users.push_back(simulator);
   }
 
   if (workload_type == "tpcc-failover") {
@@ -253,37 +261,45 @@ int main(int argc, char** argv) {
   MPI_Barrier(MPI_COMM_WORLD);
 
   // Start lock simulators
-  std::vector<std::unique_ptr<Poco::Thread>> user_threads;
+  std::vector<Poco::Thread*> user_threads;
   if (workload_type == "hotspot" || workload_type == "hotspot-exclusive" ||
       workload_type == "tpcc-hotspot") {
     if (rank != 0) {
       for (int i = 0; i < num_users; ++i) {
-        std::unique_ptr<Poco::Thread> user_thread(new Poco::Thread);
+        Poco::Thread* user_thread = new Poco::Thread;
         user_thread->start(*users[i]);
-        user_threads.push_back(std::move(user_thread));
+        user_threads.push_back(user_thread);
       }
     }
   } else if (workload_type == "tpcc-dist") {
     if (rank >= num_managers / 2) {
       for (int i = 0; i < num_users; ++i) {
-        std::unique_ptr<Poco::Thread> user_thread(new Poco::Thread);
+        Poco::Thread* user_thread = new Poco::Thread;
         user_thread->start(*users[i]);
-        user_threads.push_back(std::move(user_thread));
+        user_threads.push_back(user_thread);
       }
     }
   } else if (workload_type == "tpcc-failover") {
     if (rank >= num_managers / 2) {
       for (int i = 0; i < num_users; ++i) {
-        std::unique_ptr<Poco::Thread> user_thread(new Poco::Thread);
+        Poco::Thread* user_thread = new Poco::Thread;
         user_thread->start(*users[i]);
-        user_threads.push_back(std::move(user_thread));
+        user_threads.push_back(user_thread);
+      }
+    }
+  } else if (workload_type == "tpcc-random") {
+    if (rank >= num_managers / 2) {
+      for (int i = 0; i < num_users; ++i) {
+        Poco::Thread* user_thread = new Poco::Thread;
+        user_thread->start(*users[i]);
+        user_threads.push_back(user_thread);
       }
     }
   } else {
     for (int i = 0; i < num_users; ++i) {
-      std::unique_ptr<Poco::Thread> user_thread(new Poco::Thread);
+      Poco::Thread* user_thread = new Poco::Thread;
       user_thread->start(*users[i]);
-      user_threads.push_back(std::move(user_thread));
+      user_threads.push_back(user_thread);
     }
   }
 
@@ -328,23 +344,23 @@ int main(int argc, char** argv) {
 #endif
     }
     // Assume 32 nodes
-    if (i == 10 && rank == 0 && workload_type == "tpcc-failover") {
+    if (i == 15 && rank == 0 && workload_type == "tpcc-failover") {
       cout << i << ",Failing LM " << rank << endl;
       lock_manager->DisableRemoteAtomicAccess();
       lock_manager->Stop();
     }
-    if (i == 20 && rank == 1 && workload_type == "tpcc-failover") {
+    if (i == 30 && rank == 1 && workload_type == "tpcc-failover") {
       cout << i << ",Failing LM " << rank << endl;
       lock_manager->DisableRemoteAtomicAccess();
       lock_manager->Stop();
     }
-    if (i == 30 && (rank == 2 || rank == 3) &&
+    if (i == 45 && (rank == 2 || rank == 3) &&
         workload_type == "tpcc-failover") {
       cout << i << ",Failing LM " << rank << endl;
       lock_manager->DisableRemoteAtomicAccess();
       lock_manager->Stop();
     }
-    if (i == 40 && (rank >= 4 && rank <= 7) &&
+    if (i == 60 && (rank >= 4 && rank <= 7) &&
         workload_type == "tpcc-failover") {
       cout << i << ",Failing LM " << rank << endl;
       lock_manager->DisableRemoteAtomicAccess();
@@ -354,16 +370,38 @@ int main(int argc, char** argv) {
     Poco::Thread::sleep(1000);
   }
 
-  for (size_t i = 0; i < users.size(); ++i) {
-    users[i]->Stop();
+  if (workload_type == "hotspot" || workload_type == "hotspot-exclusive" ||
+      workload_type == "tpcc-hotspot") {
+    if (rank != 0) {
+      for (int i = 0; i < num_users; ++i) {
+        users[i]->Stop();
+      }
+    }
+  } else if (workload_type == "tpcc-dist") {
+    if (rank >= num_managers / 2) {
+      for (int i = 0; i < num_users; ++i) {
+        users[i]->Stop();
+      }
+    }
+  } else if (workload_type == "tpcc-failover") {
+    if (rank >= num_managers / 2) {
+      for (int i = 0; i < num_users; ++i) {
+        users[i]->Stop();
+      }
+    }
+  } else {
+    for (int i = 0; i < num_users; ++i) {
+      users[i]->Stop();
+    }
   }
   for (size_t i = 0; i < user_threads.size(); ++i) {
     try {
-      user_threads[i]->join(30000);
+      user_threads[i]->join(5000);
     } catch (Poco::Exception& e) {
       std::cerr << e.displayText() << std::endl;
     }
   }
+  // Poco::Thread::sleep(5000);
 
   // Get CPU usage.
   usage.terminate = true;
@@ -392,11 +430,11 @@ int main(int argc, char** argv) {
       cerr << "Counter numbers do not match: " << exclusive_number << ","
            << shared_number << "," << exclusive_max << "," << shared_max
            << endl;
-      exit(ERROR_FAILED_SANITY_CHECK);
+      // exit(ERROR_FAILED_SANITY_CHECK);
     }
     for (int i = 0; i < num_managers; ++i) {
       if (i == rank) {
-        cerr << "(Node " << i << ") Counter numbers match: " << exclusive_number
+        cerr << "(Node " << i << ") Counter numbers: " << exclusive_number
              << "," << shared_number << "," << exclusive_max << ","
              << shared_max << endl;
       }
@@ -578,6 +616,7 @@ int main(int argc, char** argv) {
              MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Reduce(&rdma_atomic_fa, &total_rdma_atomic_fa, 1, MPI_LONG_LONG_INT,
              MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Barrier(MPI_COMM_WORLD);
 
   if (rank == 0) {
     average_cpu_usage /= num_managers;

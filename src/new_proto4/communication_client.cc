@@ -120,7 +120,6 @@ int CommunicationClient::SendHeartbeat() {
       (uint64_t)context_->lock_table_mr->addr;
 
   int ret = 0;
-  cout << "send heartbeat" << endl;
   if ((ret = ibv_exp_post_send(context_->queue_pair, &send_work_request,
                                &bad_work_request))) {
     cerr << "Read(): ibv_exp_post_send() failed: " << strerror(ret) << endl;
@@ -134,7 +133,7 @@ int CommunicationClient::SendHeartbeat() {
 int CommunicationClient::HandleWorkCompletion(struct ibv_wc* wc) {
   if (wc->status == IBV_WC_RETRY_EXC_ERR || wc->status == IBV_WC_WR_FLUSH_ERR) {
     Poco::Mutex::ScopedLock lock(communication_mutex_);
-    cerr << "Remote node dead." << endl;
+    cerr << "Dead node detected: " << remote_lm_id_ << endl;
     is_remote_node_dead_ = true;
     return -1;
   } else if (wc->status != IBV_WC_SUCCESS) {

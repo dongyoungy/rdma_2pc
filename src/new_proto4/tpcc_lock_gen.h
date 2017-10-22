@@ -2,9 +2,12 @@
 #define RDMA_PROTO_TPCCLOCKGEN_H
 
 #include <stdlib.h>
+#include <sys/types.h>
 #include <cstddef>
+#include <ctime>
 #include <iostream>
 #include <memory>
+#include <thread>
 #include <vector>
 
 #include "constants.h"

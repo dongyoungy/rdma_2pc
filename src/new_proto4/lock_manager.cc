@@ -292,6 +292,8 @@ int LockManager::InitializeLockClients() {
 }
 
 void LockManager::SetRemoteManagerAvailability(int index) {
+  Poco::Mutex::ScopedLock lock(avail_mutex_);
+  cout << "LM " << id_ << " marking LM " << index << " as unavailable." << endl;
   remote_manager_availability_[index] = false;
 }
 
@@ -905,7 +907,7 @@ int LockManager::LockLocallyWithQueue(Context* context, Message* message) {
   }
 
   pthread_mutex_unlock(lock_mutex_[obj_index]);
-  //// unlock locally on lock table
+//// unlock locally on lock table
 
 send_lock_result:
 
@@ -1619,8 +1621,8 @@ int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
   Context* context = (Context*)work_completion->wr_id;
 
   if (work_completion->status != IBV_WC_SUCCESS) {
-    cerr << "(LockManager) Work completion status is not IBV_WC_SUCCESS: "
-         << work_completion->status << endl;
+    // cerr << "(LockManager) Work completion status is not IBV_WC_SUCCESS: "
+    //<< work_completion->status << endl;
     return -1;
   }
 
@@ -1687,6 +1689,7 @@ int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
 }
 
 int LockManager::HandleTakeover(const Message& msg) {
+  Poco::Mutex::ScopedLock lock(avail_mutex_);
   int from = msg.node_from;
   int to = msg.node_to;
 
@@ -2194,7 +2197,7 @@ void* LockManager::RunLockClient(void* args) {
 
 void* LockManager::CheckNodes(void* args) {
   LockManager* manager = static_cast<LockManager*>(args);
-  CommunicationClient* communication_client;
+  CommunicationClient* communication_client = NULL;
   int node_to_check = manager->GetBackupNodeFor();
   if (node_to_check > 0) {
     communication_client = manager->GetCommunicationClient(node_to_check);
@@ -2202,6 +2205,7 @@ void* LockManager::CheckNodes(void* args) {
   cout << "CheckNode running: " << manager->GetID() << endl;
   while (!manager->HasStopped() && node_to_check > 0) {
     if (communication_client->IsRemoteNodeDead()) {
+      Poco::Thread::sleep(3000);
       manager->ReplaceRemoteNode();
       break;
     }

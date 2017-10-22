@@ -319,6 +319,7 @@ class LockManager : public Poco::Runnable {
   uint16_t port_;
   size_t data_size_;
   Poco::FastMutex* mutex_;
+  Poco::Mutex avail_mutex_;
   pthread_mutex_t** lock_mutex_;
   pthread_mutex_t msg_mutex_;
   pthread_mutex_t poll_mutex_;
