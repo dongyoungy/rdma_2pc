@@ -20,6 +20,11 @@ void D2LMLockClient::SetDeadLockLimit(int limit) { kD2LMDeadlockLimit = limit; }
 
 void D2LMLockClient::SetReadBackoff(bool backoff) { kDoReadBackoff = backoff; }
 
+int D2LMLockClient::GetDeadlockLimit() { return kD2LMDeadlockLimit; }
+
+bool D2LMLockClient::GetDoReset(uintptr_t user_id, int obj_index) {
+  return do_reset_[user_id][obj_index];
+}
 uint64_t D2LMLockClient::GetLockValue(uint16_t exclusive_number,
                                       uint16_t shared_number,
                                       uint16_t exclusive_max,
@@ -37,7 +42,13 @@ bool D2LMLockClient::RequestLock(const LockRequest& request,
 
 bool D2LMLockClient::RequestUnlock(const LockRequest& request,
                                    LockMode lock_mode) {
-  return this->Unlock(context_, request);
+  if (request.is_failed == false) {
+    return this->Unlock(context_, request);
+  } else if (request.is_failed == true &&
+             do_reset_[request.user_id][request.obj_index]) {
+    return this->Unlock(context_, request);
+  }
+  return true;
 }
 
 void D2LMLockClient::PerformReadBackoff(const LockRequest& request) {
@@ -198,6 +209,7 @@ bool D2LMLockClient::Read(Context* context, const LockRequest& request) {
   LockRequest* current_request = lock_requests_[lock_request_idx_].get();
   *current_request = request;
   current_request->task = READ;
+  // current_request->timestamp.update();
   lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
   sge.addr = (uintptr_t)&current_request->original_value;
@@ -238,6 +250,7 @@ bool D2LMLockClient::ReadForReset(Context* context,
   LockRequest* current_request = lock_requests_[lock_request_idx_].get();
   *current_request = request;
   current_request->task = RESET;
+  // current_request->timestamp.update();
   lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
   sge.addr = (uintptr_t)&current_request->original_value;
@@ -585,6 +598,7 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       if (current_exclusive_number != request->last_exclusive_number ||
           current_shared_number != request->last_shared_number) {
         request->deadlock_count = 0;
+        request->timestamp.update();
         request->last_exclusive_number = current_exclusive_number;
         request->last_shared_number = current_shared_number;
         this->Read(context_, *request);
@@ -673,6 +687,7 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           } else {
             ++request->contention_count;
             PerformReadBackoff(*request);
+            request->timestamp.update();
             this->Read(context_, *request);
           }
         }
@@ -698,6 +713,7 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           } else {
             ++request->contention_count;
             PerformReadBackoff(*request);
+            request->timestamp.update();
             this->Read(context_, *request);
           }
         }
@@ -757,11 +773,14 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               ++request->deadlock_count;
             } else {
               request->deadlock_count = 0;
+              request->timestamp.update();
             }
             request->last_exclusive_number = request->exclusive_number;
             request->last_shared_number = request->shared_number;
             ++request->contention_count;
             if (request->deadlock_count >= kD2LMDeadlockLimit) {
+              // if (request->timestamp.elapsed() >= kD2LMDeadlockLimit * 2) {
+              // cout << "DEADLOCK OR FAIL." << endl;
               // Handle deadlock
               uint64_t from = GetLockValue(
                   request->last_exclusive_number, request->last_shared_number,
@@ -796,11 +815,14 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               ++request->deadlock_count;
             } else {
               request->deadlock_count = 0;
+              request->timestamp.update();
             }
             request->last_exclusive_number = request->exclusive_number;
             request->last_shared_number = request->shared_number;
             ++request->contention_count;
             if (request->deadlock_count >= kD2LMDeadlockLimit) {
+              // if (request->timestamp.elapsed() >= kD2LMDeadlockLimit * 2) {
+              // cout << "DEADLOCK OR FAIL." << endl;
               // Handle deadlock
               uint64_t from = GetLockValue(
                   request->last_exclusive_number, request->last_shared_number,

@@ -50,7 +50,7 @@ class TPCCLockGen {
   static const int NUM_ROW_STOCK = 100000;
   static const int NUM_ROW_ITEM = 100000;
 
-  static const int NUM_ORDER_LINE_PER_ORDER = 10;
+  static const int NUM_ORDER_LINE_PER_ORDER = 1;
   static const int NUM_ORDER_LINE_PER_STOCK = 3;
   static const int NUM_HISTORY_PER_CUSTOMER = 1;
   static const int NUM_CUSTOMER_PER_DISTRICT = 3000;

@@ -20,6 +20,9 @@ class D2LMLockClient : public LockClient {
 
   static void SetDeadLockLimit(int limit);
   static void SetReadBackoff(bool backoff);
+  static int GetDeadlockLimit();
+
+  bool GetDoReset(uintptr_t user_id, int obj_index);
 
  protected:
   bool Lock(Context* context, const LockRequest& request);

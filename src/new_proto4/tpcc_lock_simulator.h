@@ -15,7 +15,7 @@ class TPCCLockSimulator : public LockSimulator {
   TPCCLockSimulator(LockManager* manager, int id, int num_nodes,
                     int num_objects, string think_time_type,
                     bool do_random_backoff, int home_warehouse_id,
-                    bool random_warehouse);
+                    bool random_warehouse, int num_warehouse = 1);
 
  protected:
   virtual void CreateRequest();
@@ -25,6 +25,7 @@ class TPCCLockSimulator : public LockSimulator {
   uint32_t home_warehouse_id_;
   int max_request_size_;
   bool random_warehouse_;
+  int num_warehouse_;
   LockRequest** temp_lock_requests_;
 };
 

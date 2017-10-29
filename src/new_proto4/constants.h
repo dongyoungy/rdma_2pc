@@ -48,10 +48,13 @@ const uint64_t kTransactionMax = 100000000;
 const uint32_t kMaxBackoff = 100000;  // microseconds
 const uint32_t kBaseBackoff = 10;     // microseconds
 const uint64_t kTPCCNumObjects = 700000;
+const uint64_t kTPCCMaxWarehouse = 50;
+const size_t kMaxWaitQueueSize = 1000000;
 
 const uint32_t kDRTMSharedLimit = 16;
 const int kD2LMBaseReadBackoff = 5;
 const int kD2LMMaxReadBackoff = 100;
+const int kMaxClients = 8;
 
 const int kValueIdx = 0;
 const int kLeaverIdx = 1;
@@ -68,12 +71,18 @@ const int kExclusiveMaxBitShift = 16;
 const int kSharedNumberBitShift = 32;
 const int kExclusiveNumberBitShift = 48;
 
+const int kDRTMLockBitShift = 63;
+const int kDRTMOwnerBitShift = 55;
+const int kDRTMSharedLeaseTime = 1;  // 1 ms
+const uint64_t kDRTMEndTimeBitMask = 0x7FFFFFFFFFFFFF;
+
 const uint64_t kExclusiveNumberBitMask = 0xFFFF000000000000;
 const uint64_t kSharedNumberBitMask = 0xFFFF00000000;
 const uint64_t kExclusiveMaxBitMask = 0xFFFF0000;
 const uint64_t kSharedMaxBitMask = 0xFFFF;
 
 constexpr uint16_t kMaxPossibleNumber = 32768;  // 2^15
+// constexpr uint16_t kMaxPossibleNumber = 4;  // 2^15
 
 static const int WORKLOAD_UNIFORM = 0;
 static const int WORKLOAD_HOTSPOT = 1;

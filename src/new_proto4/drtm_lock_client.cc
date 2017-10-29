@@ -1,4 +1,5 @@
 #include "drtm_lock_client.h"
+#include <chrono>
 
 namespace rdma {
 namespace proto {
@@ -11,6 +12,134 @@ DRTMLockClient::DRTMLockClient(const string& work_dir,
 
 // destructor
 DRTMLockClient::~DRTMLockClient() {}
+
+bool DRTMLockClient::RequestLock(const LockRequest& request,
+                                 LockMode lock_mode) {
+  // try locking remotely
+  return this->Lock(context_, request, 0);
+}
+
+bool DRTMLockClient::RequestUnlock(const LockRequest& request,
+                                   LockMode lock_mode) {
+  return this->Unlock(context_, request);
+}
+
+bool DRTMLockClient::Lock(Context* context, const LockRequest& request,
+                          uint64_t state) {
+  Poco::FastMutex::ScopedLock lock(fast_mutex_);
+
+  struct ibv_exp_send_wr send_work_request;
+  struct ibv_exp_send_wr* bad_work_request;
+  struct ibv_sge sge;
+
+  memset(&send_work_request, 0x00, sizeof(send_work_request));
+
+  LockRequest* current_request = lock_requests_[lock_request_idx_].get();
+  *current_request = request;
+  current_request->task = LOCK;
+  current_request->prev_value = state;
+  current_request->deadlock_count = 0;
+  lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
+
+  sge.addr = (uint64_t)&current_request->original_value;
+  sge.length = sizeof(uint64_t);
+  sge.lkey = current_request->original_value_mr->lkey;
+
+  send_work_request.wr_id = (uintptr_t)current_request;
+  send_work_request.num_sge = 1;
+  send_work_request.sg_list = &sge;
+  send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
+  send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_CMP_AND_SWP;
+
+  uint64_t value = 1;
+  int bits_to_shift = 0;
+  uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                     std::chrono::system_clock::now().time_since_epoch())
+                     .count();
+  uint64_t end_time = now + kDRTMSharedLeaseTime;
+  uint64_t new_value = 0;
+
+  switch (current_request->lock_type) {
+    case SHARED: {
+      new_value = (end_time & kDRTMEndTimeBitMask);
+      break;
+    }
+    case EXCLUSIVE: {
+      new_value = (uint64_t)1 << kDRTMLockBitShift |
+                  ((uint64_t)current_request->user_id) << kDRTMOwnerBitShift;
+      break;
+    }
+    default: {
+      cerr << "Invalid lock type: " << current_request->lock_type << endl;
+      return false;
+      break;
+    }
+  }
+  send_work_request.wr.atomic.compare_add = state;
+  send_work_request.wr.atomic.swap = new_value;
+
+  send_work_request.wr.atomic.remote_addr =
+      (uint64_t)context->lock_table_mr->addr +
+      (current_request->obj_index * sizeof(uint64_t));
+  send_work_request.wr.atomic.rkey = context->lock_table_mr->rkey;
+
+  int ret = 0;
+  if ((ret = ibv_exp_post_send(context->queue_pair, &send_work_request,
+                               &bad_work_request))) {
+    cerr << "Lock(): ibv_exp_post_send() failed: " << strerror(ret) << endl;
+    return false;
+  }
+  ++num_rdma_atomic_fa_;
+
+  return true;
+}
+
+bool DRTMLockClient::Unlock(Context* context, const LockRequest& request) {
+  Poco::FastMutex::ScopedLock lock(fast_mutex_);
+
+  struct ibv_exp_send_wr send_work_request;
+  struct ibv_exp_send_wr* bad_work_request;
+  struct ibv_sge sge;
+
+  memset(&send_work_request, 0x00, sizeof(send_work_request));
+
+  LockRequest* current_request = lock_requests_[lock_request_idx_].get();
+  *current_request = request;
+  current_request->task = UNLOCK;
+  current_request->deadlock_count = 0;
+  lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
+
+  sge.addr = (uint64_t)&current_request->original_value;
+  sge.length = sizeof(uint64_t);
+  sge.lkey = current_request->original_value_mr->lkey;
+
+  send_work_request.wr_id = (uintptr_t)current_request;
+  send_work_request.num_sge = 1;
+  send_work_request.sg_list = &sge;
+  send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
+  send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_CMP_AND_SWP;
+
+  current_request->prev_value = (uint64_t)1 << kDRTMLockBitShift |
+                                ((uint64_t)current_request->user_id)
+                                    << kDRTMOwnerBitShift;
+  send_work_request.wr.atomic.compare_add = current_request->prev_value;
+  send_work_request.wr.atomic.swap = 0;
+
+  send_work_request.wr.atomic.remote_addr =
+      (uint64_t)context->lock_table_mr->addr +
+      (current_request->obj_index * sizeof(uint64_t));
+  send_work_request.wr.atomic.rkey = context->lock_table_mr->rkey;
+
+  int ret = 0;
+  if ((ret = ibv_exp_post_send(context->queue_pair, &send_work_request,
+                               &bad_work_request))) {
+    cerr << "Lock(): ibv_exp_post_send() failed: " << strerror(ret) << endl;
+    return false;
+  }
+  ++num_rdma_atomic_fa_;
+
+  return true;
+}
 
 int DRTMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
   if (work_completion->status != IBV_WC_SUCCESS) {
@@ -67,9 +196,6 @@ int DRTMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     total_send_message_time_ += time_taken;
     ++num_send_message_;
   } else if (work_completion->opcode == IBV_WC_COMP_SWAP) {
-    // We don't see this for new system, which explicitly use FA instead
-    // completion of compare-and-swap, i.e. remote exclusive locking
-
     LockRequest* request = (LockRequest*)work_completion->wr_id;
     // get time
     clock_gettime(CLOCK_MONOTONIC, &end_remote_exclusive_lock_);
@@ -90,174 +216,65 @@ int DRTMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     exclusive = (uint32_t)((value) >> 32);
     shared = (uint32_t)value;
 
+    uint64_t lock_bit = value >> 63;
+    uint64_t end_time = (value & kDRTMEndTimeBitMask);
+    uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::system_clock::now().time_since_epoch())
+                       .count();
+
     if (request->task == LOCK) {
-      // it should have been successful since exclusive and shared was 0
-      if (exclusive == 0 && shared == 0) {
-        ++total_lock_success_;
-        total_exclusive_lock_remote_time_ += time_taken;
-        ++num_exclusive_lock_;
-        user_retry_count_[request->user_id] = 0;
-        local_manager_->NotifyLockRequestResult(
-            request->seq_no, request->user_id, request->lock_type,
-            remote_lm_id_, request->obj_index, request->contention_count,
-            SUCCESS);
-      } else {
-        ++request->contention_count;
-        ++user_retry_count_[request->user_id];
-        if (user_retry_count_[request->user_id] >=
-            LockManager::GetFailRetry()) {
+      if (request->lock_type == EXCLUSIVE) {
+        if (value == request->prev_value) {
+          local_manager_->NotifyLockRequestResult(
+              request->seq_no, request->user_id, request->lock_type,
+              remote_lm_id_, request->obj_index, request->contention_count,
+              SUCCESS);
+        } else if (lock_bit == 1) {
           local_manager_->NotifyLockRequestResult(
               request->seq_no, request->user_id, request->lock_type,
               remote_lm_id_, request->obj_index, request->contention_count,
               FAILURE);
         } else {
-          local_manager_->NotifyLockRequestResult(
-              request->seq_no, request->user_id, request->lock_type,
-              remote_lm_id_, request->obj_index, request->contention_count,
-              RETRY);
-        }
-      }
-    } else if (request->task == UNLOCK) {
-      if (exclusive == request->user_id && shared == 0) {
-        local_manager_->NotifyUnlockRequestResult(
-            request->seq_no, request->user_id, request->lock_type,
-            remote_lm_id_, request->obj_index, SUCCESS);
-      } else if (exclusive == request->user_id && shared != 0) {
-        ++request->contention_count;
-        local_manager_->NotifyUnlockRequestResult(
-            request->seq_no, request->user_id, request->lock_type,
-            remote_lm_id_, request->obj_index, RETRY);
-      } else {
-        ++request->contention_count;
-        local_manager_->NotifyUnlockRequestResult(
-            request->seq_no, request->user_id, request->lock_type,
-            remote_lm_id_, request->obj_index, FAILURE);
-      }
-    }
-  } else if (work_completion->opcode == IBV_WC_FETCH_ADD) {
-    // completion of fetch-and-add, i.e. remote shared locking
-
-    LockRequest* request = (LockRequest*)work_completion->wr_id;
-    // get time
-    clock_gettime(CLOCK_MONOTONIC, &end_rdma_atomic_);
-    double time_taken = ((double)end_rdma_atomic_.tv_sec * 1e+9 +
-                         (double)end_rdma_atomic_.tv_nsec) -
-                        ((double)start_rdma_atomic_.tv_sec * 1e+9 +
-                         (double)start_rdma_atomic_.tv_nsec);
-    total_rdma_atomic_time_ += time_taken;
-
-    uint64_t prev_value = request->original_value;
-    uint64_t value = prev_value;
-#if __BYTE_ORDER == __LITTLE_ENDIAN
-    if (LockManager::IsAtomicHCAReplyBe()) {
-      value = __bswap_constant_64(prev_value);  // Compiler builtin
-    }
-#endif
-    uint32_t exclusive, shared;
-    exclusive = (uint32_t)((value) >> 32);
-    shared = (uint32_t)value;
-
-    request->exclusive = exclusive;
-    request->shared = shared;
-
-    if (request->task == LOCK) {
-      if (request->lock_type == EXCLUSIVE) {
-        cerr << "FA should not be used for an exclusive lock." << endl;
-        exit(ERROR_FA_FOR_EXCLUSIVE);
-      } else {
-        // shared lock
-        if (exclusive == 0 && shared < kDRTMSharedLimit) {
-          // it should have been successful since exclusive and shared was 0
-          ++total_lock_success_;
-          total_shared_lock_remote_time_ += time_taken;
-          ++num_shared_lock_;
-          user_retry_count_[request->user_id] = 0;
-          local_manager_->NotifyLockRequestResult(
-              request->seq_no, request->user_id, request->lock_type,
-              remote_lm_id_, request->obj_index, request->contention_count,
-              SUCCESS);
-        } else if (exclusive != 0 && shared == 0) {
-          // exclusive lock exists
-          ++total_lock_contention_;
-          ++request->contention_count;
-          this->HandleExclusiveToShared(request);
-        } else {
-          ++total_lock_contention_;
-          ++request->contention_count;
-          this->UndoLocking(context_, *request);
-        }
-      }
-    } else if (request->task == UNLOCK) {
-      if (user_fail_[request->user_id]) {
-        user_fail_[request->user_id] = false;
-        if (user_polling_[request->user_id]) {
-          user_polling_[request->user_id] = false;
-        } else {
-          ++user_retry_count_[request->user_id];
-          if (user_retry_count_[request->user_id] >=
-              LockManager::GetPollRetry()) {
-            user_retry_count_[request->user_id] = 0;
-            local_manager_->NotifyLockRequestResult(
-                request->seq_no, request->user_id, request->lock_type,
-                remote_lm_id_, request->obj_index, request->contention_count,
-                FAILURE);
+          if (end_time < now) {
+            this->Lock(context_, *request, value);
           } else {
             local_manager_->NotifyLockRequestResult(
                 request->seq_no, request->user_id, request->lock_type,
                 remote_lm_id_, request->obj_index, request->contention_count,
-                RETRY);
+                FAILURE);
           }
         }
-      } else {
-        waitlist_[request->obj_index] = exclusive;
-        local_manager_->NotifyUnlockRequestResult(
-            request->seq_no, request->user_id, request->lock_type,
-            remote_lm_id_, request->obj_index, SUCCESS);
-      }
-    }
-  } else if (work_completion->opcode == IBV_WC_RDMA_READ) {
-    LockRequest* request = (LockRequest*)work_completion->wr_id;
-
-    // get time
-    clock_gettime(CLOCK_MONOTONIC, &end_rdma_read_);
-    double time_taken = ((double)end_rdma_read_.tv_sec * 1e+9 +
-                         (double)end_rdma_read_.tv_nsec) -
-                        ((double)start_rdma_read_.tv_sec * 1e+9 +
-                         (double)start_rdma_read_.tv_nsec);
-    total_rdma_read_time_ += time_taken;
-    // polling result
-    uint64_t value = request->read_buffer2;
-    uint32_t exclusive, shared;
-    exclusive = (uint32_t)((value) >> 32);
-    shared = (uint32_t)value;
-    request->exclusive = exclusive;
-    request->shared = shared;
-
-    if (user_retry_count_[request->user_id] >= LockManager::GetPollRetry()) {
-      user_retry_count_[request->user_id] = 0;
-      local_manager_->NotifyLockRequestResult(
-          request->seq_no, request->user_id, request->lock_type, remote_lm_id_,
-          request->obj_index, request->contention_count, FAILURE);
-    } else {
-      if (request->read_target == READ_SHARED) {
-        // Polling on Sh_X -> proceed if value is zero
-        if (shared == 0) {
-          user_retry_count_[request->user_id] = 0;
+      } else if (request->lock_type == SHARED) {
+        if (value == request->prev_value) {
           local_manager_->NotifyLockRequestResult(
               request->seq_no, request->user_id, request->lock_type,
               remote_lm_id_, request->obj_index, request->contention_count,
               SUCCESS);
+        } else if (lock_bit == 1) {
+          local_manager_->NotifyLockRequestResult(
+              request->seq_no, request->user_id, request->lock_type,
+              remote_lm_id_, request->obj_index, request->contention_count,
+              FAILURE);
         } else {
-          // otherwise, read/poll again (shared -> exclusive)
-          this->PollSharedToExclusive(request);
+          if (end_time < now) {
+            this->Lock(context_, *request, value);
+          } else {
+            local_manager_->NotifyLockRequestResult(
+                request->seq_no, request->user_id, request->lock_type,
+                remote_lm_id_, request->obj_index, request->contention_count,
+                SUCCESS);
+          }
         }
+      }
+    } else if (request->task == UNLOCK) {
+      if (value == request->prev_value) {
+        local_manager_->NotifyUnlockRequestResult(
+            request->seq_no, request->user_id, request->lock_type,
+            remote_lm_id_, request->obj_index, SUCCESS);
       } else {
-        if (request->lock_type == EXCLUSIVE) {
-          this->PollExclusiveToExclusive(request);
-        } else {
-          // exclusive -> shared
-          this->PollExclusiveToShared(request);
-        }
+        local_manager_->NotifyUnlockRequestResult(
+            request->seq_no, request->user_id, request->lock_type,
+            remote_lm_id_, request->obj_index, FAILURE);
       }
     }
   }

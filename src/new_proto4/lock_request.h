@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <cstddef>
+#include "Poco/Timestamp.h"
 #include "constants.h"
 
 namespace rdma {
@@ -19,6 +20,8 @@ struct LockRequest {
     obj_index = other.obj_index;
     lock_type = other.lock_type;
     deadlock_count = other.deadlock_count;
+    timestamp = other.timestamp;
+    is_failed = other.is_failed;
     contention_count = other.contention_count;
     contention_count2 = other.contention_count2;
     contention_count3 = other.contention_count3;
@@ -53,6 +56,7 @@ struct LockRequest {
       owner_node_id = other.owner_node_id;
       lock_type = other.lock_type;
       deadlock_count = other.deadlock_count;
+      timestamp = other.timestamp;
       reset_from = other.reset_from;
       contention_count = other.contention_count;
       contention_count2 = other.contention_count2;
@@ -60,6 +64,7 @@ struct LockRequest {
       contention_count4 = other.contention_count4;
       contention_count5 = other.contention_count5;
       contention_count6 = other.contention_count6;
+      is_failed = other.is_failed;
       task = other.task;
       prev_value = other.prev_value;
       last_exclusive_number = other.last_exclusive_number;
@@ -127,6 +132,9 @@ struct LockRequest {
   uint64_t rdma_atomic_fa = 0;
   uint64_t rdma_write = 0;
   uint64_t rdma_read = 0;
+
+  Poco::Timestamp timestamp;
+  bool is_failed = false;
 };
 
 }  // namespace proto

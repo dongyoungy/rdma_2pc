@@ -52,6 +52,7 @@ class LockSimulator : public Poco::Runnable {
   double Get99PercentileLatency() const;
   double Get999PercentileLatency() const;
   uint64_t GetMaxLatency() const;
+  uint64_t GetFalsePositives() const;
 
   double GetAverageLatencyWithContention() const;
   double Get99PercentileLatencyWithContention() const;
@@ -98,6 +99,7 @@ class LockSimulator : public Poco::Runnable {
   bool is_done_;
   int seq_count_;
   int think_time_duration_;
+  uint64_t false_positives_;
 
   Poco::Mutex mutex_;
 };

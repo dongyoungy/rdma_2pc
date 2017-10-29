@@ -18,6 +18,7 @@
 #include "lock_manager.h"
 #include "lock_simulator.h"
 #include "mpi.h"
+#include "powerlaw_lock_simulator.h"
 #include "test_lock_simulator.h"
 #include "tpcc_lock_simulator.h"
 
@@ -90,6 +91,8 @@ int main(int argc, char** argv) {
   // exit(-1);
   //}
 
+  int tpcc_dist2_num_server = num_managers / 5;
+  int tpcc_dist2_num_client = tpcc_dist2_num_server * 4;
   if (lock_mode_str == "traditional") {
     lock_mode = PROXY_QUEUE;
   } else if (lock_mode_str == "simple_retry") {
@@ -130,7 +133,7 @@ int main(int argc, char** argv) {
   }
 
   if (strncasecmp(workload_type.c_str(), "tpcc", 4) == 0) {
-    num_lock_object = kTPCCNumObjects;
+    num_lock_object = kTPCCNumObjects * kTPCCMaxWarehouse;
   }
 
   if (rank == 0) {
@@ -183,31 +186,70 @@ int main(int argc, char** argv) {
       simulator = new HotspotLockSimulator(lock_manager, id, num_managers,
                                            num_lock_object, request_size,
                                            think_time_type, do_random_backoff);
+    } else if (strncasecmp(workload_type.c_str(), "powerlaw", 8) == 0) {
+      Poco::StringTokenizer tokenizer(workload_type, "_",
+                                      Poco::StringTokenizer::TOK_TRIM);
+      if (tokenizer.count() < 3) {
+        cerr << "Incorrect number of tokens for Powerlaw simulator." << endl;
+        exit(ERROR_INVALID_LOCK_MODE);
+      }
+      double exponent = Poco::NumberParser::parseFloat(tokenizer[1]);
+      double shared_lock_ratio = Poco::NumberParser::parseFloat(tokenizer[2]);
+
+      simulator = new PowerlawLockSimulator(
+          lock_manager, id, num_managers, num_lock_object, request_size,
+          think_time_type, do_random_backoff, exponent, shared_lock_ratio);
     } else if (workload_type == "hotspot-exclusive") {
       simulator = new HotspotExclusiveLockSimulator(
           lock_manager, id, num_managers, num_lock_object, request_size,
           think_time_type, do_random_backoff);
     } else if (workload_type == "tpcc-uniform") {
       simulator = new TPCCLockSimulator(
-          lock_manager, id, num_managers, kTPCCNumObjects, think_time_type,
+          lock_manager, id, num_managers, num_lock_object, think_time_type,
           do_random_backoff, id % num_managers, false);
     } else if (workload_type == "tpcc-dist") {
-      simulator = new TPCCLockSimulator(lock_manager, id, 1, kTPCCNumObjects,
+      simulator = new TPCCLockSimulator(lock_manager, id, 1, num_lock_object,
                                         think_time_type, do_random_backoff,
                                         id % (num_managers / 2), false);
-    } else if (workload_type == "tpcc-hotspot") {
-      simulator =
-          new TPCCLockSimulator(lock_manager, id, 1, kTPCCNumObjects,
-                                think_time_type, do_random_backoff, 0, false);
+    } else if (workload_type == "tpcc-dist2") {
+      simulator = new TPCCLockSimulator(lock_manager, id, tpcc_dist2_num_server,
+                                        num_lock_object, think_time_type,
+                                        do_random_backoff,
+                                        id % tpcc_dist2_num_server, true, 10);
+    } else if (strncasecmp(workload_type.c_str(), "tpcc-hotspot", 12) == 0) {
+      Poco::StringTokenizer tokenizer(workload_type, "_",
+                                      Poco::StringTokenizer::TOK_TRIM);
+      if (tokenizer.count() > 2) {
+        cerr << "Incorrect number of tokens for TPCC simulator." << endl;
+        exit(ERROR_INVALID_LOCK_MODE);
+      }
+      int num_warehouse = 1;
+      if (tokenizer.count() == 2) {
+        num_warehouse = Poco::NumberParser::parse(tokenizer[1]);
+      }
+      simulator = new TPCCLockSimulator(lock_manager, id, 1, num_lock_object,
+                                        think_time_type, do_random_backoff, 0,
+                                        false, num_warehouse);
     } else if (workload_type == "tpcc-failover") {
       simulator = new TPCCLockSimulator(
-          lock_manager, id, 1, kTPCCNumObjects, think_time_type,
+          lock_manager, id, 1, num_lock_object, think_time_type,
           do_random_backoff, (rank - (num_managers / 2)) % (num_managers / 4),
           false);
-    } else if (workload_type == "tpcc-random") {
+    } else if (strncasecmp(workload_type.c_str(), "tpcc-random", 11) == 0) {
+      Poco::StringTokenizer tokenizer(workload_type, "_",
+                                      Poco::StringTokenizer::TOK_TRIM);
+      if (tokenizer.count() > 2) {
+        cerr << "Incorrect number of tokens for TPCC simulator." << endl;
+        exit(ERROR_INVALID_LOCK_MODE);
+      }
+      int num_warehouse = 1;
+      if (tokenizer.count() == 2) {
+        num_warehouse = Poco::NumberParser::parse(tokenizer[1]);
+      }
       simulator = new TPCCLockSimulator(
-          lock_manager, id, (num_managers / 2), kTPCCNumObjects,
-          think_time_type, do_random_backoff, id % (num_managers / 2), true);
+          lock_manager, id, (num_managers / 2), num_lock_object,
+          think_time_type, do_random_backoff, id % (num_managers / 2), true,
+          num_warehouse);
     } else {
       cerr << "Unknown workload: " << workload_type << endl;
       exit(-2);
@@ -279,6 +321,14 @@ int main(int argc, char** argv) {
         user_threads.push_back(user_thread);
       }
     }
+  } else if (workload_type == "tpcc-dist2") {
+    if (rank >= tpcc_dist2_num_server) {
+      for (int i = 0; i < num_users; ++i) {
+        Poco::Thread* user_thread = new Poco::Thread;
+        user_thread->start(*users[i]);
+        user_threads.push_back(user_thread);
+      }
+    }
   } else if (workload_type == "tpcc-failover") {
     if (rank >= num_managers / 2) {
       for (int i = 0; i < num_users; ++i) {
@@ -287,7 +337,7 @@ int main(int argc, char** argv) {
         user_threads.push_back(user_thread);
       }
     }
-  } else if (workload_type == "tpcc-random") {
+  } else if (strncasecmp(workload_type.c_str(), "tpcc-random", 11) == 0) {
     if (rank >= num_managers / 2) {
       for (int i = 0; i < num_users; ++i) {
         Poco::Thread* user_thread = new Poco::Thread;
@@ -370,29 +420,67 @@ int main(int argc, char** argv) {
     Poco::Thread::sleep(1000);
   }
 
+  // Get CPU usage.
+  usage.terminate = true;
+  pthread_join(cpu_measure_thread, NULL);
+  double server_cpu_usage = 0, client_cpu_usage = 0;
+  int server_count = 0, client_count = 0;
+
   if (workload_type == "hotspot" || workload_type == "hotspot-exclusive" ||
-      workload_type == "tpcc-hotspot") {
+      workload_type == "tpcc-hotspot" ||
+      strncasecmp(workload_type.c_str(), "tpcc-hotspot", 12) == 0) {
     if (rank != 0) {
       for (int i = 0; i < num_users; ++i) {
         users[i]->Stop();
       }
+      client_cpu_usage = usage.total_cpu / usage.num_sample;
+    } else {
+      server_cpu_usage = usage.total_cpu / usage.num_sample;
     }
-  } else if (workload_type == "tpcc-dist") {
+    server_count = 1;
+    client_count = num_managers - 1;
+  } else if (workload_type == "tpcc-dist" ||
+             strncasecmp(workload_type.c_str(), "tpcc-random", 11) == 0) {
     if (rank >= num_managers / 2) {
       for (int i = 0; i < num_users; ++i) {
         users[i]->Stop();
       }
+      client_cpu_usage = usage.total_cpu / usage.num_sample;
+    } else {
+      server_cpu_usage = usage.total_cpu / usage.num_sample;
     }
+    server_count = num_managers / 2;
+    client_count = num_managers / 2;
+  } else if (workload_type == "tpcc-dist2") {
+    if (rank >= tpcc_dist2_num_server) {
+      for (int i = 0; i < num_users; ++i) {
+        users[i]->Stop();
+      }
+      client_cpu_usage = usage.total_cpu / usage.num_sample;
+    } else {
+      server_cpu_usage = usage.total_cpu / usage.num_sample;
+    }
+    server_count = num_managers / 2;
+    client_count = num_managers / 2;
   } else if (workload_type == "tpcc-failover") {
     if (rank >= num_managers / 2) {
       for (int i = 0; i < num_users; ++i) {
         users[i]->Stop();
       }
+      client_cpu_usage = usage.total_cpu / usage.num_sample;
+    } else {
+      server_cpu_usage = usage.total_cpu / usage.num_sample;
     }
+    server_count = num_managers / 4;  // be careful
+    client_count = num_managers / 2;
   } else {
     for (int i = 0; i < num_users; ++i) {
       users[i]->Stop();
     }
+    client_cpu_usage = usage.total_cpu / usage.num_sample;
+    server_cpu_usage = usage.total_cpu / usage.num_sample;
+    server_count = num_managers;
+    client_count = num_managers;
   }
   for (size_t i = 0; i < user_threads.size(); ++i) {
     try {
@@ -402,11 +490,6 @@ int main(int argc, char** argv) {
     }
   }
   // Poco::Thread::sleep(5000);
-
-  // Get CPU usage.
-  usage.terminate = true;
-  pthread_join(cpu_measure_thread, NULL);
-  double cpu_usage = usage.total_cpu / usage.num_sample;
 
   MPI_Barrier(MPI_COMM_WORLD);
 
@@ -442,7 +525,8 @@ int main(int argc, char** argv) {
     }
   }
 
-  double average_cpu_usage = 0;
+  double average_server_cpu_usage = 0;
+  double average_client_cpu_usage = 0;
   double total_average_latency = 0;
   double total_average_99pct_latency = 0;
   double total_average_999pct_latency = 0;
@@ -491,6 +575,9 @@ int main(int argc, char** argv) {
   uint64_t count_with_backoff = 0;
   uint64_t total_count_with_backoff = 0;
 
+  uint64_t false_positives = 0;
+  uint64_t total_false_positives = 0;
+
   // RDMA stats
   uint64_t rdma_read = lock_manager->GetTotalRDMAReadCount();
   uint64_t rdma_write = lock_manager->GetTotalRDMAWriteCount();
@@ -536,6 +623,7 @@ int main(int argc, char** argv) {
     max_latency = (max_latency < users[i]->GetMaxLatency())
                       ? users[i]->GetMaxLatency()
                       : max_latency;
+    false_positives += users[i]->GetFalsePositives();
   }
   cout << "Count " << rank << " = " << count << endl;
   average_latency /= num_users;
@@ -550,8 +638,10 @@ int main(int argc, char** argv) {
   average_99pct_latency_with_backoff /= num_users;
   average_999pct_latency_with_backoff /= num_users;
 
-  MPI_Reduce(&cpu_usage, &average_cpu_usage, 1, MPI_DOUBLE, MPI_SUM, 0,
-             MPI_COMM_WORLD);
+  MPI_Reduce(&server_cpu_usage, &average_server_cpu_usage, 1, MPI_DOUBLE,
+             MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&client_cpu_usage, &average_client_cpu_usage, 1, MPI_DOUBLE,
+             MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Reduce(&average_latency, &total_average_latency, 1, MPI_DOUBLE, MPI_SUM,
              0, MPI_COMM_WORLD);
   MPI_Reduce(&average_backoff_time, &total_average_backoff_time, 1, MPI_DOUBLE,
@@ -603,6 +693,8 @@ int main(int argc, char** argv) {
              MPI_LONG_LONG_INT, MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Reduce(&count_with_backoff, &total_count_with_backoff, 1,
              MPI_LONG_LONG_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&false_positives, &total_false_positives, 1, MPI_LONG_LONG_INT,
+             MPI_SUM, 0, MPI_COMM_WORLD);
 
   MPI_Reduce(&rdma_read, &total_rdma_read, 1, MPI_LONG_LONG_INT, MPI_SUM, 0,
              MPI_COMM_WORLD);
@@ -619,7 +711,8 @@ int main(int argc, char** argv) {
   MPI_Barrier(MPI_COMM_WORLD);
 
   if (rank == 0) {
-    average_cpu_usage /= num_managers;
+    average_server_cpu_usage /= server_count;
+    average_client_cpu_usage /= client_count;
     total_average_latency /= num_managers;
     total_average_99pct_latency /= num_managers;
     total_average_999pct_latency /= num_managers;
@@ -641,7 +734,10 @@ int main(int argc, char** argv) {
         std::accumulate(throughputs.begin(), throughputs.end(), 0ULL);
     average_throughput = total_throughput / throughputs.size();
     throughput_99pct = throughputs[floor(throughputs.size() * 0.99)];
-    cout << "Avg. CPU Usage = " << average_cpu_usage << " %" << endl;
+    cout << "Avg. Server CPU Usage = " << average_server_cpu_usage << " %"
+         << endl;
+    cout << "Avg. Client CPU Usage = " << average_client_cpu_usage << " %"
+         << endl;
     cout << "Tx Count = " << total_count << endl;
     cout << "Tx Count With Contention = " << total_count_with_contention
          << endl;
@@ -696,13 +792,16 @@ int main(int argc, char** argv) {
     cout << "Total RDMA CAS = " << total_rdma_atomic_cas << endl;
     cout << "Total RDMA FA = " << total_rdma_atomic_fa << endl;
     cout << "Total RDMA Op = " << total_rdma_op << endl;
+    cout << "Total False Positives (D2LM Only) = " << total_false_positives
+         << endl;
 
     // Print as CVS at the end.
     cout << "Workload, Think Time Type, Think Time Duration, Lock Mode, # "
             "Nodes, # Users Per Node, # Objects Per Node, "
          << "# Retry, "
          << "Uses Random Backoff, "
-         << "Avg. CPU Usage, Tx Count, Tx Count With Contention, "
+         << "Avg. Server CPU Usage, Avg. Client CPU Usage, Tx Count, Tx Count "
+            "With Contention, "
          << "Tx Count With Backoff, "
          << "Backoff Count, "
          << "Avg. Throughput, 99pct Throughput, Max Throughput, "
@@ -728,17 +827,19 @@ int main(int argc, char** argv) {
          << "RDMA Recv, "
          << "RDMA CAS, "
          << "RDMA FA, "
-         << "RDMA Total" << endl;
+         << "RDMA Total,"
+         << "False Positives On Deadlock (D2LM Only)" << endl;
     cout << workload_type << "," << think_time_type << ","
          << think_time_duration << "," << lock_mode_str << "," << num_managers
          << "," << num_users << "," << num_lock_object << "," << num_retry
-         << "," << random_backoff_str << "," << average_cpu_usage << ","
-         << total_count << "," << total_count_with_contention << ","
-         << total_count_with_backoff << "," << total_backoff_count << ","
-         << average_throughput << "," << throughput_99pct << ","
-         << max_throughput << "," << total_average_latency << ","
-         << total_average_99pct_latency << "," << total_average_999pct_latency
-         << "," << total_average_latency_with_contention << ","
+         << "," << random_backoff_str << "," << average_server_cpu_usage << ","
+         << average_client_cpu_usage << "," << total_count << ","
+         << total_count_with_contention << "," << total_count_with_backoff
+         << "," << total_backoff_count << "," << average_throughput << ","
+         << throughput_99pct << "," << max_throughput << ","
+         << total_average_latency << "," << total_average_99pct_latency << ","
+         << total_average_999pct_latency << ","
+         << total_average_latency_with_contention << ","
          << total_average_99pct_latency_with_contention << ","
          << total_average_999pct_latency_with_contention << ","
          << total_average_latency_with_backoff << ","
@@ -758,7 +859,8 @@ int main(int argc, char** argv) {
          << total_average_contention_count6 << "," << total_max_latency << ","
          << total_rdma_read << "," << total_rdma_write << "," << total_rdma_send
          << "," << total_rdma_recv << "," << total_rdma_atomic_cas << ","
-         << total_rdma_atomic_fa << "," << total_rdma_op << "," << endl;
+         << total_rdma_atomic_fa << "," << total_rdma_op << ","
+         << total_false_positives << "," << endl;
   }
   MPI_Finalize();
 }

@@ -17,7 +17,8 @@ LockSimulator::LockSimulator(LockManager* manager, int id, int num_nodes,
       count_(0),
       backoff_count_(0),
       seq_count_(0),
-      think_time_duration_(0) {
+      think_time_duration_(0),
+      false_positives_(0) {
   latency_.reserve(kTransactionMax);
   contention_latency_.reserve(kTransactionMax);
   backoff_time_.reserve(kTransactionMax);
@@ -78,6 +79,8 @@ void LockSimulator::run() {
     bool lock_success = true;
     Poco::Timestamp lock_start;
     last_lock_start_time_.update();
+    LockMode lock_mode = manager_->GetLockMode();
+    int d2lm_deadlock_limit = manager_->GetD2LMDeadlockLimit();
     while (i < request_size_) {
       last_lock_try_time_.update();
       requests_[i]->contention_count = 0;
@@ -86,6 +89,7 @@ void LockSimulator::run() {
       requests_[i]->contention_count4 = 0;
       requests_[i]->contention_count5 = 0;
       requests_[i]->contention_count6 = 0;
+      requests_[i]->is_failed = false;
       auto& lock_result = manager_->Lock(*requests_[i]);
       if (lock_result.isSpecified()) {
         auto lock_future = lock_result.value()->get_future();
@@ -149,8 +153,8 @@ void LockSimulator::run() {
         break;
       }
     }
+    Poco::Timestamp::TimeDiff latency = lock_start.elapsed();
     if (lock_success) {
-      Poco::Timestamp::TimeDiff latency = lock_start.elapsed();
       latency_.push_back(latency);  // microseconds.
       LockStat s(contention_count, contention_count2, contention_count3,
                  contention_count4, contention_count5, contention_count6);
@@ -181,22 +185,39 @@ void LockSimulator::run() {
       i = request_size_ - 1;
     }
 
+    // if (latency > d2lm_deadlock_limit) {
+    // for (int j = 0; j < request_size_; ++j) {
+    // requests_[j]->is_failed = true;
+    //}
+    //}
+
     // unlock.
     while (i >= 0) {
-      auto& lock_result = manager_->Unlock(*requests_[i]);
-      if (lock_result.isSpecified()) {
-        auto lock_future = lock_result.value()->get_future();
-        LockResultInfo result_info = lock_future.get();
-        if (result_info.result == SUCCESS) {
-          --i;
-        } else if (result_info.result == FAILURE) {
-          cerr << "Unlock failure (1)." << endl;
-          exit(ERROR_UNLOCK_FAIL);
-        }
-      } else {
-        // This means target node has been failed.
+      if (manager_->GetLockMode() == REMOTE_DRTM &&
+          requests_[i]->lock_type == SHARED) {
         --i;
         continue;
+      }
+      if (!requests_[i]->is_failed ||
+          manager_->IsD2LMUserDoReset(requests_[i]->lm_id, id_,
+                                      requests_[i]->obj_index)) {
+        auto& lock_result = manager_->Unlock(*requests_[i]);
+        if (lock_result.isSpecified()) {
+          auto lock_future = lock_result.value()->get_future();
+          LockResultInfo result_info = lock_future.get();
+          if (result_info.result == SUCCESS) {
+            --i;
+          } else if (result_info.result == FAILURE) {
+            cerr << "Unlock failure (1)." << endl;
+            exit(ERROR_UNLOCK_FAIL);
+          }
+        } else {
+          // This means target node has been failed.
+          --i;
+          continue;
+        }
+      } else {
+        --i;
       }
     }
 
@@ -212,6 +233,11 @@ void LockSimulator::run() {
 
 void LockSimulator::RevertLocks(int& index) {
   while (index >= 0) {
+    if (manager_->GetLockMode() == REMOTE_DRTM &&
+        requests_[index]->lock_type == SHARED) {
+      --index;
+      continue;
+    }
     auto& lock_result = manager_->Unlock(*requests_[index]);
     if (lock_result.isSpecified()) {
       auto lock_future = lock_result.value()->get_future();
@@ -359,6 +385,8 @@ uint64_t LockSimulator::GetMaxLatency() const {
   return latency_.back();
 }
 
+uint64_t LockSimulator::GetFalsePositives() const { return false_positives_; }
+
 double LockSimulator::GetAverageLatencyWithContention() const {
   if (contention_latency_.empty()) return 0;
   double sum = 0;
@@ -411,7 +439,8 @@ void LockSimulator::CreateRequest() {
     requests_[i]->task = LOCK;
     requests_[i]->lm_id = 1 + (rng_.next() % num_nodes_);
     requests_[i]->obj_index = rng_.next() % num_objects_;
-    requests_[i]->lock_type = (rng_.nextBool()) ? SHARED : EXCLUSIVE;
+    // requests_[i]->lock_type = (rng_.nextBool()) ? SHARED : EXCLUSIVE;
+    requests_[i]->lock_type = EXCLUSIVE;
     requests_[i]->contention_count = 0;
   }
 }

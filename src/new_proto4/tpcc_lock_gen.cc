@@ -14,7 +14,7 @@ TPCCLockGen::TPCCLockGen(int home_warehouse_id, int num_warehouse) {
   mix_[3] = 96;   // Delivery 4
   mix_[4] = 100;  // StockLevel 4
   items_ = new int[NUM_ORDER_LINE_PER_ORDER];
-  seed_ = time(NULL) + getpid();
+  seed_ = time(NULL) + getpid() + (uintptr_t) this;
 }
 
 TPCCLockGen::~TPCCLockGen() { delete[] mix_; }
@@ -135,24 +135,25 @@ int TPCCLockGen::GenerateNewOrder(
   // (OL_O_ID, OL_D_ID, OL_W_ID, OL_NUMBER, OL_I_ID, OL_SUPPLY_W_ID,
   // OL_DELIVERY_D, OL_QUANTITY, OL_AMOUNT, OL_DIST_INFO) VALUES (?, ?, ?, ?, ?,
   // ?, ?, ?, ?, ?)"
-  int cnt = 0;
-  while (cnt < NUM_ORDER_LINE_PER_ORDER) {
-    items_[cnt] = rand_r(&seed_) % NUM_ORDER_LINE_PER_ORDER;
-    bool duplicate = false;
-    for (int i = 0; i < cnt; ++i) {
-      if (items_[cnt] == items_[i]) {
-        duplicate = true;
-      }
-    }
-    if (!duplicate) {
-      ++cnt;
-    }
-  }
+  // int cnt = 0;
+  // while (cnt < NUM_ORDER_LINE_PER_ORDER) {
+  // items_[cnt] = rand_r(&seed_) % NUM_ORDER_LINE_PER_ORDER;
+  // bool duplicate = false;
+  // for (int i = 0; i < cnt; ++i) {
+  // if (items_[cnt] == items_[i]) {
+  // duplicate = true;
+  //}
+  //}
+  // if (!duplicate) {
+  //++cnt;
+  //}
+  //}
   for (int i = 0; i < NUM_ORDER_LINE_PER_ORDER; ++i) {
     requests[req_idx]->lm_id = w_id;
     requests[req_idx]->lock_type = EXCLUSIVE;
     requests[req_idx]->obj_index =
-        ORDER_LINE_START_IDX + (o_id * NUM_ORDER_LINE_PER_ORDER) + items_[i];
+        ORDER_LINE_START_IDX + (o_id * NUM_ORDER_LINE_PER_ORDER) + i;
+    // ORDER_LINE_START_IDX + (o_id * NUM_ORDER_LINE_PER_ORDER) + items_[i];
     requests[req_idx]->task = LOCK;
     ++req_idx;
   }
@@ -331,24 +332,25 @@ int TPCCLockGen::GenerateOrderStatus(
   // "getOrderLines": "SELECT OL_SUPPLY_W_ID, OL_I_ID, OL_QUANTITY, OL_AMOUNT,
   // OL_DELIVERY_D FROM ORDER_LINE WHERE OL_W_ID = ? AND OL_D_ID = ? AND OL_O_ID
   // = ?"
-  int cnt = 0;
-  while (cnt < NUM_ORDER_LINE_PER_ORDER) {
-    items_[cnt] = rand_r(&seed_) % NUM_ORDER_LINE_PER_ORDER;
-    bool duplicate = false;
-    for (int i = 0; i < cnt; ++i) {
-      if (items_[cnt] == items_[i]) {
-        duplicate = true;
-      }
-    }
-    if (!duplicate) {
-      ++cnt;
-    }
-  }
+  // int cnt = 0;
+  // while (cnt < NUM_ORDER_LINE_PER_ORDER) {
+  // items_[cnt] = rand_r(&seed_) % NUM_ORDER_LINE_PER_ORDER;
+  // bool duplicate = false;
+  // for (int i = 0; i < cnt; ++i) {
+  // if (items_[cnt] == items_[i]) {
+  // duplicate = true;
+  //}
+  //}
+  // if (!duplicate) {
+  //++cnt;
+  //}
+  //}
   for (int i = 0; i < NUM_ORDER_LINE_PER_ORDER; ++i) {
     requests[req_idx]->lm_id = w_id;
     requests[req_idx]->lock_type = SHARED;
     requests[req_idx]->obj_index =
-        ORDER_LINE_START_IDX + (o_id * NUM_ORDER_LINE_PER_ORDER) + items_[i];
+        ORDER_LINE_START_IDX + (o_id * NUM_ORDER_LINE_PER_ORDER) + i;
+    // ORDER_LINE_START_IDX + (o_id * NUM_ORDER_LINE_PER_ORDER) + items_[i];
     requests[req_idx]->task = LOCK;
     ++req_idx;
   }
@@ -388,24 +390,25 @@ int TPCCLockGen::GenerateDelivery(
   // WHERE OL_O_ID = ? AND OL_D_ID = ? AND OL_W_ID = ?"
   // "sumOLAmount": "SELECT SUM(OL_AMOUNT) FROM ORDER_LINE
   // WHERE OL_O_ID = ? AND OL_D_ID = ? AND OL_W_ID = ?"
-  int cnt = 0;
-  while (cnt < NUM_ORDER_LINE_PER_ORDER) {
-    items_[cnt] = rand_r(&seed_) % NUM_ORDER_LINE_PER_ORDER;
-    bool duplicate = false;
-    for (int i = 0; i < cnt; ++i) {
-      if (items_[cnt] == items_[i]) {
-        duplicate = true;
-      }
-    }
-    if (!duplicate) {
-      ++cnt;
-    }
-  }
+  // int cnt = 0;
+  // while (cnt < NUM_ORDER_LINE_PER_ORDER) {
+  // items_[cnt] = rand_r(&seed_) % NUM_ORDER_LINE_PER_ORDER;
+  // bool duplicate = false;
+  // for (int i = 0; i < cnt; ++i) {
+  // if (items_[cnt] == items_[i]) {
+  // duplicate = true;
+  //}
+  //}
+  // if (!duplicate) {
+  //++cnt;
+  //}
+  //}
   for (int i = 0; i < NUM_ORDER_LINE_PER_ORDER; ++i) {
     requests[req_idx]->lm_id = w_id;
     requests[req_idx]->lock_type = EXCLUSIVE;
     requests[req_idx]->obj_index =
-        ORDER_LINE_START_IDX + (o_id * NUM_ORDER_LINE_PER_ORDER) + items_[i];
+        ORDER_LINE_START_IDX + (o_id * NUM_ORDER_LINE_PER_ORDER) + i;
+    // ORDER_LINE_START_IDX + (o_id * NUM_ORDER_LINE_PER_ORDER) + items_[i];
     requests[req_idx]->task = LOCK;
     ++req_idx;
   }
@@ -447,44 +450,46 @@ int TPCCLockGen::GenerateStockLevel(
   //   """
   int o_id = rand_r(&seed_) % NUM_ROW_ORDER;
   // int s_id = rand_r(&seed_) % NUM_ROW_STOCK;
-  int cnt = 0;
-  while (cnt < NUM_ORDER_LINE_PER_ORDER) {
-    items_[cnt] = rand_r(&seed_) % NUM_ORDER_LINE_PER_ORDER;
-    bool duplicate = false;
-    for (int i = 0; i < cnt; ++i) {
-      if (items_[cnt] == items_[i]) {
-        duplicate = true;
-      }
-    }
-    if (!duplicate) {
-      ++cnt;
-    }
-  }
+  // int cnt = 0;
+  // while (cnt < NUM_ORDER_LINE_PER_ORDER) {
+  // items_[cnt] = rand_r(&seed_) % NUM_ORDER_LINE_PER_ORDER;
+  // bool duplicate = false;
+  // for (int i = 0; i < cnt; ++i) {
+  // if (items_[cnt] == items_[i]) {
+  // duplicate = true;
+  //}
+  //}
+  // if (!duplicate) {
+  //++cnt;
+  //}
+  //}
   for (int i = 0; i < NUM_ORDER_LINE_PER_ORDER; ++i) {
     requests[req_idx]->lm_id = w_id;
     requests[req_idx]->lock_type = SHARED;
     requests[req_idx]->obj_index =
-        ORDER_LINE_START_IDX + (o_id * NUM_ORDER_LINE_PER_ORDER) + items_[i];
+        ORDER_LINE_START_IDX + (o_id * NUM_ORDER_LINE_PER_ORDER) + i;
+    // ORDER_LINE_START_IDX + (o_id * NUM_ORDER_LINE_PER_ORDER) + items_[i];
     requests[req_idx]->task = LOCK;
     ++req_idx;
   }
-  cnt = 0;
-  while (cnt < NUM_ORDER_LINE_PER_ORDER) {
-    items_[cnt] = rand_r(&seed_) % NUM_ROW_STOCK;
-    bool duplicate = false;
-    for (int i = 0; i < cnt; ++i) {
-      if (items_[cnt] == items_[i]) {
-        duplicate = true;
-      }
-    }
-    if (!duplicate) {
-      ++cnt;
-    }
-  }
+  // cnt = 0;
+  // while (cnt < NUM_ORDER_LINE_PER_ORDER) {
+  // items_[cnt] = rand_r(&seed_) % NUM_ROW_STOCK;
+  // bool duplicate = false;
+  // for (int i = 0; i < cnt; ++i) {
+  // if (items_[cnt] == items_[i]) {
+  // duplicate = true;
+  //}
+  //}
+  // if (!duplicate) {
+  //++cnt;
+  //}
+  //}
   for (int i = 0; i < NUM_ORDER_LINE_PER_ORDER; ++i) {
     requests[req_idx]->lm_id = w_id;
     requests[req_idx]->lock_type = SHARED;
-    requests[req_idx]->obj_index = STOCK_START_IDX + items_[i];
+    requests[req_idx]->obj_index = STOCK_START_IDX + i;
+    // requests[req_idx]->obj_index = STOCK_START_IDX + items_[i];
     requests[req_idx]->task = LOCK;
     ++req_idx;
   }

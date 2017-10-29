@@ -88,7 +88,7 @@ LockManager::LockManager(const string& work_dir, uint32_t rank, int num_manager,
   lock_result_map_ = new std::promise<LockResultInfo>[MAX_USER];
   lock_status_map_ = new LockStatusInfo[MAX_USER];
   lock_clients_map_ = new LockClient*[MAX_USER * num_manager_ * 2];
-  mutex_ = new Poco::FastMutex[MAX_USER];
+  mutex_ = new Poco::FastMutex[MAX_USER * num_manager_ * 2];
 
   backup_node_for_ = 0;
 }
@@ -113,6 +113,16 @@ int LockManager::GetBackupNodeFor() const { return backup_node_for_; }
 void LockManager::SetBackupNodeFor(int node) { backup_node_for_ = node; }
 
 bool LockManager::HasStopped() const { return terminate_; }
+
+bool LockManager::IsD2LMUserDoReset(int lm_id, uintptr_t user_id,
+                                    int obj_index) {
+  D2LMLockClient* client = static_cast<D2LMLockClient*>(
+      lock_clients_map_[MAX_USER * lm_id + user_id]);
+  return client->GetDoReset(user_id, obj_index);
+}
+int LockManager::GetD2LMDeadlockLimit() {
+  return D2LMLockClient::GetDeadlockLimit();
+}
 
 CommunicationClient* LockManager::GetCommunicationClient(int index) {
   return communication_clients_[index];
@@ -200,7 +210,7 @@ int LockManager::InitializeLockClients() {
   temp_lock_clients_ = new LockClient*[num_manager_ + 1];
   remote_manager_availability_ = new bool[num_manager_ + 1];
   for (int i = 1; i <= num_manager_; ++i) {
-    // for (int j = 0; j < 1; ++j) {
+    // for (int j = 0; j < kMaxClients; ++j) {
     for (unsigned int j = 0; j < users.size(); ++j) {
       LockSimulator* user = users[j];
       pthread_t* client_thread = new pthread_t;
@@ -225,6 +235,8 @@ int LockManager::InitializeLockClients() {
         return -1;
       }
 
+      // lock_clients_[MAX_USER * i + j] = client;
+      // lock_clients_map_[MAX_USER * i + j] = client;
       lock_clients_[MAX_USER * i + user->GetID()] = client;
       lock_clients_map_[MAX_USER * i + user->GetID()] = client;
       // lock_clients_[i] = client;
@@ -699,6 +711,8 @@ const Poco::Optional<std::promise<LockResultInfo>*> LockManager::Lock(
   lock_result_map_[request.user_id % MAX_USER] = std::promise<LockResultInfo>();
   LockClient* lock_client =
       lock_clients_map_[MAX_USER * request.lm_id + request.user_id];
+  // LockClient* lock_client = lock_clients_map_[MAX_USER * request.lm_id +
+  //(request.user_id % kMaxClients)];
   std::promise<LockResultInfo>* result = &lock_result_map_[request.user_id];
   if (remote_manager_availability_[request.lm_id] &&
       lock_client->RequestLock(request, lock_mode_table_[request.lm_id])) {
@@ -728,6 +742,8 @@ const Poco::Optional<std::promise<LockResultInfo>*> LockManager::Unlock(
   lock_result_map_[request.user_id % MAX_USER] = std::promise<LockResultInfo>();
   LockClient* lock_client =
       lock_clients_map_[MAX_USER * request.lm_id + request.user_id];
+  // LockClient* lock_client = lock_clients_map_[MAX_USER * request.lm_id +
+  //(request.user_id % kMaxClients)];
   std::promise<LockResultInfo>* result =
       &lock_result_map_[request.user_id % MAX_USER];
   if (remote_manager_availability_[request.lm_id] &&
