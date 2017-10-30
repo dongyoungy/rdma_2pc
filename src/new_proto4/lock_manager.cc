@@ -234,6 +234,9 @@ int LockManager::InitializeLockClients() {
         cout << "LockManager::pthread_create(): " << strerror(ret) << endl;
         return -1;
       }
+      if (lock_mode_ == REMOTE_NOTIFY) {
+        lock_clients_[i] = client;
+      }
 
       // lock_clients_[MAX_USER * i + j] = client;
       // lock_clients_map_[MAX_USER * i + j] = client;
@@ -250,6 +253,23 @@ int LockManager::InitializeLockClients() {
 
       user_to_home_map_[(uintptr_t)user] = i;
     }
+
+    // if (lock_mode_ == REMOTE_NOTIFY) {
+    // for (int i = 1; i <= num_manager_; ++i) {
+    // pthread_t* client_thread = new pthread_t;
+    // LockClient* client =
+    // new NCOSEDLockClient(work_dir_, this, users.size(), i);
+    // ret = pthread_create(client_thread, NULL, &LockManager::RunLockClient,
+    //(void*)client);
+
+    // if (ret) {
+    // cout << "LockManager::pthread_create(): " << strerror(ret) << endl;
+    // return -1;
+    //}
+    // lock_clients_[i] = client;
+    // lock_client_threads_.push_back(client_thread);
+    //}
+    //}
 
     CommunicationClient* comm_client =
         new CommunicationClient(work_dir_, this, users.size(), i);
@@ -2007,24 +2027,6 @@ void LockManager::ResetSharedReleaseCount(int node_id, int obj_index) {
   shared_remaining_map_[node_id].erase(obj_index);
 }
 
-int LockManager::SendNCOSEDLockRequest(int seq_no, int current_owner_id,
-                                       int node_id, int obj_index,
-                                       int request_node_id,
-                                       uintptr_t request_user_id,
-                                       int shared_remaining,
-                                       LockType lock_type) {
-  // Poco::FastMutex::ScopedLock lock(mutex_);
-  LockClient* lock_client = lock_clients_[current_owner_id];
-
-  if (!lock_client->SendNCOSEDLockRequest(seq_no, node_id, obj_index,
-                                          request_node_id, request_user_id,
-                                          shared_remaining, lock_type)) {
-    return FUNC_FAIL;
-  }
-
-  return FUNC_SUCCESS;
-}
-
 int LockManager::SendNCOSEDLockRelease(const LockRequest& request) {
   // Poco::FastMutex::ScopedLock lock(mutex_);
   if (request.lock_type == EXCLUSIVE) {
@@ -2052,27 +2054,17 @@ int LockManager::SendNCOSEDLockReleaseSuccess(const LockRequest& request) {
 
 int LockManager::HandleNCOSEDLockGrant(const Message& msg) {
   // Poco::FastMutex::ScopedLock lock(mutex_);
+  Poco::Mutex::ScopedLock lock(avail_mutex_);
   LockResultInfo result_info(SUCCESS, 0);
+  // cout << "HERE3" << endl;
   // auto& status =
   // lock_status_map_[msg.owner_user_id][msg.node_id][msg.obj_index];
-  auto& status = lock_status_map_[msg.owner_user_id];
-#ifdef VERBOSE
-  if (id_ == 3) {
-    cout << "path8: HandleNCOSEDLockGrant(): " << id_ << "," << msg.seq_no
-         << "," << msg.node_id << "," << msg.obj_index << endl;
-    cout << "path8: " << getpid() << endl;
-  }
-#endif
-  if (status.seq_no == msg.seq_no && status.status == LOCKING &&
-      status.user_id == msg.owner_user_id) {
+  auto& status = lock_status_map_[msg.owner_user_id % MAX_USER];
+  if (status.status == LOCKING && status.user_id == msg.owner_user_id) {
+    // cout << "HERE3-1" << endl;
     lock_result_map_[msg.owner_user_id].set_value(result_info);
   } else {
-#ifdef VERBOSE
-    if (id_ == 3) {
-      cout << "path8-1: incorrect lock status: " << id_ << "," << status.seq_no
-           << "," << status.status << endl;
-    }
-#endif
+    cout << "HERE3-1" << endl;
   }
   return FUNC_SUCCESS;
 }
@@ -2108,26 +2100,22 @@ int LockManager::HandleNCOSEDLockReleaseSuccess(const Message& msg) {
   return FUNC_SUCCESS;
 }
 
+int LockManager::SendNCOSEDLockGrant(int node_id, uintptr_t user_id,
+                                     int obj_index) {
+  Poco::Mutex::ScopedLock lock(avail_mutex_);
+  // LockClient* lock_client = lock_clients_[node_id];
+  // lock_client->SendNCOSEDLockGrant(0, user_id, node_id, obj_index,
+  // EXCLUSIVE);
+  return FUNC_SUCCESS;
+}
+
 int LockManager::SendNCOSEDLockGrant(int node_id, int obj_index) {
-  // Poco::FastMutex::ScopedLock lock(mutex_);
-  if (node_id != 1) {
-    cerr << "WRONG1" << endl;
-    exit(-1);
-  }
-#if VERBOSE
-  cout << "path7: " << next_seq_no_map_[node_id][obj_index] << "," << node_id
-       << "," << obj_index << "," << next_node_id_map_[node_id][obj_index]
-       << "," << next_user_id_map_[node_id][obj_index] << ","
-       << shared_remaining_map_[node_id][obj_index] << endl;
-#endif
+  Poco::Mutex::ScopedLock lock(avail_mutex_);
+  // if (node_id != 1) {
+  // cerr << "WRONG1" << endl;
+  // exit(-1);
+  //}
   if (next_node_id_map_[node_id][obj_index] != 0) {
-#if VERBOSE
-    cout << "path7-1: " << next_seq_no_map_[node_id][obj_index] << ","
-         << node_id << "," << obj_index << ","
-         << next_node_id_map_[node_id][obj_index] << ","
-         << next_user_id_map_[node_id][obj_index] << ","
-         << shared_remaining_map_[node_id][obj_index] << endl;
-#endif
     LockClient* lock_client =
         lock_clients_[next_node_id_map_[node_id][obj_index]];
     lock_client->SendNCOSEDLockGrant(next_seq_no_map_[node_id][obj_index],
@@ -2141,14 +2129,35 @@ int LockManager::SendNCOSEDLockGrant(int node_id, int obj_index) {
     shared_remaining_map_[node_id].erase(obj_index);
     shared_release_count_map_[node_id].erase(obj_index);
     lock_grant_map_[node_id].erase(obj_index);
+    // cout << "HERE1-2" << endl;
   } else {
     lock_grant_map_[node_id][obj_index] = true;
+    // cout << "HERE1-3" << endl;
   }
   return FUNC_SUCCESS;
 }
 
+int LockManager::SendNCOSEDLockRequest(int seq_no, int current_owner_id,
+                                       int node_id, int obj_index,
+                                       int request_node_id,
+                                       uintptr_t request_user_id,
+                                       int shared_remaining,
+                                       LockType lock_type) {
+  Poco::Mutex::ScopedLock lock(avail_mutex_);
+  LockClient* lock_client = lock_clients_[current_owner_id];
+
+  if (!lock_client->SendNCOSEDLockRequest(seq_no, node_id, obj_index,
+                                          request_node_id, request_user_id,
+                                          shared_remaining, lock_type)) {
+    return FUNC_FAIL;
+  }
+
+  return FUNC_SUCCESS;
+}
+
 int LockManager::HandleNCOSEDLockRequest(const Message& msg) {
-  // Poco::FastMutex::ScopedLock lock(mutex_);
+  Poco::Mutex::ScopedLock lock(avail_mutex_);
+  // cout << "HERE2" << endl;
   // Set information necessary to pass the lock first.
   next_seq_no_map_[msg.node_id][msg.obj_index] = msg.seq_no;
   next_node_id_map_[msg.node_id][msg.obj_index] = msg.request_node_id;
@@ -2156,50 +2165,27 @@ int LockManager::HandleNCOSEDLockRequest(const Message& msg) {
   next_lock_type_map_[msg.node_id][msg.obj_index] = msg.lock_type;
   shared_remaining_map_[msg.node_id][msg.obj_index] += msg.shared_remaining;
 
-#if VERBOSE
-  cout << "path6: " << id_ << "," << msg.seq_no << "," << msg.node_id << ","
-       << msg.obj_index << "," << msg.request_node_id << ","
-       << msg.request_user_id << ","
-       << shared_remaining_map_[msg.node_id][msg.obj_index] << ","
-       << msg.shared_remaining << ","
-       << (lock_grant_map_[msg.node_id][msg.obj_index] ? "TRUE" : "FALSE")
-       << endl;
-#endif
   // Send lock grant message if it is okay to do so.
-  if (lock_grant_map_[msg.node_id][msg.obj_index]) {
-    switch (msg.lock_type) {
-      case EXCLUSIVE: {
-        if (shared_remaining_map_[msg.node_id][msg.obj_index] == 0) {
-#if VERBOSE
-          cout << "path6-1: " << msg.seq_no << "," << msg.node_id << ","
-               << msg.obj_index << "," << msg.request_node_id << ","
-               << msg.request_user_id << ","
-               << shared_remaining_map_[msg.node_id][msg.obj_index] << ","
-               << msg.shared_remaining << endl;
-#endif
-          this->SendNCOSEDLockGrant(msg.node_id, msg.obj_index);
-        }
-        break;
-      }
-      case SHARED: {
-#if VERBOSE
-        cout << "path6-2: " << msg.seq_no << "," << msg.node_id << ","
-             << msg.obj_index << "," << msg.request_node_id << ","
-             << msg.request_user_id << ","
-             << shared_remaining_map_[msg.node_id][msg.obj_index] << ","
-             << msg.shared_remaining << endl;
-#endif
-        this->SendNCOSEDLockGrant(msg.node_id, msg.obj_index);
-        break;
-      }
-      default: {
-        cerr << "LockManager::HandleNCOSEDLockRequest(): Invalid lock type: "
-             << msg.lock_type << endl;
-        exit(ERROR_INVALID_LOCK_TYPE);
-        break;
-      }
+  // if (lock_grant_map_[msg.node_id][msg.obj_index]) {
+  switch (msg.lock_type) {
+    case EXCLUSIVE: {
+      // cout << "HERE2-1" << endl;
+      this->SendNCOSEDLockGrant(msg.node_id, msg.obj_index);
+      break;
+    }
+    case SHARED: {
+      // cout << "HERE2-2" << endl;
+      this->SendNCOSEDLockGrant(msg.node_id, msg.obj_index);
+      break;
+    }
+    default: {
+      cerr << "LockManager::HandleNCOSEDLockRequest(): Invalid lock type: "
+           << msg.lock_type << endl;
+      exit(ERROR_INVALID_LOCK_TYPE);
+      break;
     }
   }
+  //}
   return FUNC_SUCCESS;
 }
 

@@ -32,6 +32,7 @@ void TPCCLockSimulator::CreateRequest() {
     requests_[i]->contention_count2 = 0;
     requests_[i]->obj_index += (local_warehouse * kTPCCNumObjects);
     requests_[i]->user_id = id_;
+    requests_[i]->owner_node_id = manager_->GetID();
   }
 }
 

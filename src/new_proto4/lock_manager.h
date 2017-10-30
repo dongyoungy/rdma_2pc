@@ -85,6 +85,7 @@ class LockManager : public Poco::Runnable {
                             uintptr_t request_user_id, int shared_remaining,
                             LockType type);
   int SendNCOSEDLockGrant(int node_id, int obj_index);
+  int SendNCOSEDLockGrant(int node_id, uintptr_t user_id, int obj_index);
   int SendNCOSEDLockRelease(const LockRequest& request);
   int SendNCOSEDLockReleaseSuccess(const LockRequest& request);
   int HandleNCOSEDLockRequest(const Message& msg);

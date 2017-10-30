@@ -15,21 +15,13 @@ NCOSEDLockClient::~NCOSEDLockClient() {}
 
 bool NCOSEDLockClient::RequestLock(const LockRequest& request,
                                    LockMode lock_mode) {
-  Poco::Mutex::ScopedLock lock(lock_mutex_);
   // try locking remotely
   return this->Lock(context_, request);
 }
 
 bool NCOSEDLockClient::RequestUnlock(const LockRequest& request,
                                      LockMode lock_mode) {
-  Poco::Mutex::ScopedLock lock(lock_mutex_);
-  if (request.lock_type == EXCLUSIVE) {
-    return this->Unlock(context_, request);
-  } else if (request.lock_type == SHARED) {
-    local_manager_->SendNCOSEDLockRelease(request);
-    return true;
-  }
-  return false;
+  return this->Unlock(context_, request);
 }
 
 bool NCOSEDLockClient::Lock(Context* context, const LockRequest& request) {
@@ -44,7 +36,7 @@ bool NCOSEDLockClient::Lock(Context* context, const LockRequest& request) {
 
   LockRequest* current_request = lock_requests_[lock_request_idx_].get();
   *current_request = request;
-  current_request->owner_node_id = local_owner_id_;
+  current_request->task = LOCK;
   current_request->prev_value = 0;
   lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
@@ -60,13 +52,15 @@ bool NCOSEDLockClient::Lock(Context* context, const LockRequest& request) {
   if (current_request->lock_type == SHARED) {
     send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
     send_work_request.wr.atomic.compare_add = 1;
+    ++num_rdma_atomic_fa_;
   } else if (current_request->lock_type == EXCLUSIVE) {
     send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_CMP_AND_SWP;
-    exclusive = local_owner_id_;
+    exclusive = current_request->user_id;
     shared = 0;
     uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
     send_work_request.wr.atomic.compare_add = 0;
     send_work_request.wr.atomic.swap = new_value;
+    ++num_rdma_atomic_cas_;
   }
 
   send_work_request.wr.atomic.remote_addr =
@@ -77,7 +71,8 @@ bool NCOSEDLockClient::Lock(Context* context, const LockRequest& request) {
   int ret = 0;
   if ((ret = ibv_exp_post_send(context->queue_pair, &send_work_request,
                                &bad_work_request))) {
-    cerr << "Lock(): ibv_exp_post_send() failed: " << strerror(ret) << endl;
+    cerr << "LockRemotely(): ibv_exp_post_send() failed: " << strerror(ret)
+         << endl;
     return false;
   }
   return true;
@@ -114,8 +109,8 @@ bool NCOSEDLockClient::Lock(Context* context, const LockRequest& request,
     send_work_request.wr.atomic.compare_add = 1;
   } else if (current_request->lock_type == EXCLUSIVE) {
     send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_CMP_AND_SWP;
-    exclusive = local_owner_id_;
-    shared = 0;
+    exclusive = current_request->user_id;
+    shared = (uint32_t)prev_value;
     uint64_t new_value = ((uint64_t)exclusive) << 32 | shared;
     send_work_request.wr.atomic.compare_add = prev_value;
     send_work_request.wr.atomic.swap = new_value;
@@ -148,6 +143,7 @@ bool NCOSEDLockClient::Unlock(Context* context, const LockRequest& request) {
   *current_request = request;
   current_request->owner_node_id = local_owner_id_;
   current_request->task = UNLOCK;
+  current_request->is_undo = false;
   lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
 
   sge.addr = (uintptr_t)&current_request->original_value;
@@ -164,11 +160,57 @@ bool NCOSEDLockClient::Unlock(Context* context, const LockRequest& request) {
     send_work_request.wr.atomic.compare_add = -1;
   } else if (current_request->lock_type == EXCLUSIVE) {
     send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_CMP_AND_SWP;
-    uint64_t prev_value = ((uint64_t)local_owner_id_) << 32 | 0;
+    uint64_t prev_value = ((uint64_t)current_request->user_id) << 32 | 0;
     current_request->prev_value = prev_value;
     send_work_request.wr.atomic.compare_add = prev_value;
     send_work_request.wr.atomic.swap = 0;
   }
+  send_work_request.wr.atomic.remote_addr =
+      (uint64_t)context->lock_table_mr->addr +
+      (current_request->obj_index * sizeof(uint64_t));
+  send_work_request.wr.atomic.rkey = context->lock_table_mr->rkey;
+
+  clock_gettime(CLOCK_MONOTONIC, &start_rdma_atomic_);
+
+  int ret = 0;
+  if ((ret = ibv_exp_post_send(context->queue_pair, &send_work_request,
+                               &bad_work_request))) {
+    cerr << "Unlock(): ibv_exp_post_send() failed: " << strerror(ret) << endl;
+    return false;
+  }
+  return true;
+}
+
+bool NCOSEDLockClient::UnlockExclusiveFA(Context* context,
+                                         const LockRequest& request) {
+  Poco::Mutex::ScopedLock lock(lock_mutex_);
+
+  struct ibv_exp_send_wr send_work_request;
+  struct ibv_exp_send_wr* bad_work_request;
+  struct ibv_sge sge;
+
+  memset(&send_work_request, 0x00, sizeof(send_work_request));
+
+  LockRequest* current_request = lock_requests_[lock_request_idx_].get();
+  *current_request = request;
+  current_request->owner_node_id = local_owner_id_;
+  current_request->task = UNLOCK;
+  current_request->lock_type = EXCLUSIVE;
+  lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
+
+  sge.addr = (uintptr_t)&current_request->original_value;
+  sge.length = sizeof(uint64_t);
+  sge.lkey = current_request->original_value_mr->lkey;
+
+  send_work_request.wr_id = (uintptr_t)current_request;
+  send_work_request.num_sge = 1;
+  send_work_request.sg_list = &sge;
+  send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
+
+  send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
+  uint64_t prev_value = ((uint64_t)current_request->user_id) << 32 | 0;
+  current_request->prev_value = prev_value;
+  send_work_request.wr.atomic.compare_add = (-1) * prev_value;
   send_work_request.wr.atomic.remote_addr =
       (uint64_t)context->lock_table_mr->addr +
       (current_request->obj_index * sizeof(uint64_t));
@@ -246,6 +288,7 @@ bool NCOSEDLockClient::UnlockShared(Context* context,
 
   LockRequest* current_request = lock_requests_[lock_request_idx_].get();
   *current_request = request;
+  current_request->owner_node_id = local_owner_id_;
   current_request->task = UNLOCK;
   current_request->lock_type = SHARED;
   lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
@@ -396,6 +439,7 @@ int NCOSEDLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     expected_shared = (uint32_t)expected;
 
     if (request->task == LOCK) {
+      // cout << "user " << request->user_id << " locking" << endl;
       if (exclusive == 0 && shared == 0) {
         if (expected == value) {
           local_manager_->NotifyLockRequestResult(
@@ -404,211 +448,58 @@ int NCOSEDLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               SUCCESS);
         } else {
           // try again
-#if VERBOSE
-          if (local_manager_->GetID() == 3) {
-            cout << "path0: "
-                 << "(" << request->user_id << ") " << request->seq_no << endl;
-          }
-#endif
           this->Lock(context_, *request, value);
         }
       } else if (exclusive != 0 && shared == 0) {
         if (expected == value) {
           // if previous value is equal to expected, then send lock request
-#if VERBOSE
-          if (local_manager_->GetID() == 3) {
-            cout << "path1: "
-                 << "(" << request->user_id << ") " << request->seq_no << endl;
-          }
-#endif
           local_manager_->SendNCOSEDLockRequest(
-              request->seq_no, exclusive, request->lm_id, request->obj_index,
-              local_owner_id_, request->user_id, shared, EXCLUSIVE);
+              request->seq_no,
+              (exclusive - 1) / local_manager_->GetNumUser() + 1,
+              request->lm_id, request->obj_index, local_owner_id_,
+              request->user_id, shared, EXCLUSIVE);
         } else {
-#if VERBOSE
-          if (local_manager_->GetID() == 3) {
-            cout << "path2: "
-                 << "(" << request->user_id << ") " << request->seq_no << endl;
-          }
-#endif
           // try again
           this->Lock(context_, *request, value);
         }
       } else if (exclusive == 0 && shared != 0) {
         if (expected == value) {
-          // if previous value is equal to expected, then send lock request
-#if VERBOSE
-          if (local_manager_->GetID() == 3) {
-            cout << "path3: " << request->seq_no << "," << remote_lm_id_ << ","
-                 << request->lm_id << "," << request->obj_index << ","
-                 << local_owner_id_ << "," << request->user_id << "," << shared
-                 << " ";
-            cout << "(" << expected_exclusive << "," << expected_shared << ","
-                 << exclusive << "," << shared << ")" << endl;
-          }
-#endif
-          local_manager_->SendNCOSEDLockRequest(
-              request->seq_no, remote_lm_id_, request->lm_id,
-              request->obj_index, local_owner_id_, request->user_id, shared,
-              EXCLUSIVE);
+          local_manager_->NotifyLockRequestResult(
+              request->seq_no, request->user_id, request->lock_type,
+              remote_lm_id_, request->obj_index, request->contention_count,
+              SUCCESS);
         } else {
           // try again
-#if VERBOSE
-          if (local_manager_->GetID() == 3) {
-            cout << "path4: "
-                 << "(" << request->user_id << ") " << request->seq_no << " ";
-            cout << "(" << expected_exclusive << "," << expected_shared << ","
-                 << exclusive << "," << shared << ")" << endl;
-          }
-#endif
           this->Lock(context_, *request, value);
         }
       } else {
-        // exclusive and shared both positive --> fail
-#if VERBOSE
-        if (local_manager_->GetID() == 3) {
-          cout << "path5: "
-               << "(" << request->user_id << ") " << request->seq_no << endl;
-        }
-#endif
         local_manager_->NotifyLockRequestResult(
             request->seq_no, request->user_id, request->lock_type,
             remote_lm_id_, request->obj_index, request->contention_count,
             FAILURE);
       }
     } else if (request->task == UNLOCK) {
+      // cout << "user " << request->user_id << " unlocking" << endl;
       if (request->lock_type == EXCLUSIVE) {
-        if (exclusive != 0) {
+        if (exclusive != request->user_id) {
           local_manager_->NotifyUnlockRequestResult(
               request->seq_no, request->user_id, request->lock_type,
               remote_lm_id_, request->obj_index, SUCCESS);
-#if VERBOSE
-          if (local_manager_->GetID() == 3) {
-            cout << "path exclusive unlock1: " << request->seq_no << ","
-                 << remote_lm_id_ << "," << request->lm_id << ","
-                 << request->obj_index << "," << local_owner_id_ << ","
-                 << request->user_id << "," << shared << " ";
-            cout << "(" << expected_exclusive << "," << expected_shared << ","
-                 << exclusive << "," << shared << ")" << endl;
-          }
-#endif
           if (expected != value) {
-#if VERBOSE
-            if (local_manager_->GetID() == 3) {
-              cout << "path exclusive unlock1-2: " << request->seq_no << ","
-                   << remote_lm_id_ << "," << request->lm_id << ","
-                   << request->obj_index << "," << local_owner_id_ << ","
-                   << request->user_id << "," << shared << " ";
-              cout << "(" << expected_exclusive << "," << expected_shared << ","
-                   << exclusive << "," << shared << ")" << endl;
-            }
-#endif
             local_manager_->SendNCOSEDLockGrant(remote_lm_id_,
                                                 request->obj_index);
           }
-        } else if (exclusive == 0) {
+        } else if (exclusive == request->user_id && shared != 0) {
+          // cout << "!!!" << endl;
+          // this->UnlockExclusiveFA(context_, *request);
+          this->Unlock(context_, *request);
+        } else if (exclusive == request->user_id) {
           local_manager_->NotifyUnlockRequestResult(
               request->seq_no, request->user_id, request->lock_type,
               remote_lm_id_, request->obj_index, SUCCESS);
         }
-      } else if (request->lock_type == SHARED) {
-        if (exclusive != 0 && shared == 0) {
-          local_manager_->SendNCOSEDLockGrant(remote_lm_id_,
-                                              request->obj_index);
-          local_manager_->SendNCOSEDLockReleaseSuccess(*request);
-#if VERBOSE
-          if (local_manager_->GetID() == 3) {
-            cout << "path shared unlock1: " << request->seq_no << ","
-                 << remote_lm_id_ << "," << request->lm_id << ","
-                 << request->obj_index << "," << local_owner_id_ << ","
-                 << request->user_id << "," << shared << " ";
-            cout << "(" << expected_exclusive << "," << expected_shared << ","
-                 << exclusive << "," << shared << ")" << endl;
-          }
-#endif
-        } else if (exclusive != 0 && shared > 0) {
-#if VERBOSE
-          if (local_manager_->GetID() == 3) {
-            cout << "path shared unlock2: " << request->seq_no << ","
-                 << remote_lm_id_ << "," << request->lm_id << ","
-                 << request->obj_index << "," << local_owner_id_ << ","
-                 << request->user_id << "," << shared << " ";
-            cout << "(" << expected_exclusive << "," << expected_shared << ","
-                 << exclusive << "," << shared << ")" << endl;
-          }
-#endif
-          this->UnlockBoth(context_, *request, exclusive, 1);
-        } else if (exclusive == 0 && shared != 0) {
-          if (expected != value) {
-#if VERBOSE
-            if (local_manager_->GetID() == 3) {
-              cout << "path shared unlock3: " << request->seq_no << ","
-                   << remote_lm_id_ << "," << request->lm_id << ","
-                   << request->obj_index << "," << local_owner_id_ << ","
-                   << request->user_id << "," << shared << " ";
-              cout << "(" << expected_exclusive << "," << expected_shared << ","
-                   << exclusive << "," << shared << ")" << endl;
-            }
-#endif
-            this->UnlockShared(context_, *request, shared);
-          } else {
-#if VERBOSE
-            if (local_manager_->GetID() == 3) {
-              cout << "path shared unlock4: " << request->seq_no << ","
-                   << remote_lm_id_ << "," << request->lm_id << ","
-                   << request->obj_index << "," << local_owner_id_ << ","
-                   << request->user_id << "," << shared << " ";
-              cout << "(" << expected_exclusive << "," << expected_shared << ","
-                   << exclusive << "," << shared << ")" << endl;
-            }
-#endif
-            local_manager_->ResetSharedReleaseCount(remote_lm_id_,
-                                                    request->obj_index);
-            local_manager_->SendNCOSEDLockReleaseSuccess(*request);
-          }
-        } else if (exclusive == 0 && shared == 0) {
-#if VERBOSE
-          if (local_manager_->GetID() == 3) {
-            cout << "path shared unlock5: " << request->seq_no << ","
-                 << remote_lm_id_ << "," << request->lm_id << ","
-                 << request->obj_index << "," << local_owner_id_ << ","
-                 << request->user_id << "," << shared << " ";
-            cout << "(" << expected_exclusive << "," << expected_shared << ","
-                 << exclusive << "," << shared << ")" << endl;
-          }
-#endif
-          local_manager_->ResetSharedReleaseCount(remote_lm_id_,
-                                                  request->obj_index);
-          local_manager_->SendNCOSEDLockReleaseSuccess(*request);
-        }
-      } else if (request->lock_type == BOTH) {
-        if (expected != value) {
-#if VERBOSE
-          if (local_manager_->GetID() == 3) {
-            cout << "path both unlock1: " << request->seq_no << ","
-                 << remote_lm_id_ << "," << request->lm_id << ","
-                 << request->obj_index << "," << local_owner_id_ << ","
-                 << request->user_id << "," << shared << " ";
-            cout << "(" << expected_exclusive << "," << expected_shared << ","
-                 << exclusive << "," << shared << ")" << endl;
-          }
-#endif
-          this->UnlockBoth(context_, *request, expected_exclusive, 1);
-        } else {
-#if VERBOSE
-          if (local_manager_->GetID() == 3) {
-            cout << "path both unlock2: " << request->seq_no << ","
-                 << remote_lm_id_ << "," << request->lm_id << ","
-                 << request->obj_index << "," << local_owner_id_ << ","
-                 << request->user_id << "," << shared << " ";
-            cout << "(" << expected_exclusive << "," << expected_shared << ","
-                 << exclusive << "," << shared << ")" << endl;
-          }
-#endif
-          local_manager_->ResetSharedReleaseCount(remote_lm_id_,
-                                                  request->obj_index);
-          local_manager_->SendNCOSEDLockReleaseSuccess(*request);
-        }
+      } else {
+        // cout << "???" << endl;
       }
     }
   } else if (work_completion->opcode == IBV_WC_FETCH_ADD) {
@@ -640,16 +531,43 @@ int NCOSEDLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       } else if (exclusive != 0 && shared == 0) {
         // exclusive -> shared
         local_manager_->SendNCOSEDLockRequest(
-            request->seq_no, exclusive, request->lm_id, request->obj_index,
-            local_owner_id_, request->user_id, shared, SHARED);
+            request->seq_no, (exclusive - 1) / local_manager_->GetNumUser() + 1,
+            request->lm_id, request->obj_index, local_owner_id_,
+            request->user_id, shared, SHARED);
       } else if (exclusive != 0 && shared > 0) {
         this->UndoLocking(context_, *request);
       }
     } else if (request->task == UNLOCK) {
       // must be undoing
-      local_manager_->NotifyLockRequestResult(
-          request->seq_no, request->user_id, request->lock_type, remote_lm_id_,
-          request->obj_index, request->contention_count, FAILURE);
+      if (request->lock_type == EXCLUSIVE) {
+        if (exclusive == request->user_id) {
+          local_manager_->NotifyUnlockRequestResult(
+              request->seq_no, request->user_id, request->lock_type,
+              remote_lm_id_, request->obj_index, SUCCESS);
+          // local_manager_->SendNCOSEDLockGrant(remote_lm_id_,
+          // request->obj_index);
+        } else {
+          local_manager_->NotifyUnlockRequestResult(
+              request->seq_no, request->user_id, request->lock_type,
+              remote_lm_id_, request->obj_index, FAILURE);
+        }
+      } else if (request->lock_type == SHARED) {
+        if (request->is_undo) {
+          local_manager_->NotifyLockRequestResult(
+              request->seq_no, request->user_id, request->lock_type,
+              remote_lm_id_, request->obj_index, request->contention_count,
+              FAILURE);
+        } else {
+          local_manager_->NotifyUnlockRequestResult(
+              request->seq_no, request->user_id, request->lock_type,
+              remote_lm_id_, request->obj_index, SUCCESS);
+        }
+        // if (exclusive != 0 && shared == 1) {
+        // local_manager_->SendNCOSEDLockGrant(
+        //(exclusive - 1) / local_manager_->GetNumUser() + 1, exclusive,
+        // request->obj_index);
+        //}
+      }
     }
   }
 

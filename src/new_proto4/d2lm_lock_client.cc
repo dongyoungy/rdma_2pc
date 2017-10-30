@@ -778,8 +778,8 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             request->last_exclusive_number = request->exclusive_number;
             request->last_shared_number = request->shared_number;
             ++request->contention_count;
-            if (request->deadlock_count >= kD2LMDeadlockLimit) {
-              // if (request->timestamp.elapsed() >= kD2LMDeadlockLimit * 2) {
+            // if (request->deadlock_count >= kD2LMDeadlockLimit) {
+            if (request->timestamp.elapsed() >= kD2LMDeadlockLimit * 2) {
               // cout << "DEADLOCK OR FAIL." << endl;
               // Handle deadlock
               uint64_t from = GetLockValue(
@@ -820,8 +820,8 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             request->last_exclusive_number = request->exclusive_number;
             request->last_shared_number = request->shared_number;
             ++request->contention_count;
-            if (request->deadlock_count >= kD2LMDeadlockLimit) {
-              // if (request->timestamp.elapsed() >= kD2LMDeadlockLimit * 2) {
+            // if (request->deadlock_count >= kD2LMDeadlockLimit) {
+            if (request->timestamp.elapsed() >= kD2LMDeadlockLimit * 2) {
               // cout << "DEADLOCK OR FAIL." << endl;
               // Handle deadlock
               uint64_t from = GetLockValue(

@@ -305,7 +305,8 @@ int main(int argc, char** argv) {
   // Start lock simulators
   std::vector<Poco::Thread*> user_threads;
   if (workload_type == "hotspot" || workload_type == "hotspot-exclusive" ||
-      workload_type == "tpcc-hotspot") {
+      workload_type == "tpcc-hotspot" ||
+      strncasecmp(workload_type.c_str(), "tpcc-hotspot", 12) == 0) {
     if (rank != 0) {
       for (int i = 0; i < num_users; ++i) {
         Poco::Thread* user_thread = new Poco::Thread;
@@ -494,7 +495,7 @@ int main(int argc, char** argv) {
   MPI_Barrier(MPI_COMM_WORLD);
 
   // Simple sanity check.
-  if (lock_mode != REMOTE_D2LM_V2) {
+  if (lock_mode != REMOTE_D2LM_V2 && lock_mode != REMOTE_DRTM) {
     if (lock_manager->lock_table_[0] != 0) {
       cerr << "Value of index 0 is not zero: " << lock_manager->lock_table_[0]
            << endl;

@@ -438,9 +438,10 @@ void LockSimulator::CreateRequest() {
     requests_[i]->owner_node_id = manager_->GetID();
     requests_[i]->task = LOCK;
     requests_[i]->lm_id = 1 + (rng_.next() % num_nodes_);
+    // requests_[i]->lm_id = 1;
     requests_[i]->obj_index = rng_.next() % num_objects_;
-    // requests_[i]->lock_type = (rng_.nextBool()) ? SHARED : EXCLUSIVE;
-    requests_[i]->lock_type = EXCLUSIVE;
+    requests_[i]->lock_type = (rng_.nextBool()) ? SHARED : EXCLUSIVE;
+    // requests_[i]->lock_type = EXCLUSIVE;
     requests_[i]->contention_count = 0;
   }
 }

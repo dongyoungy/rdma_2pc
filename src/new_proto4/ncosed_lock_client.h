@@ -23,6 +23,7 @@ class NCOSEDLockClient : public LockClient {
   bool Lock(Context* context, const LockRequest& request);
   bool Lock(Context* context, const LockRequest& request, uint64_t prev_value);
   bool Unlock(Context* context, const LockRequest& request);
+  bool UnlockExclusiveFA(Context* context, const LockRequest& request);
   bool UnlockShared(Context* context, const LockRequest& request,
                     uint32_t shared);
   bool UnlockBoth(Context* context, const LockRequest& request,

@@ -73,7 +73,7 @@ const int kExclusiveNumberBitShift = 48;
 
 const int kDRTMLockBitShift = 63;
 const int kDRTMOwnerBitShift = 55;
-const int kDRTMSharedLeaseTime = 1;  // 1 ms
+const int kDRTMSharedLeaseTime = 400;  // 400 microseconds
 const uint64_t kDRTMEndTimeBitMask = 0x7FFFFFFFFFFFFF;
 
 const uint64_t kExclusiveNumberBitMask = 0xFFFF000000000000;

@@ -53,7 +53,7 @@ bool DRTMLockClient::Lock(Context* context, const LockRequest& request,
 
   uint64_t value = 1;
   int bits_to_shift = 0;
-  uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+  uint64_t now = std::chrono::duration_cast<std::chrono::microseconds>(
                      std::chrono::system_clock::now().time_since_epoch())
                      .count();
   uint64_t end_time = now + kDRTMSharedLeaseTime;
@@ -218,9 +218,10 @@ int DRTMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
 
     uint64_t lock_bit = value >> 63;
     uint64_t end_time = (value & kDRTMEndTimeBitMask);
-    uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+    uint64_t now = std::chrono::duration_cast<std::chrono::microseconds>(
                        std::chrono::system_clock::now().time_since_epoch())
                        .count();
+    now = (now & kDRTMEndTimeBitMask);
 
     if (request->task == LOCK) {
       if (request->lock_type == EXCLUSIVE) {
