@@ -20,7 +20,9 @@ class D2LMLockClient : public LockClient {
 
   static void SetDeadLockLimit(int limit);
   static void SetReadBackoff(bool backoff);
+  static void SetFailRate(double rate);
   static int GetDeadlockLimit();
+  static double GetFailRate();
 
   bool GetDoReset(uintptr_t user_id, int obj_index);
 
@@ -40,6 +42,7 @@ class D2LMLockClient : public LockClient {
 
   static int kD2LMDeadlockLimit;
   static bool kDoReadBackoff;
+  static double kD2LMFailRate;
 
   std::map<uintptr_t, std::map<int, bool>> do_reset_;
   std::map<uintptr_t, std::map<int, uint64_t>> reset_value_;

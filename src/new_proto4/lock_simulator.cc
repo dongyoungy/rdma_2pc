@@ -18,7 +18,8 @@ LockSimulator::LockSimulator(LockManager* manager, int id, int num_nodes,
       backoff_count_(0),
       seq_count_(0),
       think_time_duration_(0),
-      false_positives_(0) {
+      false_positives_(0),
+      d2lm_fail_rate_(0) {
   latency_.reserve(kTransactionMax);
   contention_latency_.reserve(kTransactionMax);
   backoff_time_.reserve(kTransactionMax);
@@ -61,6 +62,7 @@ void LockSimulator::run() {
   cerr << "job start time (" << id_
        << ") = " << asctime(localtime(&job_start_time)) << endl;
 
+  d2lm_fail_rate_ = manager_->GetD2LMFailRate();
   // Keep requesting locks until done.
   while (!job_done) {
     CreateRequest();
@@ -77,6 +79,7 @@ void LockSimulator::run() {
     int time_spent_backoff = 0;
     bool backoff_done = false;
     bool lock_success = true;
+    bool is_failed = false;
     Poco::Timestamp lock_start;
     last_lock_start_time_.update();
     LockMode lock_mode = manager_->GetLockMode();
@@ -154,6 +157,10 @@ void LockSimulator::run() {
       }
     }
     Poco::Timestamp::TimeDiff latency = lock_start.elapsed();
+    if (d2lm_fail_rate_ > 0 && rng_.nextDouble() < d2lm_fail_rate_) {
+      is_failed = true;
+      ++contention_count2;
+    }
     if (lock_success) {
       latency_.push_back(latency);  // microseconds.
       LockStat s(contention_count, contention_count2, contention_count3,
@@ -190,6 +197,11 @@ void LockSimulator::run() {
     // requests_[j]->is_failed = true;
     //}
     //}
+    if (is_failed) {
+      for (int j = 0; j < request_size_; ++j) {
+        requests_[j]->is_failed = true;
+      }
+    }
 
     // unlock.
     while (i >= 0) {
@@ -321,7 +333,8 @@ double LockSimulator::GetAverageContentionCount() const {
   for (auto s : stats_) {
     sum += s.contention_count;
   }
-  return sum / (double)stats_.size();
+  // return sum / (double)stats_.size();
+  return sum;
 }
 
 double LockSimulator::GetAverageContentionCount2() const {
@@ -330,7 +343,8 @@ double LockSimulator::GetAverageContentionCount2() const {
   for (auto s : stats_) {
     sum += s.contention_count2;
   }
-  return sum / (double)stats_.size();
+  // return sum / (double)stats_.size();
+  return sum;
 }
 
 double LockSimulator::GetAverageContentionCount3() const {
@@ -339,7 +353,8 @@ double LockSimulator::GetAverageContentionCount3() const {
   for (auto s : stats_) {
     sum += s.contention_count3;
   }
-  return sum / (double)stats_.size();
+  // return sum / (double)stats_.size();
+  return sum;
 }
 
 double LockSimulator::GetAverageContentionCount4() const {
@@ -348,7 +363,8 @@ double LockSimulator::GetAverageContentionCount4() const {
   for (auto s : stats_) {
     sum += s.contention_count4;
   }
-  return sum / (double)stats_.size();
+  // return sum / (double)stats_.size();
+  return sum;
 }
 double LockSimulator::GetAverageContentionCount5() const {
   if (stats_.empty()) return 0;
@@ -356,7 +372,8 @@ double LockSimulator::GetAverageContentionCount5() const {
   for (auto s : stats_) {
     sum += s.contention_count5;
   }
-  return sum / (double)stats_.size();
+  // return sum / (double)stats_.size();
+  return sum;
 }
 double LockSimulator::GetAverageContentionCount6() const {
   if (stats_.empty()) return 0;
@@ -364,7 +381,8 @@ double LockSimulator::GetAverageContentionCount6() const {
   for (auto s : stats_) {
     sum += s.contention_count6;
   }
-  return sum / (double)stats_.size();
+  // return sum / (double)stats_.size();
+  return sum;
 }
 
 double LockSimulator::Get99PercentileLatency() const {

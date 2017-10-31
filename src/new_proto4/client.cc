@@ -173,7 +173,7 @@ int Client::HandleEvent(struct rdma_cm_event* event) {
   } else if (event->event == RDMA_CM_EVENT_DISCONNECTED) {
     ret = HandleDisconnect(static_cast<Context*>(event->id->context));
   } else {
-    cerr << "Unknown event: " << event->event << endl;
+    cerr << "Unknown event: " << event->event << "," << strerror(event->status) << endl;
     Stop();
   }
   pthread_mutex_unlock(&mutex_);

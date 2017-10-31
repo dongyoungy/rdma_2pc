@@ -101,6 +101,8 @@ class LockSimulator : public Poco::Runnable {
   int think_time_duration_;
   uint64_t false_positives_;
 
+  double d2lm_fail_rate_;
+
   Poco::Mutex mutex_;
 };
 

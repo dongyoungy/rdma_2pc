@@ -448,7 +448,17 @@ int NCOSEDLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               SUCCESS);
         } else {
           // try again
-          this->Lock(context_, *request, value);
+          ++request->contention_count;
+          ++user_retry_count_[request->user_id];
+          if (user_retry_count_[request->user_id] >=
+              LockManager::GetFailRetry()) {
+            local_manager_->NotifyLockRequestResult(
+                request->seq_no, request->user_id, request->lock_type,
+                remote_lm_id_, request->obj_index, request->contention_count,
+                FAILURE);
+          } else {
+            this->Lock(context_, *request, value);
+          }
         }
       } else if (exclusive != 0 && shared == 0) {
         if (expected == value) {
@@ -460,7 +470,17 @@ int NCOSEDLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               request->user_id, shared, EXCLUSIVE);
         } else {
           // try again
-          this->Lock(context_, *request, value);
+          ++request->contention_count;
+          ++user_retry_count_[request->user_id];
+          if (user_retry_count_[request->user_id] >=
+              LockManager::GetFailRetry()) {
+            local_manager_->NotifyLockRequestResult(
+                request->seq_no, request->user_id, request->lock_type,
+                remote_lm_id_, request->obj_index, request->contention_count,
+                FAILURE);
+          } else {
+            this->Lock(context_, *request, value);
+          }
         }
       } else if (exclusive == 0 && shared != 0) {
         if (expected == value) {
@@ -470,7 +490,17 @@ int NCOSEDLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               SUCCESS);
         } else {
           // try again
-          this->Lock(context_, *request, value);
+          ++request->contention_count;
+          ++user_retry_count_[request->user_id];
+          if (user_retry_count_[request->user_id] >=
+              LockManager::GetFailRetry()) {
+            local_manager_->NotifyLockRequestResult(
+                request->seq_no, request->user_id, request->lock_type,
+                remote_lm_id_, request->obj_index, request->contention_count,
+                FAILURE);
+          } else {
+            this->Lock(context_, *request, value);
+          }
         }
       } else {
         local_manager_->NotifyLockRequestResult(

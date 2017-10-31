@@ -75,6 +75,7 @@ int main(int argc, char** argv) {
 
   int d2lm_deadlock_limit = 0;
   bool d2lm_do_read_backoff = false;
+  double d2lm_fail_rate = 0;
   LockMode lock_mode = PROXY_RETRY;
   // if (lock_mode_str == "proxy-retry") {
   // lock_mode = PROXY_RETRY;
@@ -116,7 +117,10 @@ int main(int argc, char** argv) {
       exit(ERROR_INVALID_LOCK_MODE);
     }
     d2lm_deadlock_limit = Poco::NumberParser::parse(tokenizer[1]);
-    d2lm_do_read_backoff = (tokenizer.count() == 3) ? true : false;
+    // d2lm_do_read_backoff = (tokenizer.count() == 3) ? true : false;
+    if (tokenizer.count() == 3) {
+      d2lm_fail_rate = Poco::NumberParser::parseFloat(tokenizer[2]);
+    }
   } else {
     cerr << "Invalid lock mode: " << lock_mode_str << endl;
     exit(ERROR_INVALID_LOCK_MODE);
@@ -154,6 +158,7 @@ int main(int argc, char** argv) {
   LockManager::SetPollRetry(num_retry);
   D2LMLockClient::SetDeadLockLimit(d2lm_deadlock_limit);
   D2LMLockClient::SetReadBackoff(d2lm_do_read_backoff);
+  D2LMLockClient::SetFailRate(d2lm_fail_rate);
   LockManager* lock_manager =
       new LockManager(argv[1], rank, num_managers, num_lock_object, lock_mode);
 

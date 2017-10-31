@@ -124,6 +124,8 @@ int LockManager::GetD2LMDeadlockLimit() {
   return D2LMLockClient::GetDeadlockLimit();
 }
 
+double LockManager::GetD2LMFailRate() { return D2LMLockClient::GetFailRate(); }
+
 CommunicationClient* LockManager::GetCommunicationClient(int index) {
   return communication_clients_[index];
 }
@@ -1645,7 +1647,8 @@ int LockManager::HandleEvent(struct rdma_cm_event* event) {
   } else if (event->event == RDMA_CM_EVENT_DISCONNECTED) {
     ret = HandleDisconnect(static_cast<Context*>(event->id->context));
   } else {
-    cerr << "Unknown event." << endl;
+    cerr << "Unknown event: " << event->event << "," << strerror(event->status)
+         << endl;
     Stop();
   }
 

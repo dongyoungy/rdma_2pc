@@ -104,6 +104,7 @@ class LockManager : public Poco::Runnable {
   bool HasStopped() const;
   bool IsD2LMUserDoReset(int lm_id, uintptr_t user_id, int obj_index);
   int GetD2LMDeadlockLimit();
+  double GetD2LMFailRate();
   inline int GetNumManager() const { return num_manager_; }
   inline int GetNumUser() const { return num_user_; }
   inline int GetNumTotalUser() const { return num_total_user_; }

@@ -5,6 +5,7 @@ namespace proto {
 
 int D2LMLockClient::kD2LMDeadlockLimit = 100000;
 bool D2LMLockClient::kDoReadBackoff = false;
+double D2LMLockClient::kD2LMFailRate = 0;
 // constructor
 D2LMLockClient::D2LMLockClient(const string& work_dir,
                                LockManager* local_manager,
@@ -20,7 +21,11 @@ void D2LMLockClient::SetDeadLockLimit(int limit) { kD2LMDeadlockLimit = limit; }
 
 void D2LMLockClient::SetReadBackoff(bool backoff) { kDoReadBackoff = backoff; }
 
+void D2LMLockClient::SetFailRate(double rate) { kD2LMFailRate = rate; }
+
 int D2LMLockClient::GetDeadlockLimit() { return kD2LMDeadlockLimit; }
+
+double D2LMLockClient::GetFailRate() { return kD2LMFailRate; }
 
 bool D2LMLockClient::GetDoReset(uintptr_t user_id, int obj_index) {
   return do_reset_[user_id][obj_index];
@@ -763,10 +768,12 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           } else if (request->exclusive_max < request->exclusive_number ||
                      request->shared_max < request->shared_number) {
             // I need to fail -> retry.
+            LockStat s;
+            s.contention_count = request->contention_count;
+            s.contention_count3 = 1;
             local_manager_->NotifyLockRequestResult(
                 request->seq_no, request->user_id, request->lock_type,
-                remote_lm_id_, request->obj_index, request->contention_count,
-                FAILURE);
+                remote_lm_id_, request->obj_index, s, FAILURE);
           } else {
             if (request->exclusive_number == request->last_exclusive_number &&
                 request->shared_number == request->last_shared_number) {
@@ -805,10 +812,12 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           } else if (request->exclusive_max < request->exclusive_number ||
                      request->shared_max < request->shared_number) {
             // I need to fail -> retry.
+            LockStat s;
+            s.contention_count = request->contention_count;
+            s.contention_count3 = 1;
             local_manager_->NotifyLockRequestResult(
                 request->seq_no, request->user_id, request->lock_type,
-                remote_lm_id_, request->obj_index, request->contention_count,
-                FAILURE);
+                remote_lm_id_, request->obj_index, s, FAILURE);
           } else {
             if (request->exclusive_number == request->last_exclusive_number &&
                 request->shared_number == request->last_shared_number) {
