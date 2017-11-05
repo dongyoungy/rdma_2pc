@@ -78,6 +78,7 @@ class LockManager : public Poco::Runnable {
   void SetLockStatusInvalid(uintptr_t user_id, uint32_t node_id,
                             uint32_t obj_index);
   int HandleTakeover(const Message& msg);
+  void SetWriteLog(bool write_log);
 
   // used by NCOSED.
   int SendNCOSEDLockRequest(int seq_no, int current_owner_id, int node_id,
@@ -344,6 +345,9 @@ class LockManager : public Poco::Runnable {
 
   uint64_t request_lock_call_time_;
   uint64_t request_lock_call_count_;
+
+  bool write_log_;
+  std::vector<FILE*> log_files_;
 
   // used by NCOSED
   std::map<int, std::map<int, bool>> lock_grant_map_;

@@ -91,6 +91,7 @@ LockManager::LockManager(const string& work_dir, uint32_t rank, int num_manager,
   mutex_ = new Poco::FastMutex[MAX_USER * num_manager_ * 2];
 
   backup_node_for_ = 0;
+  write_log_ = false;
 }
 
 // destructor
@@ -111,6 +112,8 @@ int LockManager::GetRank() const { return rank_; }
 int LockManager::GetBackupNodeFor() const { return backup_node_for_; }
 
 void LockManager::SetBackupNodeFor(int node) { backup_node_for_ = node; }
+
+void LockManager::SetWriteLog(bool write_log) { write_log_ = write_log; }
 
 bool LockManager::HasStopped() const { return terminate_; }
 
@@ -134,6 +137,27 @@ int LockManager::ReplaceRemoteNode() {
   int prev_id = id_;
   id_ = backup_node_for_;
 
+  char log_filename[256];
+  if (sprintf(log_filename, "%s/%04d.log", work_dir_.c_str(),
+              backup_node_for_) < 0) {
+    cerr << "sprintf() failed." << endl;
+    return -1;
+  }
+  FILE* log_file = fopen(log_filename, "r");
+  if (log_file == NULL) {
+    cerr << "fopen() failed: " << strerror(errno) << endl;
+    return -1;
+  }
+  cout << "LM " << prev_id << " processing log of LM " << backup_node_for_
+       << ", " << log_filename << endl;
+  char line[100];
+  int i = 0;
+  while (fgets(line, 100, log_file)) {
+    ++i;
+  }
+  fclose(log_file);
+  cout << "LM " << prev_id << " processed log of LM: " << backup_node_for_
+       << " : " << i << endl;
   for (auto it = communication_clients_.begin();
        it != communication_clients_.end(); ++it) {
     if (it->first != (unsigned)backup_node_for_) {
@@ -319,6 +343,22 @@ int LockManager::InitializeLockClients() {
     if (ret) {
       perror("LockManager::pthread_create()");
       return -1;
+    }
+  }
+
+  if (write_log_) {
+    for (int i = 1; i <= num_manager_; ++i) {
+      char log_filename[256];
+      if (sprintf(log_filename, "%s/%04d.log", work_dir_.c_str(), i) < 0) {
+        cerr << "sprintf() failed." << endl;
+        return -1;
+      }
+      FILE* log_file = fopen(log_filename, "a");
+      if (log_file == NULL) {
+        cerr << "fopen() failed: " << strerror(errno) << endl;
+        return -1;
+      }
+      log_files_.push_back(log_file);
     }
   }
 
@@ -728,6 +768,13 @@ const Poco::Optional<std::promise<LockResultInfo>*> LockManager::Lock(
   // result = &lock_result_map_[request.user_id];
   //}
   Poco::FastMutex::ScopedLock lock(mutex_[request.user_id % MAX_USER]);
+  if (write_log_) {
+    int ret = fprintf(log_files_[request.lm_id - 1], "%ld locking %d\n",
+                      request.user_id, request.obj_index);
+    if (ret < 0) {
+      cout << "fprintf() error: " << strerror(errno) << endl;
+    }
+  }
   LockStatusInfo status(request.seq_no, request.user_id, LOCKING);
   lock_status_map_[request.user_id % MAX_USER] = status;
   lock_result_map_[request.user_id % MAX_USER] = std::promise<LockResultInfo>();

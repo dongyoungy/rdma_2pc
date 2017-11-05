@@ -45,8 +45,8 @@ enum ThinkTimeType { ZERO, NORMAL, SIMPLE, UNKNOWN };
 enum LockStatus { IDLE, LOCKING, LOCKED, UNLOCKING, UNLOCKED, INVALID };
 
 const uint64_t kTransactionMax = 100000000;
-const uint32_t kMaxBackoff = 100000;  // microseconds
-const uint32_t kBaseBackoff = 10;     // microseconds
+// const uint32_t kMaxBackoff = 100000;  // microseconds
+// const uint32_t kBaseBackoff = 10;     // microseconds
 const uint64_t kTPCCNumObjects = 700000;
 const uint64_t kTPCCMaxWarehouse = 50;
 const size_t kMaxWaitQueueSize = 1000000;

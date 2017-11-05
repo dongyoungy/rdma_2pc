@@ -43,6 +43,7 @@ class LockSimulator : public Poco::Runnable {
   void Stop();
   void SetThinkTimeDuration(int duration);
   uint64_t GetCount() const;
+  uint64_t GetLockCount() const;
   uint64_t GetBackoffCount() const;
   uint64_t GetCountWithContention() const;
   uint64_t GetCountWithBackoff() const;
@@ -71,7 +72,12 @@ class LockSimulator : public Poco::Runnable {
   double GetAverageContentionCount5() const;
   double GetAverageContentionCount6() const;
 
+  static void SetBaseBackoff(double backoff);
+  static void SetMaxBackoff(double backoff);
+
  protected:
+  static double kMaxBackoff;
+  static double kBaseBackoff;
   virtual void CreateRequest();
   void RevertLocks(int& index);
   int PerformRandomBackoff(int& attempt);
@@ -94,12 +100,13 @@ class LockSimulator : public Poco::Runnable {
   int max_request_size_;
   string think_time_type_;
   bool do_random_backoff_;
-  uint64_t count_;
+  uint64_t trx_count_;
   uint64_t backoff_count_;
   bool is_done_;
   int seq_count_;
   int think_time_duration_;
   uint64_t false_positives_;
+  uint64_t lock_count_;
 
   double d2lm_fail_rate_;
 

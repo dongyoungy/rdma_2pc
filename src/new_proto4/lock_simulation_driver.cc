@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "Poco/NumberParser.h"
+#include "Poco/Random.h"
 #include "Poco/StringTokenizer.h"
 #include "Poco/Thread.h"
 
@@ -37,12 +38,12 @@ int main(int argc, char** argv) {
   // MPI_Init(&argc, &argv);
   MPI_Init(&argc, &argv);
 
-  if (argc != 12) {
+  if (argc != 14) {
     cout << "USAGE: " << argv[0] << " <work_dir> <num_lock_object> <duration>"
          << " <request_size> <num_users> <lock_mode>"
          << " <num_retry>"
          << " <workload_type> <think_time_type> <think_time_duration> "
-            "<enable_random_backoff> "
+            "<enable_random_backoff> <base_backoff> <max_backoff> "
          << endl;
     exit(1);
   }
@@ -72,11 +73,17 @@ int main(int argc, char** argv) {
   string think_time_type = argv[k++];
   int think_time_duration = atoi(argv[k++]);
   string random_backoff_str = argv[k++];
+  double base_backoff = atof(argv[k++]);
+  double max_backoff = atof(argv[k++]);
 
   int d2lm_deadlock_limit = 0;
   bool d2lm_do_read_backoff = false;
   double d2lm_fail_rate = 0;
+  double node_fail_rate = 0;
+  int fail_check_duration = 10;
   LockMode lock_mode = PROXY_RETRY;
+  Poco::Random rng;
+  rng.seed();
   // if (lock_mode_str == "proxy-retry") {
   // lock_mode = PROXY_RETRY;
   //} else if (lock_mode_str == "proxy-queue") {
@@ -154,6 +161,8 @@ int main(int argc, char** argv) {
          << (d2lm_do_read_backoff ? "TRUE" : "FALSE") << endl;
   }
 
+  LockSimulator::SetBaseBackoff(base_backoff);
+  LockSimulator::SetMaxBackoff(max_backoff);
   LockManager::SetFailRetry(num_retry);
   LockManager::SetPollRetry(num_retry);
   D2LMLockClient::SetDeadLockLimit(d2lm_deadlock_limit);
@@ -208,10 +217,20 @@ int main(int argc, char** argv) {
       simulator = new HotspotExclusiveLockSimulator(
           lock_manager, id, num_managers, num_lock_object, request_size,
           think_time_type, do_random_backoff);
-    } else if (workload_type == "tpcc-uniform") {
+    } else if (strncasecmp(workload_type.c_str(), "tpcc-uniform", 12) == 0) {
+      Poco::StringTokenizer tokenizer(workload_type, "_",
+                                      Poco::StringTokenizer::TOK_TRIM);
+      if (tokenizer.count() > 2) {
+        cerr << "Incorrect number of tokens for TPCC simulator." << endl;
+        exit(ERROR_INVALID_LOCK_MODE);
+      }
+      int num_warehouse = 1;
+      if (tokenizer.count() == 2) {
+        num_warehouse = Poco::NumberParser::parse(tokenizer[1]);
+      }
       simulator = new TPCCLockSimulator(
           lock_manager, id, num_managers, num_lock_object, think_time_type,
-          do_random_backoff, id % num_managers, false);
+          do_random_backoff, id % num_managers, true, num_warehouse);
     } else if (workload_type == "tpcc-dist") {
       simulator = new TPCCLockSimulator(lock_manager, id, 1, num_lock_object,
                                         think_time_type, do_random_backoff,
@@ -235,11 +254,11 @@ int main(int argc, char** argv) {
       simulator = new TPCCLockSimulator(lock_manager, id, 1, num_lock_object,
                                         think_time_type, do_random_backoff, 0,
                                         false, num_warehouse);
-    } else if (workload_type == "tpcc-failover") {
+    } else if (strncasecmp(workload_type.c_str(), "tpcc-failover", 13) == 0) {
       simulator = new TPCCLockSimulator(
-          lock_manager, id, 1, num_lock_object, think_time_type,
+          lock_manager, id, num_managers / 4, num_lock_object, think_time_type,
           do_random_backoff, (rank - (num_managers / 2)) % (num_managers / 4),
-          false);
+          true);
     } else if (strncasecmp(workload_type.c_str(), "tpcc-random", 11) == 0) {
       Poco::StringTokenizer tokenizer(workload_type, "_",
                                       Poco::StringTokenizer::TOK_TRIM);
@@ -266,10 +285,24 @@ int main(int argc, char** argv) {
     users.push_back(simulator);
   }
 
-  if (workload_type == "tpcc-failover") {
+  if (strncasecmp(workload_type.c_str(), "tpcc-failover", 13) == 0) {
     // back up node
     if (rank >= num_managers / 4 && rank < num_managers / 2) {
       lock_manager->SetBackupNodeFor(rank - (num_managers / 4) + 1);
+    } else if (rank >= num_managers / 2) {
+      lock_manager->SetWriteLog(true);
+    }
+    Poco::StringTokenizer tokenizer(workload_type, "_",
+                                    Poco::StringTokenizer::TOK_TRIM);
+    if (tokenizer.count() > 3) {
+      cerr << "Incorrect number of tokens for TPCC simulator." << endl;
+      exit(ERROR_INVALID_LOCK_MODE);
+    }
+    if (tokenizer.count() == 2) {
+      node_fail_rate = Poco::NumberParser::parseFloat(tokenizer[1]);
+    }
+    if (tokenizer.count() == 3) {
+      fail_check_duration = Poco::NumberParser::parse(tokenizer[2]);
     }
   }
   sleep(3);
@@ -294,15 +327,24 @@ int main(int argc, char** argv) {
   }
 
   uint64_t* current_counts = NULL;
+  uint64_t* current_lock_counts = NULL;
   uint64_t current_count = 0;
   uint64_t current_total_count = 0;
+  uint64_t current_lock_count = 0;
+  uint64_t current_total_lock_count = 0;
   uint64_t last_total_count = 0;
+  uint64_t last_total_lock_count = 0;
   uint64_t max_throughput = 0;
+  uint64_t max_lock_throughput = 0;
   std::vector<uint64_t> throughputs;
+  std::vector<uint64_t> lock_throughputs;
   if (rank == 0) {
     current_counts = new uint64_t[num_managers];
+    current_lock_counts = new uint64_t[num_managers];
     throughputs.clear();
     throughputs.reserve(duration);
+    lock_throughputs.clear();
+    lock_throughputs.reserve(duration);
   }
 
   MPI_Barrier(MPI_COMM_WORLD);
@@ -335,7 +377,7 @@ int main(int argc, char** argv) {
         user_threads.push_back(user_thread);
       }
     }
-  } else if (workload_type == "tpcc-failover") {
+  } else if (strncasecmp(workload_type.c_str(), "tpcc-failover", 13) == 0) {
     if (rank >= num_managers / 2) {
       for (int i = 0; i < num_users; ++i) {
         Poco::Thread* user_thread = new Poco::Thread;
@@ -362,8 +404,10 @@ int main(int argc, char** argv) {
   int zero_count = 0;
   for (int i = 0; i < duration; ++i) {
     current_count = 0;
+    current_lock_count = 0;
     for (int j = 0; j < num_users; ++j) {
       current_count += users[j]->GetCount();
+      current_lock_count += users[j]->GetLockCount();
     }
 #ifdef DEBUG
     cout << rank << " : " << current_count << endl;
@@ -371,21 +415,33 @@ int main(int argc, char** argv) {
 #endif
     MPI_Gather(&current_count, 1, MPI_LONG_LONG_INT, current_counts, 1,
                MPI_LONG_LONG_INT, 0, MPI_COMM_WORLD);
+    MPI_Gather(&current_lock_count, 1, MPI_LONG_LONG_INT, current_lock_counts,
+               1, MPI_LONG_LONG_INT, 0, MPI_COMM_WORLD);
 
     MPI_Barrier(MPI_COMM_WORLD);
     if (rank == 0) {
       current_total_count = 0;
+      current_total_lock_count = 0;
       for (int j = 0; j < num_managers; ++j) {
         current_total_count += current_counts[j];
+        current_total_lock_count += current_lock_counts[j];
       }
       uint64_t current_throughput = current_total_count - last_total_count;
-      cout << i << "," << current_throughput << endl;
+      uint64_t current_lock_throughput =
+          current_total_lock_count - last_total_lock_count;
+      cout << i << "," << current_throughput << "," << current_lock_throughput
+           << endl;
 
       throughputs.push_back(current_throughput);
+      lock_throughputs.push_back(current_lock_throughput);
       if (current_throughput > max_throughput) {
         max_throughput = current_throughput;
       }
+      if (current_lock_throughput > max_lock_throughput) {
+        max_lock_throughput = current_lock_throughput;
+      }
       last_total_count = current_total_count;
+      last_total_lock_count = current_total_lock_count;
       if (current_throughput == 0) {
         ++zero_count;
       } else {
@@ -400,27 +456,31 @@ int main(int argc, char** argv) {
 #endif
     }
     // Assume 32 nodes
-    if (i == 15 && rank == 0 && workload_type == "tpcc-failover") {
-      cout << i << ",Failing LM " << rank << endl;
-      lock_manager->DisableRemoteAtomicAccess();
-      lock_manager->Stop();
-    }
-    if (i == 30 && rank == 1 && workload_type == "tpcc-failover") {
-      cout << i << ",Failing LM " << rank << endl;
-      lock_manager->DisableRemoteAtomicAccess();
-      lock_manager->Stop();
-    }
-    if (i == 45 && (rank == 2 || rank == 3) &&
-        workload_type == "tpcc-failover") {
-      cout << i << ",Failing LM " << rank << endl;
-      lock_manager->DisableRemoteAtomicAccess();
-      lock_manager->Stop();
-    }
-    if (i == 60 && (rank >= 4 && rank <= 7) &&
-        workload_type == "tpcc-failover") {
-      cout << i << ",Failing LM " << rank << endl;
-      lock_manager->DisableRemoteAtomicAccess();
-      lock_manager->Stop();
+    if (i % fail_check_duration == 0 && rank <= num_managers / 4 &&
+        strncasecmp(workload_type.c_str(), "tpcc-failover", 13) == 0) {
+      if (rng.nextDouble() < node_fail_rate && !lock_manager->HasStopped()) {
+        cout << i << ",Failing LM " << rank << endl;
+        lock_manager->DisableRemoteAtomicAccess();
+        lock_manager->Stop();
+      }
+      //}
+      // if (i == 30 && rank == 1 && workload_type == "tpcc-failover") {
+      // cout << i << ",Failing LM " << rank << endl;
+      // lock_manager->DisableRemoteAtomicAccess();
+      // lock_manager->Stop();
+      //}
+      // if (i == 45 && (rank == 2 || rank == 3) &&
+      // workload_type == "tpcc-failover") {
+      // cout << i << ",Failing LM " << rank << endl;
+      // lock_manager->DisableRemoteAtomicAccess();
+      // lock_manager->Stop();
+      //}
+      // if (i == 60 && (rank >= 4 && rank <= 7) &&
+      // workload_type == "tpcc-failover") {
+      // cout << i << ",Failing LM " << rank << endl;
+      // lock_manager->DisableRemoteAtomicAccess();
+      // lock_manager->Stop();
+      //}
     }
     MPI_Barrier(MPI_COMM_WORLD);
     Poco::Thread::sleep(1000);
@@ -468,7 +528,7 @@ int main(int argc, char** argv) {
     }
     server_count = num_managers / 2;
     client_count = num_managers / 2;
-  } else if (workload_type == "tpcc-failover") {
+  } else if (strncasecmp(workload_type.c_str(), "tpcc-failover", 13) == 0) {
     if (rank >= num_managers / 2) {
       for (int i = 0; i < num_users; ++i) {
         users[i]->Stop();
@@ -571,7 +631,11 @@ int main(int argc, char** argv) {
   uint64_t max_latency = 0;
   uint64_t total_throughput = 0;
   uint64_t average_throughput = 0;
+  uint64_t total_lock_throughput = 0;
+  uint64_t average_lock_throughput = 0;
   uint64_t throughput_99pct = 0;
+  uint64_t lock_count = 0;
+  uint64_t total_lock_count = 0;
   uint64_t count = 0;
   uint64_t total_count = 0;
   uint64_t backoff_count = 0;
@@ -602,6 +666,7 @@ int main(int argc, char** argv) {
   for (int i = 0; i < num_users; ++i) {
     users[i]->SortLatency();
     count += users[i]->GetCount();
+    lock_count += users[i]->GetLockCount();
     backoff_count += users[i]->GetBackoffCount();
     count_with_contention += users[i]->GetCountWithContention();
     count_with_backoff += users[i]->GetCountWithBackoff();
@@ -693,6 +758,8 @@ int main(int argc, char** argv) {
 
   MPI_Reduce(&count, &total_count, 1, MPI_LONG_LONG_INT, MPI_SUM, 0,
              MPI_COMM_WORLD);
+  MPI_Reduce(&lock_count, &total_lock_count, 1, MPI_LONG_LONG_INT, MPI_SUM, 0,
+             MPI_COMM_WORLD);
   MPI_Reduce(&backoff_count, &total_backoff_count, 1, MPI_LONG_LONG_INT,
              MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Reduce(&count_with_contention, &total_count_with_contention, 1,
@@ -739,16 +806,25 @@ int main(int argc, char** argv) {
     total_throughput =
         std::accumulate(throughputs.begin(), throughputs.end(), 0ULL);
     average_throughput = total_throughput / throughputs.size();
+    std::sort(lock_throughputs.begin(), lock_throughputs.end());
+    total_lock_throughput =
+        std::accumulate(lock_throughputs.begin(), lock_throughputs.end(), 0ULL);
+    average_lock_throughput = total_lock_throughput / lock_throughputs.size();
     throughput_99pct = throughputs[floor(throughputs.size() * 0.99)];
+    cout << "Base Backoff = " << base_backoff << endl;
+    cout << "Max Backoff = " << max_backoff << endl;
     cout << "Avg. Server CPU Usage = " << average_server_cpu_usage << " %"
          << endl;
     cout << "Avg. Client CPU Usage = " << average_client_cpu_usage << " %"
          << endl;
+    cout << "Lock Count = " << total_lock_count << endl;
     cout << "Tx Count = " << total_count << endl;
     cout << "Tx Count With Contention = " << total_count_with_contention
          << endl;
     cout << "Tx Count With Backoff = " << total_count_with_backoff << endl;
     cout << "Backoff Count = " << total_backoff_count << endl;
+    cout << "Avg. Lock Throughput = " << average_lock_throughput << endl;
+    cout << "Max Lock Throughput = " << max_lock_throughput << endl;
     cout << "Avg. Throughput = " << average_throughput << endl;
     cout << "99pct Throughput = " << throughput_99pct << endl;
     cout << "Max Throughput = " << max_throughput << endl;
@@ -806,10 +882,13 @@ int main(int argc, char** argv) {
             "Nodes, # Users Per Node, # Objects Per Node, "
          << "# Retry, "
          << "Uses Random Backoff, "
-         << "Avg. Server CPU Usage, Avg. Client CPU Usage, Tx Count, Tx Count "
+         << "Base Backoff, Max Backoff, "
+         << "Avg. Server CPU Usage, Avg. Client CPU Usage, Lock Count, Tx "
+            "Count, Tx Count "
             "With Contention, "
          << "Tx Count With Backoff, "
          << "Backoff Count, "
+         << "Avg. Lock Throughput, Max Lock Throughput,"
          << "Avg. Throughput, 99pct Throughput, Max Throughput, "
          << "Avg. Latency, Avg. 99pct Latency, Avg. 99.9pct Latency, "
          << "Avg. Latency With Contention, "
@@ -838,14 +917,16 @@ int main(int argc, char** argv) {
     cout << workload_type << "," << think_time_type << ","
          << think_time_duration << "," << lock_mode_str << "," << num_managers
          << "," << num_users << "," << num_lock_object << "," << num_retry
-         << "," << random_backoff_str << "," << average_server_cpu_usage << ","
-         << average_client_cpu_usage << "," << total_count << ","
-         << total_count_with_contention << "," << total_count_with_backoff
-         << "," << total_backoff_count << "," << average_throughput << ","
-         << throughput_99pct << "," << max_throughput << ","
-         << total_average_latency << "," << total_average_99pct_latency << ","
-         << total_average_999pct_latency << ","
-         << total_average_latency_with_contention << ","
+         << "," << random_backoff_str << "," << base_backoff << ","
+         << max_backoff << "," << average_server_cpu_usage << ","
+         << average_client_cpu_usage << "," << total_lock_count << ","
+         << total_count << "," << total_count_with_contention << ","
+         << total_count_with_backoff << "," << total_backoff_count << ","
+         << average_lock_throughput << "," << max_lock_throughput << ","
+         << average_throughput << "," << throughput_99pct << ","
+         << max_throughput << "," << total_average_latency << ","
+         << total_average_99pct_latency << "," << total_average_999pct_latency
+         << "," << total_average_latency_with_contention << ","
          << total_average_99pct_latency_with_contention << ","
          << total_average_999pct_latency_with_contention << ","
          << total_average_latency_with_backoff << ","

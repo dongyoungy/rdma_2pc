@@ -3,6 +3,9 @@
 namespace rdma {
 namespace proto {
 
+double LockSimulator::kMaxBackoff = 100000;
+double LockSimulator::kBaseBackoff = 10;
+
 LockSimulator::LockSimulator(LockManager* manager, int id, int num_nodes,
                              int num_objects, int request_size,
                              string think_time_type, bool do_random_backoff)
@@ -14,11 +17,12 @@ LockSimulator::LockSimulator(LockManager* manager, int id, int num_nodes,
       max_request_size_(request_size),
       think_time_type_(think_time_type),
       do_random_backoff_(do_random_backoff),
-      count_(0),
+      trx_count_(0),
       backoff_count_(0),
       seq_count_(0),
       think_time_duration_(0),
       false_positives_(0),
+      lock_count_(0),
       d2lm_fail_rate_(0) {
   latency_.reserve(kTransactionMax);
   contention_latency_.reserve(kTransactionMax);
@@ -35,6 +39,10 @@ int LockSimulator::GetID() const { return id_; }
 void LockSimulator::SetThinkTimeDuration(int duration) {
   think_time_duration_ = duration;
 }
+
+void LockSimulator::SetBaseBackoff(double backoff) { kBaseBackoff = backoff; }
+
+void LockSimulator::SetMaxBackoff(double backoff) { kMaxBackoff = backoff; }
 
 void LockSimulator::run() {
   // Initialize requests array if empty.
@@ -167,7 +175,8 @@ void LockSimulator::run() {
                  contention_count4, contention_count5, contention_count6);
       stats_.push_back(s);
 
-      ++count_;
+      ++trx_count_;
+      lock_count_ += request_size_;
       if (time_spent_backoff > 0) {
         backoff_time_.push_back(time_spent_backoff);
       }
@@ -271,10 +280,12 @@ void LockSimulator::RevertLocks(int& index) {
 int LockSimulator::PerformRandomBackoff(int& attempt) {
   if (!do_random_backoff_) return 0;
 
-  int sleep = rng_.next(
-      std::min((double)kMaxBackoff, kBaseBackoff * pow(2.0, attempt++)));
+  double sleep =
+      rng_.nextDouble() *
+      std::min((double)kMaxBackoff, kBaseBackoff * pow(2.0, attempt++));
 
-  std::this_thread::sleep_for(std::chrono::microseconds(sleep));
+  std::this_thread::sleep_for(
+      std::chrono::microseconds((uint32_t)(std::ceil(sleep))));
 
   return sleep;
 }
@@ -291,7 +302,9 @@ void LockSimulator::Stop() {
   cerr << "Backoff count = " << backoff_count_ << endl;
 }
 
-uint64_t LockSimulator::GetCount() const { return count_; }
+uint64_t LockSimulator::GetCount() const { return trx_count_; }
+
+uint64_t LockSimulator::GetLockCount() const { return lock_count_; }
 
 uint64_t LockSimulator::GetBackoffCount() const { return backoff_count_; }
 
