@@ -1,5 +1,5 @@
 #!bin/bash
-nodes_file="nodes3"
+nodes_file="./nodes"
 
 let "count=0"
 for node in $(cat ${nodes_file}); do
