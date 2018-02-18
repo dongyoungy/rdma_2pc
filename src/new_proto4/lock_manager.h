@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "Poco/Optional.h"
+#include "Poco/Random.h"
 #include "Poco/Runnable.h"
 #include "Poco/Thread.h"
 
@@ -131,6 +132,7 @@ class LockManager : public Poco::Runnable {
   uint64_t GetTotalRDMAWriteCount() const;
   uint64_t GetTotalRDMAAtomicCASCount() const;
   uint64_t GetTotalRDMAAtomicFACount() const;
+  uint64_t GetTotalNumReset() const;
 
   double GetTotalRDMAReadTime() const;
   double GetTotalRDMAAtomicTime() const;
@@ -178,6 +180,10 @@ class LockManager : public Poco::Runnable {
     uint32_t shared = (uint32_t)value;
     uint32_t exclusive = (uint32_t)(value >> 32);
     cout << rank_ << " = " << shared << "," << exclusive << endl;
+  }
+
+  inline static void SetMaxConcurrentReads(int reads) {
+    max_concurrent_reads_ = reads;
   }
   // inline long GetLocalExclusiveToExclusiveFailCount() {
   // return llm_->GetExclusiveToExclusiveFailCount();
@@ -233,6 +239,7 @@ class LockManager : public Poco::Runnable {
 
   int LockLocallyWithRetry(Context* context, Message* message);
   int LockLocallyWithQueue(Context* context, Message* message);
+  int LockLocallyWithQueue2(Context* context, Message* message);
   int UnlockLocallyWithRetry(Context* context, Message* message);
   int UnlockLocallyWithQueue(Context* context, Message* message);
   // int LockLocally(Context* context, int user_id, int lock_type,
@@ -337,6 +344,7 @@ class LockManager : public Poco::Runnable {
   static bool is_atomic_hca_reply_be_;
   static int poll_retry_;
   static int fail_retry_;
+  static uint32_t max_concurrent_reads_;
 
   uint64_t num_local_lock_direct_pass_;
   uint64_t num_local_lock_direct_fail_;
@@ -348,6 +356,7 @@ class LockManager : public Poco::Runnable {
 
   bool write_log_;
   std::vector<FILE*> log_files_;
+  Poco::Random rng_;
 
   // used by NCOSED
   std::map<int, std::map<int, bool>> lock_grant_map_;

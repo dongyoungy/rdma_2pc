@@ -10,7 +10,10 @@ namespace rdma {
 namespace proto {
 
 struct LockRequest {
-  LockRequest() {}
+  LockRequest() {
+    wait_time = 0;
+    d2lm_increment = 1;
+  }
   LockRequest(const LockRequest& other) {
     seq_no = other.seq_no;
     lm_id = other.lm_id;
@@ -39,6 +42,13 @@ struct LockRequest {
     shared_leave = other.shared_leave;
     exclusive_max = other.exclusive_max;
     shared_max = other.shared_max;
+
+    update_number = other.update_number;
+    last_update_number = other.last_update_number;
+    update_max = other.update_max;
+
+    wait_time = other.wait_time;
+    d2lm_increment = other.d2lm_increment;
 
     rdma_send = other.rdma_send;
     rdma_atomic_cas = other.rdma_atomic_cas;
@@ -75,6 +85,12 @@ struct LockRequest {
       shared_leave = other.shared_leave;
       exclusive_max = other.exclusive_max;
       shared_max = other.shared_max;
+      wait_time = other.wait_time;
+      d2lm_increment = other.d2lm_increment;
+
+      update_number = other.update_number;
+      last_update_number = other.last_update_number;
+      update_max = other.update_max;
 
       rdma_send = other.rdma_send;
       rdma_atomic_cas = other.rdma_atomic_cas;
@@ -91,6 +107,7 @@ struct LockRequest {
   uintptr_t user_id;
   int lm_id;
   int obj_index;
+  int d2lm_increment;
   LockType lock_type;  // shared, exclusive
   Task task;           // lock, unlock
   ReadType read_target;
@@ -119,12 +136,16 @@ struct LockRequest {
 
   uint16_t last_exclusive_number = 0;
   uint16_t last_shared_number = 0;
+  uint16_t last_update_number = 0;
   uint16_t exclusive_number = 0;
   uint16_t shared_number = 0;
+  uint16_t update_number = 0;
   uint16_t exclusive_leave = 0;
   uint16_t shared_leave = 0;
   uint16_t exclusive_max = 0;
   uint16_t shared_max = 0;
+  uint16_t update_max = 0;
+  int wait_time = 0;
 
   // RDMA stats
   uint64_t rdma_send = 0;

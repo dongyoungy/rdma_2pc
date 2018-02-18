@@ -5,6 +5,7 @@ namespace proto {
 
 double LockSimulator::kMaxBackoff = 100000;
 double LockSimulator::kBaseBackoff = 10;
+long LockSimulator::kReadLockTime = 0;
 
 LockSimulator::LockSimulator(LockManager* manager, int id, int num_nodes,
                              int num_objects, int request_size,
@@ -43,6 +44,8 @@ void LockSimulator::SetThinkTimeDuration(int duration) {
 void LockSimulator::SetBaseBackoff(double backoff) { kBaseBackoff = backoff; }
 
 void LockSimulator::SetMaxBackoff(double backoff) { kMaxBackoff = backoff; }
+
+void LockSimulator::SetReadLockTime(long time) { kReadLockTime = time; }
 
 void LockSimulator::run() {
   // Initialize requests array if empty.
@@ -107,6 +110,16 @@ void LockSimulator::run() {
         LockResultInfo result_info = lock_future.get();
         if (result_info.result == SUCCESS ||
             result_info.result == SUCCESS_FROM_QUEUED) {
+          if (requests_[i]->wait_time > 0) {
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(requests_[i]->wait_time));
+          }
+          // if (lock_mode == REMOTE_D2LM_V2 &&
+          // requests_[i]->wait_time > LEASE_EXTENSION_TIME) {
+          // lock_success = false;
+          // is_failed = true;
+          //++contention_count2;
+          //}
           ++i;
         } else if (result_info.result == RETRY) {
           if (do_random_backoff_) {
@@ -148,8 +161,19 @@ void LockSimulator::run() {
             backoff_done = true;
             i = 0;
           } else if (result_info.result == SUCCESS ||
-                     result_info.result == SUCCESS_FROM_QUEUED)
+                     result_info.result == SUCCESS_FROM_QUEUED) {
+            if (requests_[i]->wait_time > 0) {
+              std::this_thread::sleep_for(
+                  std::chrono::milliseconds(requests_[i]->wait_time));
+            }
+            // if (lock_mode == REMOTE_D2LM_V2 &&
+            // requests_[i]->wait_time > LEASE_EXTENSION_TIME) {
+            // lock_success = false;
+            // is_failed = true;
+            //++contention_count2;
+            //}
             ++i;
+          }
         }
         contention_count += result_info.stat.contention_count;
         contention_count2 += result_info.stat.contention_count2;
@@ -165,9 +189,18 @@ void LockSimulator::run() {
       }
     }
     Poco::Timestamp::TimeDiff latency = lock_start.elapsed();
-    if (d2lm_fail_rate_ > 0 && rng_.nextDouble() < d2lm_fail_rate_) {
+    if (!is_failed && d2lm_fail_rate_ > 0 &&
+        rng_.nextDouble() < d2lm_fail_rate_) {
       is_failed = true;
       ++contention_count2;
+    }
+    if (!is_failed && lock_mode == REMOTE_D2LM_V2 && latency >= 10000) {
+      // is_failed = true;
+      ++contention_count6;
+    }
+    if (requests_[0]->wait_time > 0) {
+      std::this_thread::sleep_for(
+          std::chrono::milliseconds(requests_[0]->wait_time));
     }
     if (lock_success) {
       latency_.push_back(latency);  // microseconds.
@@ -175,7 +208,7 @@ void LockSimulator::run() {
                  contention_count4, contention_count5, contention_count6);
       stats_.push_back(s);
 
-      ++trx_count_;
+      if (!is_failed) ++trx_count_;
       lock_count_ += request_size_;
       if (time_spent_backoff > 0) {
         backoff_time_.push_back(time_spent_backoff);
@@ -189,15 +222,15 @@ void LockSimulator::run() {
       }
 
       // Enforce think time.
-      int think_time = think_time_gen.GetTime();
-      if (think_time == -1) {
-        cerr << "Unknown think time generator: " << think_time_type_ << endl;
-        exit(ERROR_UNKNOWN_THINK_TIME_TYPE);
-      } else if (think_time > 0) {
-        // Sleeps for 'think_time' microseconds.
-        // Note that the accuracy of this sleep is not guaranteed.
-        std::this_thread::sleep_for(std::chrono::microseconds(think_time));
-      }
+      // int think_time = think_time_gen.GetTime();
+      // if (think_time == -1) {
+      // cerr << "Unknown think time generator: " << think_time_type_ << endl;
+      // exit(ERROR_UNKNOWN_THINK_TIME_TYPE);
+      //} else if (think_time > 0) {
+      //// Sleeps for 'think_time' microseconds.
+      //// Note that the accuracy of this sleep is not guaranteed.
+      // std::this_thread::sleep_for(std::chrono::microseconds(think_time));
+      //}
       i = request_size_ - 1;
     }
 
@@ -219,9 +252,15 @@ void LockSimulator::run() {
         --i;
         continue;
       }
-      if (!requests_[i]->is_failed ||
-          manager_->IsD2LMUserDoReset(requests_[i]->lm_id, id_,
-                                      requests_[i]->obj_index)) {
+      if (requests_[i]->lock_type == SHARED_EXTEND ||
+          requests_[i]->lock_type == EXCLUSIVE_EXTEND) {
+        --i;
+        continue;
+      }
+      if (!requests_[i]->is_failed) {
+        //(lock_mode == REMOTE_D2LM_V2 &&
+        // manager_->IsD2LMUserDoReset(requests_[i]->lm_id, id_,
+        // requests_[i]->obj_index))) {
         auto& lock_result = manager_->Unlock(*requests_[i]);
         if (lock_result.isSpecified()) {
           auto lock_future = lock_result.value()->get_future();
@@ -240,6 +279,16 @@ void LockSimulator::run() {
       } else {
         --i;
       }
+    }
+    // Enforce think time.
+    int think_time = think_time_gen.GetTime();
+    if (think_time == -1) {
+      cerr << "Unknown think time generator: " << think_time_type_ << endl;
+      exit(ERROR_UNKNOWN_THINK_TIME_TYPE);
+    } else if (think_time > 0) {
+      // Sleeps for 'think_time' microseconds.
+      // Note that the accuracy of this sleep is not guaranteed.
+      std::this_thread::sleep_for(std::chrono::microseconds(think_time));
     }
 
     // Check whether the simulator has received the stop signal.

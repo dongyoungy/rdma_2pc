@@ -17,17 +17,30 @@ enum LockResult {
   SUCCESS_FROM_QUEUED,
   NODE_FAILURE
 };
-enum LockType { NONE, SHARED, EXCLUSIVE, BOTH };
+enum LockType {
+  NONE,
+  SHARED,
+  EXCLUSIVE,
+  BOTH,
+  SHARED_EXTEND,
+  EXCLUSIVE_EXTEND,
+  UPDATE,
+  TABLE_S,
+  TABLE_IS,
+  TABLE_IX
+};
 enum ReadType { READ_SHARED, READ_EXCLUSIVE, READ_ALL };
 enum LockMode {
   LOCAL,
   PROXY_RETRY,
   PROXY_QUEUE,
+  PROXY_QUEUE2,
   REMOTE_POLL,
   REMOTE_NOTIFY,
   REMOTE_DRTM,
   REMOTE_D2LM_V1,
-  REMOTE_D2LM_V2
+  REMOTE_D2LM_V2,
+  REMOTE_D2LM_UPDATE
 };
 enum Task {
   LOCK,
@@ -39,7 +52,10 @@ enum Task {
   UNDO,
   UNDO_NUMBER,
   LEAVE,
-  RESET_FOR_DEADLOCK
+  RESET_FOR_DEADLOCK,
+  TABLE_LOCK,
+  TABLE_UNLOCK,
+  UNDO_TABLE
 };
 enum ThinkTimeType { ZERO, NORMAL, SIMPLE, UNKNOWN };
 enum LockStatus { IDLE, LOCKING, LOCKED, UNLOCKING, UNLOCKED, INVALID };
@@ -52,8 +68,9 @@ const uint64_t kTPCCMaxWarehouse = 50;
 const size_t kMaxWaitQueueSize = 1000000;
 
 const uint32_t kDRTMSharedLimit = 16;
-const int kD2LMBaseReadBackoff = 5;
-const int kD2LMMaxReadBackoff = 100;
+const int kD2LMBaseReadBackoff = 20;
+const int kD2LMMaxReadBackoff = 1000;
+const int kD2LMDefaultIncrement = 1;
 const int kMaxClients = 8;
 
 const int kValueIdx = 0;
@@ -71,6 +88,21 @@ const int kExclusiveMaxBitShift = 16;
 const int kSharedNumberBitShift = 32;
 const int kExclusiveNumberBitShift = 48;
 
+const int kTableSBitShift = 0;
+const int kTableISBitShift = 20;
+const int kTableIXBitShift = 40;
+
+const uint64_t kTableSBitMask = 0xFFFFF;
+const uint64_t kTableISBitMask = 0xFFFFF00000;
+const uint64_t kTableIXBitMask = 0xFFFFF0000000000;
+
+const int kD2LMSharedMaxBitShift = 0;
+const int kD2LMExclusiveMaxBitShift = 10;
+const int kD2LMUpdateMaxBitShift = 20;
+const int kD2LMSharedNumberBitShift = 30;
+const int kD2LMExclusiveNumberBitShift = 40;
+const int kD2LMUpdateNumberBitShift = 50;
+
 const int kDRTMLockBitShift = 63;
 const int kDRTMOwnerBitShift = 55;
 const int kDRTMSharedLeaseTime = 400;  // 400 microseconds
@@ -81,7 +113,16 @@ const uint64_t kSharedNumberBitMask = 0xFFFF00000000;
 const uint64_t kExclusiveMaxBitMask = 0xFFFF0000;
 const uint64_t kSharedMaxBitMask = 0xFFFF;
 
-constexpr uint16_t kMaxPossibleNumber = 32768;  // 2^15
+const uint64_t kD2LMSharedMaxBitMask = 0x3FF;
+const uint64_t kD2LMExclusiveMaxBitMask = 0xFFC00;
+const uint64_t kD2LMUpdateMaxBitMask = 0x3FF00000;
+
+const uint64_t kD2LMSharedNumberBitMask = 0xFFC0000000;
+const uint64_t kD2LMExclusiveNumberBitMask = 0x3FF0000000000;
+const uint64_t kD2LMUpdateNumberBitMask = 0xFFC000000000000;
+
+constexpr uint16_t kMaxPossibleNumber = 32768;    // 2^15
+constexpr uint16_t kD2LMMaxPossibleNumber = 512;  // 2^9
 // constexpr uint16_t kMaxPossibleNumber = 4;  // 2^15
 
 static const int WORKLOAD_UNIFORM = 0;

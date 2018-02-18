@@ -106,12 +106,12 @@ int TPCCLockGen::GenerateScanNewOrder(
   int w_id = home_warehouse_id_;
   requests[req_idx]->lm_id = w_id;
   requests[req_idx]->lock_type = TABLE_S;
-  requests[req_idx]->obj_index = TABLE_ORDER;
+  requests[req_idx]->obj_index = TABLE_NEWORDER;
   requests[req_idx]->task = TABLE_LOCK;
   requests[req_idx]->d2lm_increment = 1;
   double time = (*normal_dist_)(generator_);
-  if (time > full_scan_time_ * 2) {
-    time = full_scan_time_ * 2;
+  if (time > full_scan_time_ * 10) {
+    time = full_scan_time_ * 10;
   } else if (time < full_scan_time_ / 2) {
     time = full_scan_time_ / 2;
   }

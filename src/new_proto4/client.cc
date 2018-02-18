@@ -38,6 +38,7 @@ Client::Client(const string& work_dir, LockManager* local_manager,
   num_rdma_read_ = 0;
   num_rdma_atomic_fa_ = 0;
   num_rdma_atomic_cas_ = 0;
+  num_reset_ = 0;
 
   local_owner_id_ = local_manager_->GetID();
   local_owner_bitvector_id_ = pow(2, local_manager_->GetID() - 1);
@@ -173,7 +174,8 @@ int Client::HandleEvent(struct rdma_cm_event* event) {
   } else if (event->event == RDMA_CM_EVENT_DISCONNECTED) {
     ret = HandleDisconnect(static_cast<Context*>(event->id->context));
   } else {
-    cerr << "Unknown event: " << event->event << "," << strerror(event->status) << endl;
+    cerr << "Unknown event: " << event->event << ", " << strerror(event->status)
+         << endl;
     Stop();
   }
   pthread_mutex_unlock(&mutex_);
@@ -233,8 +235,8 @@ int Client::HandleAddressResolved(struct rdma_cm_id* id) {
 int Client::HandleRouteResolved(struct rdma_cm_id* id) {
   struct rdma_conn_param connection_parameters;
   memset(&connection_parameters, 0x00, sizeof(connection_parameters));
-  connection_parameters.initiator_depth =
-      connection_parameters.responder_resources = 7;
+  connection_parameters.initiator_depth = 16;
+  connection_parameters.responder_resources = 16;
   connection_parameters.rnr_retry_count = 7;
 
   // connect
@@ -538,6 +540,8 @@ uint64_t Client::GetRDMAAtomicFACount() const { return num_rdma_atomic_fa_; }
 uint64_t Client::GetNumLockContention() const { return total_lock_contention_; }
 
 uint64_t Client::GetNumLockSuccess() const { return total_lock_success_; }
+
+uint64_t Client::GetNumReset() const { return num_reset_; }
 
 uint64_t Client::GetNumLockSuccessWithPoll() const {
   return total_lock_success_with_poll_;

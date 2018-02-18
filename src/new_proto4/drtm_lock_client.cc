@@ -89,7 +89,7 @@ bool DRTMLockClient::Lock(Context* context, const LockRequest& request,
     cerr << "Lock(): ibv_exp_post_send() failed: " << strerror(ret) << endl;
     return false;
   }
-  ++num_rdma_atomic_fa_;
+  ++num_rdma_atomic_cas_;
 
   return true;
 }
@@ -136,7 +136,7 @@ bool DRTMLockClient::Unlock(Context* context, const LockRequest& request) {
     cerr << "Lock(): ibv_exp_post_send() failed: " << strerror(ret) << endl;
     return false;
   }
-  ++num_rdma_atomic_fa_;
+  ++num_rdma_atomic_cas_;
 
   return true;
 }
@@ -217,11 +217,13 @@ int DRTMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     shared = (uint32_t)value;
 
     uint64_t lock_bit = value >> 63;
-    uint64_t end_time = (value & kDRTMEndTimeBitMask);
-    uint64_t now = std::chrono::duration_cast<std::chrono::microseconds>(
-                       std::chrono::system_clock::now().time_since_epoch())
-                       .count();
+    int64_t end_time = (value & kDRTMEndTimeBitMask);
+    int64_t now = std::chrono::duration_cast<std::chrono::microseconds>(
+                      std::chrono::system_clock::now().time_since_epoch())
+                      .count();
     now = (now & kDRTMEndTimeBitMask);
+
+    // cout << end_time << " : " << now << endl;
 
     if (request->task == LOCK) {
       if (request->lock_type == EXCLUSIVE) {
@@ -231,18 +233,21 @@ int DRTMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               remote_lm_id_, request->obj_index, request->contention_count,
               SUCCESS);
         } else if (lock_bit == 1) {
+          ++request->contention_count;
           local_manager_->NotifyLockRequestResult(
               request->seq_no, request->user_id, request->lock_type,
               remote_lm_id_, request->obj_index, request->contention_count,
               FAILURE);
         } else {
-          if (end_time < now) {
-            this->Lock(context_, *request, value);
-          } else {
+          if (end_time > now) {
+            ++request->contention_count;
             local_manager_->NotifyLockRequestResult(
                 request->seq_no, request->user_id, request->lock_type,
                 remote_lm_id_, request->obj_index, request->contention_count,
                 FAILURE);
+          } else {
+            ++request->contention_count;
+            this->Lock(context_, *request, value);
           }
         }
       } else if (request->lock_type == SHARED) {
@@ -252,18 +257,19 @@ int DRTMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               remote_lm_id_, request->obj_index, request->contention_count,
               SUCCESS);
         } else if (lock_bit == 1) {
+          ++request->contention_count;
           local_manager_->NotifyLockRequestResult(
               request->seq_no, request->user_id, request->lock_type,
               remote_lm_id_, request->obj_index, request->contention_count,
               FAILURE);
         } else {
-          if (end_time < now) {
-            this->Lock(context_, *request, value);
-          } else {
+          if (end_time > now) {
             local_manager_->NotifyLockRequestResult(
                 request->seq_no, request->user_id, request->lock_type,
                 remote_lm_id_, request->obj_index, request->contention_count,
                 SUCCESS);
+          } else {
+            this->Lock(context_, *request, value);
           }
         }
       }

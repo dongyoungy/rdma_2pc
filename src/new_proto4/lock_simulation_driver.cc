@@ -14,10 +14,12 @@
 #include "Poco/Thread.h"
 
 #include "d2lm_lock_client.h"
+#include "d2lm_update_lock_client.h"
 #include "hotspot_exclusive_lock_simulator.h"
 #include "hotspot_lock_simulator.h"
 #include "lock_manager.h"
 #include "lock_simulator.h"
+#include "long_lock_simulator.h"
 #include "mpi.h"
 #include "powerlaw_lock_simulator.h"
 #include "test_lock_simulator.h"
@@ -38,12 +40,13 @@ int main(int argc, char** argv) {
   // MPI_Init(&argc, &argv);
   MPI_Init(&argc, &argv);
 
-  if (argc != 14) {
+  if (argc != 15) {
     cout << "USAGE: " << argv[0] << " <work_dir> <num_lock_object> <duration>"
          << " <request_size> <num_users> <lock_mode>"
          << " <num_retry>"
          << " <workload_type> <think_time_type> <think_time_duration> "
             "<enable_random_backoff> <base_backoff> <max_backoff> "
+            "<read_lock_time> "
          << endl;
     exit(1);
   }
@@ -75,6 +78,7 @@ int main(int argc, char** argv) {
   string random_backoff_str = argv[k++];
   double base_backoff = atof(argv[k++]);
   double max_backoff = atof(argv[k++]);
+  int read_lock_time = atoi(argv[k++]);
 
   int d2lm_deadlock_limit = 0;
   bool d2lm_do_read_backoff = false;
@@ -103,6 +107,16 @@ int main(int argc, char** argv) {
   int tpcc_dist2_num_client = tpcc_dist2_num_server * 4;
   if (lock_mode_str == "traditional") {
     lock_mode = PROXY_QUEUE;
+  } else if (strncasecmp(lock_mode_str.c_str(), "traditional2", 12) == 0) {
+    lock_mode = PROXY_QUEUE2;
+    Poco::StringTokenizer tokenizer(lock_mode_str, "_",
+                                    Poco::StringTokenizer::TOK_TRIM);
+    if (tokenizer.count() < 2) {
+      cerr << "Incorrect number of tokens for traditional2." << endl;
+      exit(ERROR_INVALID_LOCK_MODE);
+    }
+    int max_concurrent_reads = Poco::NumberParser::parse(tokenizer[1]);
+    LockManager::SetMaxConcurrentReads(max_concurrent_reads);
   } else if (lock_mode_str == "simple_retry") {
     lock_mode = REMOTE_POLL;
     LockManager::SetSharedExclusiveRule("fail");
@@ -115,6 +129,19 @@ int main(int argc, char** argv) {
     LockManager::SetExclusiveExclusiveRule("fail");
   } else if (lock_mode_str == "ncosed") {
     lock_mode = REMOTE_NOTIFY;
+  } else if (strncasecmp(lock_mode_str.c_str(), "d2lmu", 5) == 0) {
+    lock_mode = REMOTE_D2LM_UPDATE;
+    Poco::StringTokenizer tokenizer(lock_mode_str, "_",
+                                    Poco::StringTokenizer::TOK_TRIM);
+    if (tokenizer.count() < 2) {
+      cerr << "Incorrect number of tokens for D2LM." << endl;
+      exit(ERROR_INVALID_LOCK_MODE);
+    }
+    d2lm_deadlock_limit = Poco::NumberParser::parse(tokenizer[1]);
+    if (tokenizer.count() == 3) {
+      d2lm_fail_rate = Poco::NumberParser::parseFloat(tokenizer[2]);
+    }
+    d2lm_do_read_backoff = (tokenizer.count() == 4) ? true : false;
   } else if (strncasecmp(lock_mode_str.c_str(), "d2lm", 4) == 0) {
     lock_mode = REMOTE_D2LM_V2;
     Poco::StringTokenizer tokenizer(lock_mode_str, "_",
@@ -124,10 +151,10 @@ int main(int argc, char** argv) {
       exit(ERROR_INVALID_LOCK_MODE);
     }
     d2lm_deadlock_limit = Poco::NumberParser::parse(tokenizer[1]);
-    // d2lm_do_read_backoff = (tokenizer.count() == 3) ? true : false;
     if (tokenizer.count() == 3) {
       d2lm_fail_rate = Poco::NumberParser::parseFloat(tokenizer[2]);
     }
+    d2lm_do_read_backoff = (tokenizer.count() == 4) ? true : false;
   } else {
     cerr << "Invalid lock mode: " << lock_mode_str << endl;
     exit(ERROR_INVALID_LOCK_MODE);
@@ -163,11 +190,15 @@ int main(int argc, char** argv) {
 
   LockSimulator::SetBaseBackoff(base_backoff);
   LockSimulator::SetMaxBackoff(max_backoff);
+  LockSimulator::SetReadLockTime(read_lock_time);
   LockManager::SetFailRetry(num_retry);
   LockManager::SetPollRetry(num_retry);
   D2LMLockClient::SetDeadLockLimit(d2lm_deadlock_limit);
   D2LMLockClient::SetReadBackoff(d2lm_do_read_backoff);
   D2LMLockClient::SetFailRate(d2lm_fail_rate);
+  D2LMUpdateLockClient::SetDeadLockLimit(d2lm_deadlock_limit);
+  D2LMUpdateLockClient::SetReadBackoff(d2lm_do_read_backoff);
+  D2LMUpdateLockClient::SetFailRate(d2lm_fail_rate);
   LockManager* lock_manager =
       new LockManager(argv[1], rank, num_managers, num_lock_object, lock_mode);
 
@@ -200,6 +231,10 @@ int main(int argc, char** argv) {
       simulator = new HotspotLockSimulator(lock_manager, id, num_managers,
                                            num_lock_object, request_size,
                                            think_time_type, do_random_backoff);
+    } else if (strncasecmp(workload_type.c_str(), "powerlaw_update", 15) == 0) {
+      simulator = new PowerlawLockSimulator(
+          lock_manager, id, num_managers, num_lock_object, request_size,
+          think_time_type, do_random_backoff, 2.0, 0.5, true);
     } else if (strncasecmp(workload_type.c_str(), "powerlaw", 8) == 0) {
       Poco::StringTokenizer tokenizer(workload_type, "_",
                                       Poco::StringTokenizer::TOK_TRIM);
@@ -210,9 +245,35 @@ int main(int argc, char** argv) {
       double exponent = Poco::NumberParser::parseFloat(tokenizer[1]);
       double shared_lock_ratio = Poco::NumberParser::parseFloat(tokenizer[2]);
 
-      simulator = new PowerlawLockSimulator(
+      simulator = new PowerlawLockSimulator(lock_manager, id, num_managers,
+                                            num_lock_object, request_size,
+                                            think_time_type, do_random_backoff,
+                                            exponent, shared_lock_ratio, false);
+    } else if (strncasecmp(workload_type.c_str(), "long", 4) == 0) {
+      Poco::StringTokenizer tokenizer(workload_type, "_",
+                                      Poco::StringTokenizer::TOK_TRIM);
+      if (tokenizer.count() < 3) {
+        cerr << "Incorrect number of tokens for Long lock simulator." << endl;
+        exit(ERROR_INVALID_LOCK_MODE);
+      }
+      double exponent = 2.0;
+      double shared_lock_ratio = 0.5;
+      double full_scan_ratio = Poco::NumberParser::parseFloat(tokenizer[1]);
+      int full_scan_time = Poco::NumberParser::parse(tokenizer[2]);
+      bool require_extension = false;
+      if (tokenizer.count() == 4) {
+        require_extension = true;
+      }
+      simulator = new LongLockSimulator(
           lock_manager, id, num_managers, num_lock_object, request_size,
-          think_time_type, do_random_backoff, exponent, shared_lock_ratio);
+          think_time_type, do_random_backoff, exponent, shared_lock_ratio,
+          full_scan_ratio, full_scan_time, require_extension);
+      if (i == 0 && rank == 0) {
+        cout << "Full scan ratio = " << full_scan_ratio << endl;
+        cout << "Full scan time = " << full_scan_time << endl;
+        cout << "Require extension = " << (require_extension ? "TRUE" : "FALSE")
+             << endl;
+      }
     } else if (workload_type == "hotspot-exclusive") {
       simulator = new HotspotExclusiveLockSimulator(
           lock_manager, id, num_managers, num_lock_object, request_size,
@@ -259,6 +320,30 @@ int main(int argc, char** argv) {
           lock_manager, id, num_managers / 4, num_lock_object, think_time_type,
           do_random_backoff, (rank - (num_managers / 2)) % (num_managers / 4),
           true);
+    } else if (strncasecmp(workload_type.c_str(), "tpcc-random-long", 15) ==
+               0) {
+      Poco::StringTokenizer tokenizer(workload_type, "_",
+                                      Poco::StringTokenizer::TOK_TRIM);
+      if (tokenizer.count() != 5) {
+        cerr << "Incorrect number of tokens for TPCC simulator." << endl;
+        exit(ERROR_INVALID_LOCK_MODE);
+      }
+      int num_warehouse = 1;
+      if (tokenizer.count() == 2) {
+        num_warehouse = Poco::NumberParser::parse(tokenizer[1]);
+      }
+      double full_scan_ratio = Poco::NumberParser::parseFloat(tokenizer[2]);
+      int full_scan_rows = Poco::NumberParser::parse(tokenizer[3]);
+      int full_scan_time = Poco::NumberParser::parse(tokenizer[4]);
+      if (i == 0 && rank == 0) {
+        cout << "Full scan ratio = " << full_scan_ratio << endl;
+        cout << "Full scan rows = " << full_scan_rows << endl;
+        cout << "Full scan time = " << full_scan_time << endl;
+      }
+      simulator = new TPCCLockSimulator(
+          lock_manager, id, (num_managers / 2), num_lock_object,
+          think_time_type, do_random_backoff, id % (num_managers / 2), true,
+          num_warehouse, full_scan_ratio, full_scan_rows, full_scan_time);
     } else if (strncasecmp(workload_type.c_str(), "tpcc-random", 11) == 0) {
       Poco::StringTokenizer tokenizer(workload_type, "_",
                                       Poco::StringTokenizer::TOK_TRIM);
@@ -560,7 +645,8 @@ int main(int argc, char** argv) {
   MPI_Barrier(MPI_COMM_WORLD);
 
   // Simple sanity check.
-  if (lock_mode != REMOTE_D2LM_V2 && lock_mode != REMOTE_DRTM) {
+  if (lock_mode != REMOTE_D2LM_V2 && lock_mode != REMOTE_D2LM_UPDATE &&
+      lock_mode != REMOTE_DRTM) {
     if (lock_manager->lock_table_[0] != 0) {
       cerr << "Value of index 0 is not zero: " << lock_manager->lock_table_[0]
            << endl;
@@ -655,6 +741,8 @@ int main(int argc, char** argv) {
   uint64_t rdma_recv = lock_manager->GetTotalRDMARecvCount();
   uint64_t rdma_atomic_fa = lock_manager->GetTotalRDMAAtomicFACount();
   uint64_t rdma_atomic_cas = lock_manager->GetTotalRDMAAtomicCASCount();
+  uint64_t d2lm_lock_reset = lock_manager->GetTotalNumReset();
+
   uint64_t total_rdma_read = 0;
   uint64_t total_rdma_write = 0;
   uint64_t total_rdma_send = 0;
@@ -662,6 +750,7 @@ int main(int argc, char** argv) {
   uint64_t total_rdma_atomic_fa = 0;
   uint64_t total_rdma_atomic_cas = 0;
   uint64_t total_rdma_op = 0;
+  uint64_t total_d2lm_lock_reset = 0;
 
   for (int i = 0; i < num_users; ++i) {
     users[i]->SortLatency();
@@ -781,6 +870,8 @@ int main(int argc, char** argv) {
              MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Reduce(&rdma_atomic_fa, &total_rdma_atomic_fa, 1, MPI_LONG_LONG_INT,
              MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&d2lm_lock_reset, &total_d2lm_lock_reset, 1, MPI_LONG_LONG_INT,
+             MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Barrier(MPI_COMM_WORLD);
 
   if (rank == 0) {
@@ -876,6 +967,7 @@ int main(int argc, char** argv) {
     cout << "Total RDMA Op = " << total_rdma_op << endl;
     cout << "Total False Positives (D2LM Only) = " << total_false_positives
          << endl;
+    cout << "Total Lock Reset (D2LM Only) = " << total_d2lm_lock_reset << endl;
 
     // Print as CVS at the end.
     cout << "Workload, Think Time Type, Think Time Duration, Lock Mode, # "
@@ -883,6 +975,7 @@ int main(int argc, char** argv) {
          << "# Retry, "
          << "Uses Random Backoff, "
          << "Base Backoff, Max Backoff, "
+         << "Read Lock Time, "
          << "Avg. Server CPU Usage, Avg. Client CPU Usage, Lock Count, Tx "
             "Count, Tx Count "
             "With Contention, "
@@ -913,20 +1006,22 @@ int main(int argc, char** argv) {
          << "RDMA CAS, "
          << "RDMA FA, "
          << "RDMA Total,"
-         << "False Positives On Deadlock (D2LM Only)" << endl;
+         << "False Positives On Deadlock (D2LM Only),"
+         << "Total Lock Reset (D2LM Only)" << endl;
     cout << workload_type << "," << think_time_type << ","
          << think_time_duration << "," << lock_mode_str << "," << num_managers
          << "," << num_users << "," << num_lock_object << "," << num_retry
          << "," << random_backoff_str << "," << base_backoff << ","
-         << max_backoff << "," << average_server_cpu_usage << ","
-         << average_client_cpu_usage << "," << total_lock_count << ","
-         << total_count << "," << total_count_with_contention << ","
-         << total_count_with_backoff << "," << total_backoff_count << ","
-         << average_lock_throughput << "," << max_lock_throughput << ","
-         << average_throughput << "," << throughput_99pct << ","
-         << max_throughput << "," << total_average_latency << ","
-         << total_average_99pct_latency << "," << total_average_999pct_latency
-         << "," << total_average_latency_with_contention << ","
+         << max_backoff << "," << read_lock_time << ","
+         << average_server_cpu_usage << "," << average_client_cpu_usage << ","
+         << total_lock_count << "," << total_count << ","
+         << total_count_with_contention << "," << total_count_with_backoff
+         << "," << total_backoff_count << "," << average_lock_throughput << ","
+         << max_lock_throughput << "," << average_throughput << ","
+         << throughput_99pct << "," << max_throughput << ","
+         << total_average_latency << "," << total_average_99pct_latency << ","
+         << total_average_999pct_latency << ","
+         << total_average_latency_with_contention << ","
          << total_average_99pct_latency_with_contention << ","
          << total_average_999pct_latency_with_contention << ","
          << total_average_latency_with_backoff << ","
@@ -947,7 +1042,8 @@ int main(int argc, char** argv) {
          << total_rdma_read << "," << total_rdma_write << "," << total_rdma_send
          << "," << total_rdma_recv << "," << total_rdma_atomic_cas << ","
          << total_rdma_atomic_fa << "," << total_rdma_op << ","
-         << total_false_positives << "," << endl;
+         << total_false_positives << "," << total_d2lm_lock_reset << ","
+         << endl;
   }
   MPI_Finalize();
 }

@@ -1,72 +1,69 @@
-#include "d2lm_lock_client.h"
+#include "d2lm_update_lock_client.h"
 
 namespace rdma {
 namespace proto {
 
-int D2LMLockClient::kD2LMDeadlockLimit = 100000;
-bool D2LMLockClient::kDoReadBackoff = false;
-double D2LMLockClient::kD2LMFailRate = 0;
+int D2LMUpdateLockClient::kD2LMDeadlockLimit = 100000;
+bool D2LMUpdateLockClient::kDoReadBackoff = false;
+double D2LMUpdateLockClient::kD2LMFailRate = 0;
 // constructor
-D2LMLockClient::D2LMLockClient(const string& work_dir,
-                               LockManager* local_manager,
-                               uint32_t local_user_count, uint32_t remote_lm_id)
+D2LMUpdateLockClient::D2LMUpdateLockClient(const string& work_dir,
+                                           LockManager* local_manager,
+                                           uint32_t local_user_count,
+                                           uint32_t remote_lm_id)
     : LockClient(work_dir, local_manager, local_user_count, remote_lm_id) {
   rng_.seed();
 }
 
 // destructor
-D2LMLockClient::~D2LMLockClient() {}
+D2LMUpdateLockClient::~D2LMUpdateLockClient() {}
 
-void D2LMLockClient::SetDeadLockLimit(int limit) { kD2LMDeadlockLimit = limit; }
+void D2LMUpdateLockClient::SetDeadLockLimit(int limit) {
+  kD2LMDeadlockLimit = limit;
+}
 
-void D2LMLockClient::SetReadBackoff(bool backoff) { kDoReadBackoff = backoff; }
+void D2LMUpdateLockClient::SetReadBackoff(bool backoff) {
+  kDoReadBackoff = backoff;
+}
 
-void D2LMLockClient::SetFailRate(double rate) { kD2LMFailRate = rate; }
+void D2LMUpdateLockClient::SetFailRate(double rate) { kD2LMFailRate = rate; }
 
-int D2LMLockClient::GetDeadlockLimit() { return kD2LMDeadlockLimit; }
+int D2LMUpdateLockClient::GetDeadlockLimit() { return kD2LMDeadlockLimit; }
 
-double D2LMLockClient::GetFailRate() { return kD2LMFailRate; }
+double D2LMUpdateLockClient::GetFailRate() { return kD2LMFailRate; }
 
-bool D2LMLockClient::GetDoReset(uintptr_t user_id, int obj_index) {
+bool D2LMUpdateLockClient::GetDoReset(uintptr_t user_id, int obj_index) {
   return do_reset_[user_id][obj_index];
 }
 
-uint64_t D2LMLockClient::GetLockValue(uint16_t exclusive_number,
-                                      uint16_t shared_number,
-                                      uint16_t exclusive_max,
-                                      uint16_t shared_max) const {
-  return (uint64_t)exclusive_number << kExclusiveNumberBitShift |
-         (uint64_t)shared_number << kSharedNumberBitShift |
-         (uint64_t)exclusive_max << kExclusiveMaxBitShift |
+uint64_t D2LMUpdateLockClient::GetLockValue(
+    uint16_t update_number, uint16_t exclusive_number, uint16_t shared_number,
+    uint16_t update_max, uint16_t exclusive_max, uint16_t shared_max) const {
+  return (uint64_t)update_number << kD2LMUpdateNumberBitShift |
+         (uint64_t)exclusive_number << kD2LMExclusiveNumberBitShift |
+         (uint64_t)shared_number << kD2LMSharedNumberBitShift |
+         (uint64_t)update_max << kD2LMUpdateMaxBitShift |
+         (uint64_t)exclusive_max << kD2LMExclusiveMaxBitShift |
          (uint64_t)shared_max;
 }
-bool D2LMLockClient::RequestLock(const LockRequest& request,
-                                 LockMode lock_mode) {
+bool D2LMUpdateLockClient::RequestLock(const LockRequest& request,
+                                       LockMode lock_mode) {
   // try locking remotely
-  if (request.task == LOCK) {
-    return this->Lock(context_, request);
-  } else if (request.task == TABLE_LOCK) {
-    return this->TableLock(context_, request);
+  return this->Lock(context_, request);
+}
+
+bool D2LMUpdateLockClient::RequestUnlock(const LockRequest& request,
+                                         LockMode lock_mode) {
+  if (request.is_failed == false) {
+    return this->Unlock(context_, request);
+  } else if (request.is_failed == true &&
+             do_reset_[request.user_id][request.obj_index]) {
+    return this->Unlock(context_, request);
   }
   return true;
 }
 
-bool D2LMLockClient::RequestUnlock(const LockRequest& request,
-                                   LockMode lock_mode) {
-  if (request.task == LOCK) {
-    if (request.is_failed == false) {
-      return this->Unlock(context_, request);
-    } else if (request.is_failed == true &&
-               do_reset_[request.user_id][request.obj_index]) {
-      return this->Unlock(context_, request);
-    }
-  } else if (request.task == TABLE_LOCK) {
-    return this->TableUnlock(context_, request);
-  }
-  return true;
-}
-
-void D2LMLockClient::PerformReadBackoff(const LockRequest& request) {
+void D2LMUpdateLockClient::PerformReadBackoff(const LockRequest& request) {
   if (!kDoReadBackoff) return;
 
   // double sleep_time =
@@ -83,13 +80,15 @@ void D2LMLockClient::PerformReadBackoff(const LockRequest& request) {
   if (request.lock_type == EXCLUSIVE) {
     interval =
         (request.exclusive_max - request.exclusive_number) +
-        ceil((double)(request.shared_max - request.shared_number) / (double)10);
-  } else if (request.lock_type == SHARED) {
-    interval = (request.exclusive_max - request.exclusive_number);
+        (request.update_max - request.update_number) +
+        ceil((double)(request.shared_max - request.shared_number) / (double)2);
+  } else if (request.lock_type == SHARED || request.lock_type == UPDATE) {
+    interval = (request.exclusive_max - request.exclusive_number) +
+               (request.update_max - request.update_number);
   }
   if (interval > 0) {
+    interval = interval;
     sleep_time = std::min(kD2LMMaxReadBackoff, interval * kD2LMBaseReadBackoff);
-    //(request.contention_count));
     // std::this_thread::sleep_for(std::chrono::microseconds(sleep_time));
     Poco::Timestamp stamp;
     while (stamp.elapsed() < sleep_time) {
@@ -98,139 +97,7 @@ void D2LMLockClient::PerformReadBackoff(const LockRequest& request) {
   }
 }
 
-bool D2LMLockClient::TableLock(Context* context, const LockRequest& request) {
-  Poco::FastMutex::ScopedLock lock(fast_mutex_);
-
-  struct ibv_exp_send_wr send_work_request;
-  struct ibv_exp_send_wr* bad_work_request;
-  struct ibv_sge sge;
-
-  memset(&send_work_request, 0x00, sizeof(send_work_request));
-
-  LockRequest* current_request = lock_requests_[lock_request_idx_].get();
-  *current_request = request;
-  current_request->task = TABLE_LOCK;
-  current_request->deadlock_count = 0;
-  lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
-
-  sge.addr = (uint64_t)&current_request->original_value;
-  sge.length = sizeof(uint64_t);
-  sge.lkey = current_request->original_value_mr->lkey;
-
-  send_work_request.wr_id = (uintptr_t)current_request;
-  send_work_request.num_sge = 1;
-  send_work_request.sg_list = &sge;
-  send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
-  send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
-
-  uint64_t value = 1;
-  int bits_to_shift = 0;
-
-  switch (current_request->lock_type) {
-    case TABLE_S: {
-      bits_to_shift = kTableSBitShift;
-      break;
-    }
-    case TABLE_IS: {
-      bits_to_shift = kTableISBitShift;
-      break;
-    }
-    case TABLE_IX: {
-      bits_to_shift = kTableIXBitShift;
-      break;
-    }
-    default: {
-      cerr << "Invalid lock type: " << current_request->lock_type << endl;
-      return false;
-      break;
-    }
-  }
-  uint64_t new_value = value << bits_to_shift;
-  send_work_request.wr.atomic.compare_add = new_value;
-
-  send_work_request.wr.atomic.remote_addr =
-      (uint64_t)context->lock_table_mr->addr +
-      (current_request->obj_index * sizeof(uint64_t));
-  send_work_request.wr.atomic.rkey = context->lock_table_mr->rkey;
-
-  int ret = 0;
-  if ((ret = ibv_exp_post_send(context->queue_pair, &send_work_request,
-                               &bad_work_request))) {
-    cerr << "Lock(): ibv_exp_post_send() failed: " << strerror(ret) << endl;
-    return false;
-  }
-  ++num_rdma_atomic_fa_;
-
-  return true;
-}
-
-bool D2LMLockClient::TableUnlock(Context* context, const LockRequest& request) {
-  Poco::FastMutex::ScopedLock lock(fast_mutex_);
-
-  struct ibv_exp_send_wr send_work_request;
-  struct ibv_exp_send_wr* bad_work_request;
-  struct ibv_sge sge;
-
-  memset(&send_work_request, 0x00, sizeof(send_work_request));
-
-  LockRequest* current_request = lock_requests_[lock_request_idx_].get();
-  *current_request = request;
-  current_request->task = TABLE_UNLOCK;
-  current_request->deadlock_count = 0;
-  lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
-
-  sge.addr = (uint64_t)&current_request->original_value;
-  sge.length = sizeof(uint64_t);
-  sge.lkey = current_request->original_value_mr->lkey;
-
-  send_work_request.wr_id = (uintptr_t)current_request;
-  send_work_request.num_sge = 1;
-  send_work_request.sg_list = &sge;
-  send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
-  send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
-
-  uint64_t value = 1;
-  int bits_to_shift = 0;
-
-  switch (current_request->lock_type) {
-    case TABLE_S: {
-      bits_to_shift = kTableSBitShift;
-      break;
-    }
-    case TABLE_IS: {
-      bits_to_shift = kTableISBitShift;
-      break;
-    }
-    case TABLE_IX: {
-      bits_to_shift = kTableIXBitShift;
-      break;
-    }
-    default: {
-      cerr << "Invalid lock type: " << current_request->lock_type << endl;
-      return false;
-      break;
-    }
-  }
-  uint64_t new_value = value << bits_to_shift;
-  send_work_request.wr.atomic.compare_add = (-1) * new_value;
-
-  send_work_request.wr.atomic.remote_addr =
-      (uint64_t)context->lock_table_mr->addr +
-      (current_request->obj_index * sizeof(uint64_t));
-  send_work_request.wr.atomic.rkey = context->lock_table_mr->rkey;
-
-  int ret = 0;
-  if ((ret = ibv_exp_post_send(context->queue_pair, &send_work_request,
-                               &bad_work_request))) {
-    cerr << "Lock(): ibv_exp_post_send() failed: " << strerror(ret) << endl;
-    return false;
-  }
-  ++num_rdma_atomic_fa_;
-
-  return true;
-}
-
-bool D2LMLockClient::Lock(Context* context, const LockRequest& request) {
+bool D2LMUpdateLockClient::Lock(Context* context, const LockRequest& request) {
   Poco::FastMutex::ScopedLock lock(fast_mutex_);
 
   struct ibv_exp_send_wr send_work_request;
@@ -261,7 +128,7 @@ bool D2LMLockClient::Lock(Context* context, const LockRequest& request) {
 
   switch (current_request->lock_type) {
     case SHARED: {
-      bits_to_shift = kSharedMaxBitShift;
+      bits_to_shift = kD2LMSharedMaxBitShift;
       // extend_count_[current_request->obj_index] = 0;
       break;
     }
@@ -272,7 +139,7 @@ bool D2LMLockClient::Lock(Context* context, const LockRequest& request) {
       break;
     }
     case EXCLUSIVE: {
-      bits_to_shift = kExclusiveMaxBitShift;
+      bits_to_shift = kD2LMExclusiveMaxBitShift;
       // extend_count_[current_request->obj_index] = 0;
       break;
     }
@@ -280,6 +147,11 @@ bool D2LMLockClient::Lock(Context* context, const LockRequest& request) {
       value = 1;
       // extend_count_[current_request->obj_index]++;
       bits_to_shift = kExclusiveNumberBitShift;
+      break;
+    }
+    case UPDATE: {
+      value = 1;
+      bits_to_shift = kD2LMUpdateMaxBitShift;
       break;
     }
     default: {
@@ -307,7 +179,8 @@ bool D2LMLockClient::Lock(Context* context, const LockRequest& request) {
   return true;
 }
 
-bool D2LMLockClient::Unlock(Context* context, const LockRequest& request) {
+bool D2LMUpdateLockClient::Unlock(Context* context,
+                                  const LockRequest& request) {
   Poco::FastMutex::ScopedLock lock(fast_mutex_);
 
   struct ibv_exp_send_wr send_work_request;
@@ -336,12 +209,17 @@ bool D2LMLockClient::Unlock(Context* context, const LockRequest& request) {
   int bits_to_shift = 0;
   switch (current_request->lock_type) {
     case SHARED: {
-      bits_to_shift = kSharedNumberBitShift;
+      bits_to_shift = kD2LMSharedNumberBitShift;
       // value -= extend_count_[current_request->obj_index];
       break;
     }
     case EXCLUSIVE: {
-      bits_to_shift = kExclusiveNumberBitShift;
+      bits_to_shift = kD2LMExclusiveNumberBitShift;
+      // value -= extend_count_[current_request->obj_index];
+      break;
+    }
+    case UPDATE: {
+      bits_to_shift = kD2LMUpdateNumberBitShift;
       // value -= extend_count_[current_request->obj_index];
       break;
     }
@@ -369,7 +247,7 @@ bool D2LMLockClient::Unlock(Context* context, const LockRequest& request) {
   return true;
 }
 
-bool D2LMLockClient::Read(Context* context, const LockRequest& request) {
+bool D2LMUpdateLockClient::Read(Context* context, const LockRequest& request) {
   Poco::FastMutex::ScopedLock lock(fast_mutex_);
   struct ibv_exp_send_wr send_work_request;
   struct ibv_exp_send_wr* bad_work_request;
@@ -409,8 +287,8 @@ bool D2LMLockClient::Read(Context* context, const LockRequest& request) {
   return 0;
 }
 
-bool D2LMLockClient::ReadForReset(Context* context,
-                                  const LockRequest& request) {
+bool D2LMUpdateLockClient::ReadForReset(Context* context,
+                                        const LockRequest& request) {
   Poco::FastMutex::ScopedLock lock(fast_mutex_);
   struct ibv_exp_send_wr send_work_request;
   struct ibv_exp_send_wr* bad_work_request;
@@ -450,7 +328,7 @@ bool D2LMLockClient::ReadForReset(Context* context,
   return 0;
 }
 
-bool D2LMLockClient::Reset(Context* context, const LockRequest& request) {
+bool D2LMUpdateLockClient::Reset(Context* context, const LockRequest& request) {
   Poco::FastMutex::ScopedLock lock(fast_mutex_);
   struct ibv_exp_send_wr send_work_request;
   struct ibv_exp_send_wr* bad_work_request;
@@ -492,9 +370,9 @@ bool D2LMLockClient::Reset(Context* context, const LockRequest& request) {
   return true;
 }
 
-bool D2LMLockClient::ResetForDeadlock(Context* context,
-                                      const LockRequest& request, uint64_t from,
-                                      uint64_t to) {
+bool D2LMUpdateLockClient::ResetForDeadlock(Context* context,
+                                            const LockRequest& request,
+                                            uint64_t from, uint64_t to) {
   Poco::FastMutex::ScopedLock lock(fast_mutex_);
   struct ibv_exp_send_wr send_work_request;
   struct ibv_exp_send_wr* bad_work_request;
@@ -538,72 +416,7 @@ bool D2LMLockClient::ResetForDeadlock(Context* context,
   return true;
 }
 
-bool D2LMLockClient::UndoTable(Context* context, const LockRequest& request) {
-  Poco::FastMutex::ScopedLock lock(fast_mutex_);
-
-  struct ibv_exp_send_wr send_work_request;
-  struct ibv_exp_send_wr* bad_work_request;
-  struct ibv_sge sge;
-
-  memset(&send_work_request, 0x00, sizeof(send_work_request));
-
-  LockRequest* current_request = lock_requests_[lock_request_idx_].get();
-  *current_request = request;
-  current_request->task = UNDO_TABLE;
-  lock_request_idx_ = (lock_request_idx_ + 1) % MAX_LOCAL_THREADS;
-
-  sge.addr = (uint64_t)&current_request->original_value;
-  sge.length = sizeof(uint64_t);
-  sge.lkey = current_request->original_value_mr->lkey;
-
-  send_work_request.wr_id = (uintptr_t)current_request;
-  send_work_request.num_sge = 1;
-  send_work_request.sg_list = &sge;
-  send_work_request.exp_send_flags = IBV_EXP_SEND_SIGNALED;
-  send_work_request.exp_opcode = IBV_EXP_WR_ATOMIC_FETCH_AND_ADD;
-
-  uint64_t value = 1;
-  int bits_to_shift = 0;
-
-  switch (current_request->lock_type) {
-    case TABLE_S: {
-      bits_to_shift = kTableSBitShift;
-      break;
-    }
-    case TABLE_IS: {
-      bits_to_shift = kTableISBitShift;
-      break;
-    }
-    case TABLE_IX: {
-      bits_to_shift = kTableIXBitShift;
-      break;
-    }
-    default: {
-      cerr << "Invalid lock type: " << current_request->lock_type << endl;
-      return false;
-      break;
-    }
-  }
-  uint64_t new_value = value << bits_to_shift;
-  send_work_request.wr.atomic.compare_add = (-1) * new_value;
-
-  send_work_request.wr.atomic.remote_addr =
-      (uint64_t)context->lock_table_mr->addr +
-      (current_request->obj_index * sizeof(uint64_t));
-  send_work_request.wr.atomic.rkey = context->lock_table_mr->rkey;
-
-  int ret = 0;
-  if ((ret = ibv_exp_post_send(context->queue_pair, &send_work_request,
-                               &bad_work_request))) {
-    cerr << "Undo(): ibv_exp_post_send() failed: " << strerror(ret) << endl;
-    return false;
-  }
-  ++num_rdma_atomic_fa_;
-
-  return true;
-}
-
-bool D2LMLockClient::Undo(Context* context, const LockRequest& request) {
+bool D2LMUpdateLockClient::Undo(Context* context, const LockRequest& request) {
   Poco::FastMutex::ScopedLock lock(fast_mutex_);
 
   struct ibv_exp_send_wr send_work_request;
@@ -632,11 +445,15 @@ bool D2LMLockClient::Undo(Context* context, const LockRequest& request) {
 
   switch (current_request->lock_type) {
     case SHARED: {
-      bits_to_shift = kSharedMaxBitShift;
+      bits_to_shift = kD2LMSharedMaxBitShift;
       break;
     }
     case EXCLUSIVE: {
-      bits_to_shift = kExclusiveMaxBitShift;
+      bits_to_shift = kD2LMExclusiveMaxBitShift;
+      break;
+    }
+    case UPDATE: {
+      bits_to_shift = kD2LMUpdateMaxBitShift;
       break;
     }
     default: {
@@ -664,7 +481,8 @@ bool D2LMLockClient::Undo(Context* context, const LockRequest& request) {
   return true;
 }
 
-bool D2LMLockClient::UndoNumber(Context* context, const LockRequest& request) {
+bool D2LMUpdateLockClient::UndoNumber(Context* context,
+                                      const LockRequest& request) {
   Poco::FastMutex::ScopedLock lock(fast_mutex_);
 
   struct ibv_exp_send_wr send_work_request;
@@ -693,11 +511,15 @@ bool D2LMLockClient::UndoNumber(Context* context, const LockRequest& request) {
 
   switch (current_request->lock_type) {
     case SHARED: {
-      bits_to_shift = kSharedNumberBitShift;
+      bits_to_shift = kD2LMSharedNumberBitShift;
       break;
     }
     case EXCLUSIVE: {
-      bits_to_shift = kExclusiveNumberBitShift;
+      bits_to_shift = kD2LMExclusiveNumberBitShift;
+      break;
+    }
+    case UPDATE: {
+      bits_to_shift = kD2LMUpdateNumberBitShift;
       break;
     }
     default: {
@@ -726,7 +548,7 @@ bool D2LMLockClient::UndoNumber(Context* context, const LockRequest& request) {
   return true;
 }
 
-int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
+int D2LMUpdateLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
   Context* context = (Context*)work_completion->wr_id;
 
   if (work_completion->status == IBV_WC_REM_INV_REQ_ERR ||
@@ -735,7 +557,7 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     // LM failed.
     // It should let local manager know that this particular remote lock manager
     // is unavailable + any request that has been made also failed.
-    cerr << "(D2LMLockClient) Detected Node Failure: "
+    cerr << "(D2LMUpdateLockClient) Detected Node Failure: "
          << work_completion->status << " from LM " << remote_lm_id_ << endl;
     local_manager_->SetRemoteManagerAvailability(remote_lm_id_);
 
@@ -770,7 +592,8 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     }
     return -1;
   } else if (work_completion->status != IBV_WC_SUCCESS) {
-    cerr << "(D2LMLockClient) Work completion status is not IBV_WC_SUCCESS: "
+    cerr << "(D2LMUpdateLockClient) Work completion status is not "
+            "IBV_WC_SUCCESS: "
          << work_completion->status << " from LM " << remote_lm_id_ << endl;
     return -1;
   }
@@ -826,18 +649,22 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       }
     } else if (request->task == RESET_FOR_DEADLOCK) {
       uint16_t current_exclusive_number =
-          (value & kExclusiveNumberBitMask) >> kExclusiveNumberBitShift;
+          (value & kD2LMExclusiveNumberBitMask) >> kD2LMExclusiveNumberBitShift;
       uint16_t current_shared_number =
-          (value & kSharedNumberBitMask) >> kSharedNumberBitShift;
+          (value & kD2LMSharedNumberBitMask) >> kD2LMSharedNumberBitShift;
+      uint16_t current_update_number =
+          (value & kD2LMUpdateNumberBitMask) >> kD2LMUpdateNumberBitShift;
       uint16_t current_exclusive_max =
-          (value & kExclusiveMaxBitMask) >> kExclusiveMaxBitShift;
-      uint16_t current_shared_max = value & kSharedMaxBitMask;
+          (value & kD2LMExclusiveMaxBitMask) >> kD2LMExclusiveMaxBitShift;
+      uint16_t current_shared_max = value & kD2LMSharedMaxBitMask;
+      uint16_t current_update_max = value & kD2LMUpdateMaxBitMask;
       if (current_exclusive_number != request->last_exclusive_number ||
           current_shared_number != request->last_shared_number) {
         request->deadlock_count = 0;
         request->timestamp.update();
         request->last_exclusive_number = current_exclusive_number;
         request->last_shared_number = current_shared_number;
+        request->last_update_number = current_shared_number;
         this->Read(context_, *request);
       } else {
         if (request->reset_from == value) {
@@ -851,19 +678,32 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
         } else {
           uint64_t from, to;
           if (request->lock_type == EXCLUSIVE) {
-            from = GetLockValue(request->last_exclusive_number,
-                                request->last_shared_number,
+            from = GetLockValue(request->last_update_number,
+                                request->last_exclusive_number,
+                                request->last_shared_number, current_update_max,
                                 current_exclusive_max, current_shared_max);
-            to = GetLockValue(request->exclusive_max + request->d2lm_increment,
-                              request->shared_max, current_exclusive_max,
-                              current_shared_max);
-          } else if (request->lock_type == SHARED) {
-            from = GetLockValue(request->last_exclusive_number,
-                                request->last_shared_number,
-                                current_exclusive_max, current_shared_max);
-            to = GetLockValue(request->exclusive_max,
-                              request->shared_max + request->d2lm_increment,
+            to = GetLockValue(request->update_max,
+                              request->exclusive_max + request->d2lm_increment,
+                              request->shared_max, current_update_max,
                               current_exclusive_max, current_shared_max);
+          } else if (request->lock_type == SHARED) {
+            from = GetLockValue(request->last_update_number,
+                                request->last_exclusive_number,
+                                request->last_shared_number, current_update_max,
+                                current_exclusive_max, current_shared_max);
+            to = GetLockValue(request->update_max, request->exclusive_max,
+                              request->shared_max + request->d2lm_increment,
+                              current_update_number, current_exclusive_max,
+                              current_shared_max);
+          } else if (request->lock_type == UPDATE) {
+            from = GetLockValue(request->last_update_number,
+                                request->last_exclusive_number,
+                                request->last_shared_number, current_update_max,
+                                current_exclusive_max, current_shared_max);
+            to = GetLockValue(request->update_max + request->d2lm_increment,
+                              request->exclusive_max, request->shared_max,
+                              current_update_number, current_exclusive_max,
+                              current_shared_max);
           } else {
             cerr << "Invalid lock type for deadlock resolution" << endl;
             exit(ERROR_INVALID_LOCK_TYPE);
@@ -890,75 +730,47 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     }
 #endif
 
+    request->update_number =
+        (value & kD2LMUpdateNumberBitMask) >> kD2LMUpdateNumberBitShift;
     request->exclusive_number =
-        (value & kExclusiveNumberBitMask) >> kExclusiveNumberBitShift;
+        (value & kD2LMExclusiveNumberBitMask) >> kD2LMExclusiveNumberBitShift;
     request->shared_number =
-        (value & kSharedNumberBitMask) >> kSharedNumberBitShift;
+        (value & kD2LMSharedNumberBitMask) >> kD2LMSharedNumberBitShift;
+    request->update_max =
+        (value & kD2LMUpdateMaxBitMask) >> kD2LMUpdateMaxBitShift;
     request->exclusive_max =
-        (value & kExclusiveMaxBitMask) >> kExclusiveMaxBitShift;
-    request->shared_max = value & kSharedMaxBitMask;
+        (value & kD2LMExclusiveMaxBitMask) >> kD2LMExclusiveMaxBitShift;
+    request->shared_max = value & kD2LMSharedMaxBitMask;
 
     if (request->task == UNDO) {
       local_manager_->NotifyLockRequestResult(
           request->seq_no, request->user_id, request->lock_type, remote_lm_id_,
           request->obj_index, request->contention_count, RETRY);
-    } else if (request->task == UNDO_TABLE) {
-      local_manager_->NotifyLockRequestResult(
-          request->seq_no, request->user_id, request->lock_type, remote_lm_id_,
-          request->obj_index, request->contention_count, RETRY);
-    } else if (request->task == TABLE_LOCK) {
-      uint64_t IX = (value & kTableIXBitMask) >> kTableIXBitShift;
-      uint64_t IS = (value & kTableISBitMask) >> kTableISBitShift;
-      uint64_t S = (value & kTableSBitMask) >> kTableSBitShift;
-      if (request->lock_type == TABLE_S) {
-        if (IX > 0) {
-          this->UndoTable(context_, *request);
-        } else {
-          local_manager_->NotifyLockRequestResult(
-              request->seq_no, request->user_id, request->lock_type,
-              remote_lm_id_, request->obj_index, request->contention_count,
-              SUCCESS);
-        }
-      } else if (request->lock_type == TABLE_IS) {
-        local_manager_->NotifyLockRequestResult(
-            request->seq_no, request->user_id, request->lock_type,
-            remote_lm_id_, request->obj_index, request->contention_count,
-            SUCCESS);
-      } else if (request->lock_type == TABLE_IX) {
-        if (S > 0) {
-          this->UndoTable(context_, *request);
-        } else {
-          local_manager_->NotifyLockRequestResult(
-              request->seq_no, request->user_id, request->lock_type,
-              remote_lm_id_, request->obj_index, request->contention_count,
-              SUCCESS);
-        }
-      }
-    } else if (request->task == TABLE_UNLOCK) {
-      local_manager_->NotifyUnlockRequestResult(
-          request->seq_no, request->user_id, request->lock_type, remote_lm_id_,
-          request->obj_index, SUCCESS);
     } else if (request->task == LOCK) {
       if (request->lock_type == EXCLUSIVE) {
-        if (request->exclusive_max >= kMaxPossibleNumber ||
-            request->shared_max >= kMaxPossibleNumber) {
+        if (request->update_max >= kD2LMMaxPossibleNumber ||
+            request->exclusive_max >= kD2LMMaxPossibleNumber ||
+            request->shared_max >= kD2LMMaxPossibleNumber) {
           ++request->contention_count;
           this->Undo(context_, *request);
         } else {
           // if (request->exclusive_max + 1 == kMaxPossibleNumber) {
           if (request->exclusive_max + request->d2lm_increment >=
-              kMaxPossibleNumber) {
+              kD2LMMaxPossibleNumber) {
             int number_to_reset =
                 request->exclusive_max + request->d2lm_increment;
             do_reset_[request->user_id][request->obj_index] = true;
             reset_value_[request->user_id][request->obj_index] =
-                (uint64_t)number_to_reset << kExclusiveNumberBitShift |
-                (uint64_t)request->shared_max << kSharedNumberBitShift |
-                (uint64_t)number_to_reset << kExclusiveMaxBitShift |
+                (uint64_t)request->update_max << kD2LMUpdateNumberBitShift |
+                (uint64_t)number_to_reset << kD2LMExclusiveNumberBitShift |
+                (uint64_t)request->shared_max << kD2LMSharedNumberBitShift |
+                (uint64_t)request->update_max << kD2LMUpdateMaxBitShift |
+                (uint64_t)number_to_reset << kD2LMExclusiveMaxBitShift |
                 (uint64_t)request->shared_max;
           }
           if (request->exclusive_max == request->exclusive_number &&
-              request->shared_max == request->shared_number) {
+              request->shared_max == request->shared_number &&
+              request->update_max == request->update_number) {
             local_manager_->NotifyLockRequestResult(
                 request->seq_no, request->user_id, request->lock_type,
                 remote_lm_id_, request->obj_index, request->contention_count,
@@ -971,23 +783,63 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           }
         }
       } else if (request->lock_type == SHARED) {
-        if (request->shared_max >= kMaxPossibleNumber ||
-            request->exclusive_max >= kMaxPossibleNumber) {
+        if (request->shared_max >= kD2LMMaxPossibleNumber ||
+            request->exclusive_max >= kD2LMMaxPossibleNumber ||
+            request->update_max >= kD2LMMaxPossibleNumber) {
           ++request->contention_count;
           this->Undo(context_, *request);
         } else {
           // if (request->shared_max + 1 == kMaxPossibleNumber) {
           if (request->shared_max + request->d2lm_increment >=
-              kMaxPossibleNumber) {
+              kD2LMMaxPossibleNumber) {
             int number_to_reset = request->shared_max + request->d2lm_increment;
             do_reset_[request->user_id][request->obj_index] = true;
             reset_value_[request->user_id][request->obj_index] =
-                (uint64_t)request->exclusive_max << kExclusiveNumberBitShift |
-                (uint64_t)number_to_reset << kSharedNumberBitShift |
-                (uint64_t)request->exclusive_max << kExclusiveMaxBitShift |
+                (uint64_t)request->update_max << kD2LMUpdateNumberBitShift |
+                (uint64_t)request->exclusive_max
+                    << kD2LMExclusiveNumberBitShift |
+                (uint64_t)number_to_reset << kD2LMSharedNumberBitShift |
+                (uint64_t)request->update_max << kD2LMUpdateMaxBitShift |
+                (uint64_t)request->exclusive_max << kD2LMExclusiveMaxBitShift |
                 (uint64_t)number_to_reset;
           }
-          if (request->exclusive_max == request->exclusive_number) {
+          if (request->exclusive_max == request->exclusive_number &&
+              request->update_max == request->update_number) {
+            local_manager_->NotifyLockRequestResult(
+                request->seq_no, request->user_id, request->lock_type,
+                remote_lm_id_, request->obj_index, request->contention_count,
+                SUCCESS);
+          } else {
+            ++request->contention_count;
+            PerformReadBackoff(*request);
+            request->timestamp.update();
+            this->Read(context_, *request);
+          }
+        }
+      } else if (request->lock_type == UPDATE) {
+        if (request->shared_max >= kD2LMMaxPossibleNumber ||
+            request->exclusive_max >= kD2LMMaxPossibleNumber ||
+            request->update_max >= kD2LMMaxPossibleNumber) {
+          ++request->contention_count;
+          this->Undo(context_, *request);
+        } else {
+          // if (request->shared_max + 1 == kMaxPossibleNumber) {
+          if (request->update_max + request->d2lm_increment >=
+              kD2LMMaxPossibleNumber) {
+            int number_to_reset = request->update_max + request->d2lm_increment;
+            do_reset_[request->user_id][request->obj_index] = true;
+            reset_value_[request->user_id][request->obj_index] =
+                (uint64_t)number_to_reset << kD2LMUpdateNumberBitShift |
+                (uint64_t)request->exclusive_max
+                    << kD2LMExclusiveNumberBitShift |
+                (uint64_t)request->shared_max << kD2LMSharedNumberBitShift |
+                (uint64_t)number_to_reset << kD2LMUpdateMaxBitShift |
+                (uint64_t)request->exclusive_max << kD2LMExclusiveMaxBitShift |
+                (uint64_t)request->shared_max;
+          }
+          if (request->exclusive_max == request->exclusive_number &&
+              request->update_max == request->update_number &&
+              request->shared_max == request->shared_number) {
             local_manager_->NotifyLockRequestResult(
                 request->seq_no, request->user_id, request->lock_type,
                 remote_lm_id_, request->obj_index, request->contention_count,
@@ -1016,6 +868,9 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
       } else if (request->lock_type == EXCLUSIVE &&
                  request->exclusive_number >= request->exclusive_max) {
         this->UndoNumber(context_, *request);
+      } else if (request->lock_type == UPDATE &&
+                 request->update_number >= request->update_max) {
+        this->UndoNumber(context_, *request);
       }
       local_manager_->NotifyUnlockRequestResult(
           request->seq_no, request->user_id, request->lock_type, remote_lm_id_,
@@ -1032,25 +887,31 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
     LockRequest* request = (LockRequest*)work_completion->wr_id;
     uint64_t value = request->original_value;
 
+    request->update_number =
+        (value & kD2LMUpdateNumberBitMask) >> kD2LMUpdateNumberBitShift;
     request->exclusive_number =
-        (value & kExclusiveNumberBitMask) >> kExclusiveNumberBitShift;
+        (value & kD2LMExclusiveNumberBitMask) >> kD2LMExclusiveNumberBitShift;
     request->shared_number =
-        (value & kSharedNumberBitMask) >> kSharedNumberBitShift;
+        (value & kD2LMSharedNumberBitMask) >> kD2LMSharedNumberBitShift;
+    uint16_t current_update_max =
+        (value & kD2LMUpdateMaxBitMask) >> kD2LMUpdateMaxBitShift;
     uint16_t current_exclusive_max =
-        (value & kExclusiveMaxBitMask) >> kExclusiveMaxBitShift;
-    uint16_t current_shared_max = value & kSharedMaxBitMask;
+        (value & kD2LMExclusiveMaxBitMask) >> kD2LMExclusiveMaxBitShift;
+    uint16_t current_shared_max = value & kD2LMSharedMaxBitMask;
 
     if (request->task == READ) {
       switch (request->lock_type) {
         case EXCLUSIVE: {
           if (request->exclusive_max == request->exclusive_number &&
-              request->shared_max == request->shared_number) {
+              request->shared_max == request->shared_number &&
+              request->update_max == request->update_number) {
             local_manager_->NotifyLockRequestResult(
                 request->seq_no, request->user_id, request->lock_type,
                 remote_lm_id_, request->obj_index, request->contention_count,
                 SUCCESS);
           } else if (request->exclusive_max < request->exclusive_number ||
-                     request->shared_max < request->shared_number) {
+                     request->shared_max < request->shared_number ||
+                     request->update_max < request->update_number) {
             // I need to fail -> retry.
             LockStat s;
             s.contention_count = request->contention_count;
@@ -1060,7 +921,8 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
                 remote_lm_id_, request->obj_index, s, FAILURE);
           } else {
             if (request->exclusive_number == request->last_exclusive_number &&
-                request->shared_number == request->last_shared_number) {
+                request->shared_number == request->last_shared_number &&
+                request->update_number == request->last_update_number) {
               ++request->deadlock_count;
             } else {
               request->deadlock_count = 0;
@@ -1068,9 +930,11 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             }
             request->last_exclusive_number = request->exclusive_number;
             request->last_shared_number = request->shared_number;
+            request->last_update_number = request->update_number;
             ++request->contention_count;
             int exp_count =
                 (request->exclusive_max - request->exclusive_number) +
+                (request->update_max - request->update_number) +
                 (request->shared_max - request->shared_number);
             if (exp_count < 0) {
               exp_count = 1;
@@ -1081,12 +945,14 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               // cout << "DEADLOCK OR FAIL." << endl;
               // Handle deadlock
               uint64_t from = GetLockValue(
-                  request->last_exclusive_number, request->last_shared_number,
+                  request->last_update_number, request->last_exclusive_number,
+                  request->last_shared_number, current_update_max,
                   current_exclusive_max, current_shared_max);
               uint64_t to =
-                  GetLockValue(request->exclusive_max + request->d2lm_increment,
-                               request->shared_max, current_exclusive_max,
-                               current_shared_max);
+                  GetLockValue(request->update_max,
+                               request->exclusive_max + request->d2lm_increment,
+                               request->shared_max, current_update_max,
+                               current_exclusive_max, current_shared_max);
               this->ResetForDeadlock(context_, *request, from, to);
             } else {
               PerformReadBackoff(*request);
@@ -1096,13 +962,15 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
           break;
         }
         case SHARED: {
-          if (request->exclusive_max == request->exclusive_number) {
+          if (request->exclusive_max == request->exclusive_number &&
+              request->update_max == request->update_number) {
             local_manager_->NotifyLockRequestResult(
                 request->seq_no, request->user_id, request->lock_type,
                 remote_lm_id_, request->obj_index, request->contention_count,
                 SUCCESS);
           } else if (request->exclusive_max < request->exclusive_number ||
-                     request->shared_max < request->shared_number) {
+                     request->shared_max < request->shared_number ||
+                     request->update_max < request->update_number) {
             // I need to fail -> retry.
             LockStat s;
             s.contention_count = request->contention_count;
@@ -1112,7 +980,8 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
                 remote_lm_id_, request->obj_index, s, FAILURE);
           } else {
             if (request->exclusive_number == request->last_exclusive_number &&
-                request->shared_number == request->last_shared_number) {
+                request->shared_number == request->last_shared_number &&
+                request->update_number == request->last_update_number) {
               ++request->deadlock_count;
             } else {
               request->deadlock_count = 0;
@@ -1120,9 +989,11 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
             }
             request->last_exclusive_number = request->exclusive_number;
             request->last_shared_number = request->shared_number;
+            request->last_update_number = request->update_number;
             ++request->contention_count;
             int exp_count =
                 (request->exclusive_max - request->exclusive_number) +
+                (request->update_max - request->update_number) +
                 (request->shared_max - request->shared_number);
             if (exp_count < 0) {
               exp_count = 1;
@@ -1133,12 +1004,74 @@ int D2LMLockClient::HandleWorkCompletion(struct ibv_wc* work_completion) {
               // cout << "DEADLOCK OR FAIL." << endl;
               // Handle deadlock
               uint64_t from = GetLockValue(
-                  request->last_exclusive_number, request->last_shared_number,
+                  request->last_shared_number, request->last_exclusive_number,
+                  request->last_shared_number, current_update_max,
                   current_exclusive_max, current_shared_max);
               uint64_t to =
-                  GetLockValue(request->exclusive_max,
+                  GetLockValue(request->update_max, request->exclusive_max,
                                request->shared_max + request->d2lm_increment,
-                               current_exclusive_max, current_shared_max);
+                               current_update_max, current_exclusive_max,
+                               current_shared_max);
+              this->ResetForDeadlock(context_, *request, from, to);
+            } else {
+              PerformReadBackoff(*request);
+              this->Read(context_, *request);
+            }
+          }
+          break;
+        }
+        case UPDATE: {
+          if (request->exclusive_max == request->exclusive_number &&
+              request->shared_max == request->shared_number &&
+              request->update_max == request->update_number) {
+            local_manager_->NotifyLockRequestResult(
+                request->seq_no, request->user_id, request->lock_type,
+                remote_lm_id_, request->obj_index, request->contention_count,
+                SUCCESS);
+          } else if (request->exclusive_max < request->exclusive_number ||
+                     request->shared_max < request->shared_number ||
+                     request->update_max < request->update_number) {
+            // I need to fail -> retry.
+            LockStat s;
+            s.contention_count = request->contention_count;
+            s.contention_count3 = 1;
+            local_manager_->NotifyLockRequestResult(
+                request->seq_no, request->user_id, request->lock_type,
+                remote_lm_id_, request->obj_index, s, FAILURE);
+          } else {
+            if (request->exclusive_number == request->last_exclusive_number &&
+                request->shared_number == request->last_shared_number &&
+                request->update_number == request->last_update_number) {
+              ++request->deadlock_count;
+            } else {
+              request->deadlock_count = 0;
+              request->timestamp.update();
+            }
+            request->last_exclusive_number = request->exclusive_number;
+            request->last_shared_number = request->shared_number;
+            request->last_update_number = request->update_number;
+            ++request->contention_count;
+            int exp_count =
+                (request->exclusive_max - request->exclusive_number) +
+                (request->update_max - request->update_number) +
+                (request->shared_max - request->shared_number);
+            if (exp_count < 0) {
+              exp_count = 1;
+            }
+            // if (request->deadlock_count >= kD2LMDeadlockLimit) {
+            if (request->timestamp.elapsed() >=
+                exp_count * kD2LMDeadlockLimit * 2) {
+              // cout << "DEADLOCK OR FAIL." << endl;
+              // Handle deadlock
+              uint64_t from = GetLockValue(
+                  request->last_update_number, request->last_exclusive_number,
+                  request->last_shared_number, current_update_max,
+                  current_exclusive_max, current_shared_max);
+              uint64_t to =
+                  GetLockValue(request->update_max + request->d2lm_increment,
+                               request->exclusive_max, request->shared_max,
+                               current_update_max, current_exclusive_max,
+                               current_shared_max);
               this->ResetForDeadlock(context_, *request, from, to);
             } else {
               PerformReadBackoff(*request);

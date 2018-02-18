@@ -1,6 +1,7 @@
 #include "lock_manager.h"
 #include "communication_client.h"
 #include "d2lm_lock_client.h"
+#include "d2lm_update_lock_client.h"
 #include "direct_queue_lock_client.h"
 #include "direct_queue_lock_client_two.h"
 #include "drtm_lock_client.h"
@@ -16,6 +17,7 @@ string LockManager::exclusive_shared_rule_ = "fail";
 string LockManager::exclusive_exclusive_rule_ = "fail";
 int LockManager::poll_retry_ = 3;
 int LockManager::fail_retry_ = 3;
+uint32_t LockManager::max_concurrent_reads_ = 5;
 bool LockManager::is_atomic_hca_reply_be_ = false;
 map<uint32_t, uint32_t> LockManager::user_to_node_map_;
 
@@ -89,6 +91,8 @@ LockManager::LockManager(const string& work_dir, uint32_t rank, int num_manager,
   lock_status_map_ = new LockStatusInfo[MAX_USER];
   lock_clients_map_ = new LockClient*[MAX_USER * num_manager_ * 2];
   mutex_ = new Poco::FastMutex[MAX_USER * num_manager_ * 2];
+
+  rng_.seed();
 
   backup_node_for_ = 0;
   write_log_ = false;
@@ -248,6 +252,8 @@ int LockManager::InitializeLockClients() {
         client = new DirectQueueLockClient(work_dir_, this, users.size(), i);
       else if (lock_mode_ == REMOTE_D2LM_V2)
         client = new D2LMLockClient(work_dir_, this, users.size(), i);
+      else if (lock_mode_ == REMOTE_D2LM_UPDATE)
+        client = new D2LMUpdateLockClient(work_dir_, this, users.size(), i);
       else if (lock_mode_ == REMOTE_DRTM)
         client = new DRTMLockClient(work_dir_, this, users.size(), i);
       else
@@ -312,7 +318,8 @@ int LockManager::InitializeLockClients() {
     remote_manager_availability_[i] = true;
   }
   // initialize lock wait queues, one for each lock object
-  if (lock_mode_ == PROXY_QUEUE || lock_mode_ == PROXY_RETRY) {
+  if (lock_mode_ == PROXY_QUEUE || lock_mode_ == PROXY_QUEUE2 ||
+      lock_mode_ == PROXY_RETRY) {
     wait_queues_ = new LockWaitQueue*[num_lock_object_];
     for (int i = 0; i < num_lock_object_; ++i) {
       wait_queues_[i] = new LockWaitQueue();
@@ -399,8 +406,8 @@ int LockManager::PrintInfo() {
 
   string ip_address;
   if (GetInfinibandIP(ip_address)) {
-    cerr << "Run(): failed to obtain infiniband ip address from interface ib0"
-         << endl;
+    cerr << "Run(): failed to obtain infiniband ip address from interface ib0 "
+         << "for node " << id_ << endl;
     return -1;
   }
   // cout << "ip address: " << ip_address << endl;
@@ -544,8 +551,8 @@ int LockManager::HandleConnectRequest(struct rdma_cm_id* id) {
   // set rdma connection parameters
   struct rdma_conn_param connection_parameters;
   memset(&connection_parameters, 0x00, sizeof(connection_parameters));
-  connection_parameters.initiator_depth =
-      connection_parameters.responder_resources = 7;
+  connection_parameters.initiator_depth = 16;
+  connection_parameters.responder_resources = 16;
   connection_parameters.rnr_retry_count = 7;
 
   // accept connection
@@ -562,7 +569,8 @@ int LockManager::HandleConnection(Context* context) {
   context->connected = true;
   context_set_.insert(context);
   // if lock mode == local (i.e., proxy, we disable atomic operations)
-  if (current_lock_mode_ == PROXY_RETRY || current_lock_mode_ == PROXY_QUEUE) {
+  if (current_lock_mode_ == PROXY_RETRY || current_lock_mode_ == PROXY_QUEUE ||
+      current_lock_mode_ == PROXY_QUEUE2) {
     struct ibv_qp_attr attr;
     memset(&attr, 0x00, sizeof(attr));
     attr.qp_access_flags = IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE;
@@ -954,6 +962,11 @@ int LockManager::LockLocallyWithQueue(Context* context, Message* message) {
   exclusive = (uint32_t)((*lock_object) >> 32);
   shared = (uint32_t)(*lock_object);
 
+  uint64_t value = *lock_object;
+  uint64_t IX = (value & kTableIXBitMask) >> kTableIXBitShift;
+  uint64_t IS = (value & kTableISBitMask) >> kTableISBitShift;
+  uint64_t S = (value & kTableSBitMask) >> kTableSBitShift;
+
   if (exclusive == 0 && shared == 0 && queue->GetSize() > 0) {
     queue->RemoveAll();
   }
@@ -966,7 +979,7 @@ int LockManager::LockLocallyWithQueue(Context* context, Message* message) {
   } else {
     // if shared lock is requested
     if (lock_type == SHARED) {
-      if (exclusive == 0) {
+      if (exclusive == 0 && queue->GetSize() == 0) {
         shared += 1;
         *lock_object = ((uint64_t)exclusive) << 32 | shared;
         lock_result = SUCCESS;
@@ -975,7 +988,7 @@ int LockManager::LockLocallyWithQueue(Context* context, Message* message) {
                       lock_type);
         lock_result = QUEUED;
       }
-    } else if (lock_type == EXCLUSIVE) {
+    } else if (lock_type == EXCLUSIVE || lock_type == UPDATE) {
       // if exclusive lock is requested
       if (exclusive == 0 && shared == 0) {
         exclusive = lock_value;
@@ -987,6 +1000,30 @@ int LockManager::LockLocallyWithQueue(Context* context, Message* message) {
         queue->Insert(seq_no, target_node_id, owner_node_id, owner_user_id,
                       lock_type);
         lock_result = QUEUED;
+      }
+    } else if (lock_type == TABLE_S) {
+      if (IX > 0) {
+        queue->Insert(seq_no, target_node_id, owner_node_id, owner_user_id,
+                      lock_type);
+        lock_result = QUEUED;
+      } else {
+        ++S;
+        *lock_object = IX << kTableIXBitShift | IS << kTableISBitShift | S;
+        lock_result = SUCCESS;
+      }
+    } else if (lock_type == TABLE_IS) {
+      ++IS;
+      *lock_object = IX << kTableIXBitShift | IS << kTableISBitShift | S;
+      lock_result = SUCCESS;
+    } else if (lock_type == TABLE_IX) {
+      if (S > 0) {
+        queue->Insert(seq_no, target_node_id, owner_node_id, owner_user_id,
+                      lock_type);
+        lock_result = QUEUED;
+      } else {
+        ++IX;
+        *lock_object = IX << kTableIXBitShift | IS << kTableISBitShift | S;
+        lock_result = SUCCESS;
       }
     }
   }
@@ -1005,6 +1042,134 @@ send_lock_result:
       return -1;
     }
     //}
+  } else {
+    // if context is NULL, it means it is a local workload
+    if (lock_result == SUCCESS) {
+      this->NotifyLockRequestResult(seq_no, owner_user_id, lock_type,
+                                    id_,  // id_?
+                                    obj_index, 0, lock_result);
+    }
+  }
+
+  return 0;
+}
+
+int LockManager::LockLocallyWithQueue2(Context* context, Message* message) {
+  LockResult lock_result = FAILURE;
+  int seq_no = message->seq_no;
+  uint32_t target_node_id = id_;
+  uint32_t owner_node_id = message->owner_node_id;
+  uintptr_t owner_user_id = message->owner_user_id;
+  int obj_index = message->obj_index;
+  LockType lock_type = message->lock_type;
+  uint32_t lock_value = message->owner_user_id;
+  LockWaitQueue* queue = wait_queues_[obj_index];
+
+  uint64_t* lock_object = NULL;
+
+  // lock locally on lock table
+  pthread_mutex_lock(lock_mutex_[obj_index]);
+
+  lock_object = (lock_table_ + obj_index);
+  uint32_t exclusive, shared;
+  exclusive = (uint32_t)((*lock_object) >> 32);
+  shared = (uint32_t)(*lock_object);
+
+  uint64_t value = *lock_object;
+  uint64_t IX = (value & kTableIXBitMask) >> kTableIXBitShift;
+  uint64_t IS = (value & kTableISBitMask) >> kTableISBitShift;
+  uint64_t S = (value & kTableSBitMask) >> kTableSBitShift;
+
+  if (exclusive == 0 && shared == 0 && queue->GetSize() > 0) {
+    queue->RemoveAll();
+  }
+
+  // if shared lock is requested
+  if (lock_type == SHARED) {
+    if (exclusive == 0) {
+      if (queue->GetSize() > 0 && shared >= max_concurrent_reads_) {
+        queue->Insert(seq_no, target_node_id, owner_node_id, owner_user_id,
+                      lock_type);
+        lock_result = QUEUED;
+      } else {
+        shared += 1;
+        *lock_object = ((uint64_t)exclusive) << 32 | shared;
+        lock_result = SUCCESS;
+      }
+    } else {
+      queue->Insert(seq_no, target_node_id, owner_node_id, owner_user_id,
+                    lock_type);
+      lock_result = QUEUED;
+    }
+  } else if (lock_type == EXCLUSIVE) {
+    // if exclusive lock is requested
+    if (exclusive == 0 && shared == 0) {
+      exclusive = lock_value;
+      *lock_object = ((uint64_t)exclusive) << 32 | shared;
+      lock_result = SUCCESS;
+    } else if (exclusive == lock_value && shared == 0) {
+      lock_result = SUCCESS;
+    } else {
+      queue->Insert(seq_no, target_node_id, owner_node_id, owner_user_id,
+                    lock_type);
+      lock_result = QUEUED;
+    }
+  } else if (lock_type == TABLE_S) {
+    if (IX > 0) {
+      queue->Insert(seq_no, target_node_id, owner_node_id, owner_user_id,
+                    lock_type);
+      lock_result = QUEUED;
+    } else {
+      if (rng_.nextDouble() < 0.5) {
+        ++S;
+      }
+      *lock_object = IX << kTableIXBitShift | IS << kTableISBitShift | S;
+      lock_result = SUCCESS;
+      // if (queue->GetSize() > 0 && S >= max_concurrent_reads_) {
+      // if (rng_.nextDouble() < 0) {
+      // queue->Insert(seq_no, target_node_id, owner_node_id, owner_user_id,
+      // lock_type);
+      // lock_result = QUEUED;
+      //} else {
+      // lock_result = SUCCESS;
+      //}
+      //} else {
+      //++S;
+      //*lock_object = IX << kTableIXBitShift | IS << kTableISBitShift | S;
+      // lock_result = SUCCESS;
+      //}
+    }
+    //++S;
+    //*lock_object = IX << kTableIXBitShift | IS << kTableISBitShift | S;
+    // lock_result = SUCCESS;
+  } else if (lock_type == TABLE_IS) {
+    ++IS;
+    *lock_object = IX << kTableIXBitShift | IS << kTableISBitShift | S;
+    lock_result = SUCCESS;
+  } else if (lock_type == TABLE_IX) {
+    if (S > 0) {
+      queue->Insert(seq_no, target_node_id, owner_node_id, owner_user_id,
+                    lock_type);
+      lock_result = QUEUED;
+    } else {
+      ++IX;
+      *lock_object = IX << kTableIXBitShift | IS << kTableISBitShift | S;
+      lock_result = SUCCESS;
+    }
+  }
+
+  // unlock locally on lock table
+  pthread_mutex_unlock(lock_mutex_[obj_index]);
+
+send_lock_result2:
+
+  // send result back to the client only if successful
+  if (context) {
+    if (SendLockRequestResult(context, seq_no, owner_user_id, lock_type,
+                              obj_index, lock_result)) {
+      cerr << "LockLocally() failed." << endl;
+      return -1;
+    }
   } else {
     // if context is NULL, it means it is a local workload
     if (lock_result == SUCCESS) {
@@ -1215,6 +1380,11 @@ int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
   exclusive = (uint32_t)((*lock_object) >> 32);
   shared = (uint32_t)(*lock_object);
 
+  uint64_t value = *lock_object;
+  uint64_t IX = (value & kTableIXBitMask) >> kTableIXBitShift;
+  uint64_t IS = (value & kTableISBitMask) >> kTableISBitShift;
+  uint64_t S = (value & kTableSBitMask) >> kTableSBitShift;
+
   // remove it from the queue as well if exists
   int num_elem =
       queue->RemoveAllElements(owner_node_id, owner_user_id, lock_type);
@@ -1245,12 +1415,27 @@ int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
       *lock_object = ((uint64_t)exclusive) << 32 | shared;
       lock_result = SUCCESS;
     }
-  } else if (lock_type == EXCLUSIVE) {  // if exclusive lock is requested
+  } else if (lock_type == EXCLUSIVE ||
+             lock_type == UPDATE) {  // if exclusive lock is requested
     if (exclusive == lock_value) {
       exclusive = 0;
       *lock_object = ((uint64_t)exclusive) << 32 | shared;
       lock_result = SUCCESS;
     }
+  } else if (lock_type == TABLE_S) {
+    if (S > 0) {
+      --S;
+    }
+    *lock_object = IX << kTableIXBitShift | IS << kTableISBitShift | S;
+    lock_result = SUCCESS;
+  } else if (lock_type == TABLE_IS) {
+    --IS;
+    *lock_object = IX << kTableIXBitShift | IS << kTableISBitShift | S;
+    lock_result = SUCCESS;
+  } else if (lock_type == TABLE_IX) {
+    --IX;
+    *lock_object = IX << kTableIXBitShift | IS << kTableISBitShift | S;
+    lock_result = SUCCESS;
   }
 
   // Notify waiting users
@@ -1263,6 +1448,10 @@ int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
       lock_value = (uint32_t)elem->owner_user_id;
       exclusive = (uint32_t)((*lock_object) >> 32);
       shared = (uint32_t)(*lock_object);
+      uint64_t value = *lock_object;
+      uint64_t IX = (value & kTableIXBitMask) >> kTableIXBitShift;
+      uint64_t IS = (value & kTableISBitMask) >> kTableISBitShift;
+      uint64_t S = (value & kTableSBitMask) >> kTableSBitShift;
       if (exclusive == 0 && elem->type == SHARED) {
         shared += 1;
         *lock_object = ((uint64_t)exclusive) << 32 | shared;
@@ -1281,7 +1470,8 @@ int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
           queue->Pop();
           elem = queue->Front();
         }
-      } else if (exclusive == 0 && shared == 0 && elem->type == EXCLUSIVE) {
+      } else if (exclusive == 0 && shared == 0 &&
+                 (elem->type == EXCLUSIVE || elem->type == UPDATE)) {
         exclusive = (uint32_t)((*lock_object) >> 32);
         shared = (uint32_t)(*lock_object);
         exclusive = lock_value;
@@ -1290,6 +1480,61 @@ int LockManager::UnlockLocallyWithQueue(Context* context, Message* message) {
         client->GrantLock(elem->seq_no, elem->target_node_id,
                           elem->owner_user_id, obj_index, elem->type);
         queue->Pop();
+      } else if (elem->type == TABLE_S && IX == 0) {
+        ++S;
+        *lock_object = IX << kTableIXBitShift | IS << kTableISBitShift | S;
+        client->GrantLock(elem->seq_no, elem->target_node_id,
+                          elem->owner_user_id, obj_index, elem->type);
+        queue->Pop();
+        elem = queue->Front();
+        while (elem && (elem->type == TABLE_S || elem->type == TABLE_IS)) {
+          if (elem->type == TABLE_S) {
+            ++S;
+          } else if (elem->type == TABLE_IS) {
+            ++IS;
+          }
+          *lock_object = IX << kTableIXBitShift | IS << kTableISBitShift | S;
+          client = communication_clients_[elem->owner_node_id];
+          client->GrantLock(elem->seq_no, elem->target_node_id,
+                            elem->owner_user_id, obj_index, elem->type);
+          queue->Pop();
+          elem = queue->Front();
+        }
+      } else if ((elem->type == TABLE_IX || elem->type == TABLE_IS) && S == 0) {
+        if (elem->type == TABLE_IX) {
+          ++IX;
+        } else if (elem->type == TABLE_IS) {
+          ++IS;
+        }
+        *lock_object = IX << kTableIXBitShift | IS << kTableISBitShift | S;
+        client->GrantLock(elem->seq_no, elem->target_node_id,
+                          elem->owner_user_id, obj_index, elem->type);
+        queue->Pop();
+        elem = queue->Front();
+        // while (elem && (elem->type == TABLE_IX || elem->type == TABLE_IS)) {
+        while (elem) {
+          if (elem->type == TABLE_IX) {
+            if (S == 0) {
+              ++IX;
+            } else {
+              break;
+            }
+          } else if (elem->type == TABLE_IS) {
+            ++IS;
+          } else if (elem->type == TABLE_S) {
+            if (IX == 0) {
+              ++S;
+            } else {
+              break;
+            }
+          }
+          *lock_object = IX << kTableIXBitShift | IS << kTableISBitShift | S;
+          client = communication_clients_[elem->owner_node_id];
+          client->GrantLock(elem->seq_no, elem->target_node_id,
+                            elem->owner_user_id, obj_index, elem->type);
+          queue->Pop();
+          elem = queue->Front();
+        }
       }
     }
   }
@@ -1694,7 +1939,7 @@ int LockManager::HandleEvent(struct rdma_cm_event* event) {
   } else if (event->event == RDMA_CM_EVENT_DISCONNECTED) {
     ret = HandleDisconnect(static_cast<Context*>(event->id->context));
   } else {
-    cerr << "Unknown event: " << event->event << "," << strerror(event->status)
+    cerr << "Unknown event: " << event->event << ", " << strerror(event->status)
          << endl;
     Stop();
   }
@@ -1725,6 +1970,8 @@ int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
         LockLocallyWithRetry(context, message);
       } else if (current_lock_mode_ == PROXY_QUEUE) {
         LockLocallyWithQueue(context, message);
+      } else if (current_lock_mode_ == PROXY_QUEUE2) {
+        LockLocallyWithQueue2(context, message);
       } else {
         cerr << "Incompatible proxy lock mode: " << current_lock_mode_ << endl;
         return FUNC_FAIL;
@@ -1732,7 +1979,8 @@ int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
     } else if (message->type == Message::UNLOCK_REQUEST) {
       if (current_lock_mode_ == PROXY_RETRY) {
         UnlockLocallyWithRetry(context, message);
-      } else if (current_lock_mode_ == PROXY_QUEUE) {
+      } else if (current_lock_mode_ == PROXY_QUEUE ||
+                 current_lock_mode_ == PROXY_QUEUE2) {
         UnlockLocallyWithQueue(context, message);
       } else {
         cerr << "Incompatible proxy lock mode: " << current_lock_mode_ << endl;
@@ -1741,7 +1989,8 @@ int LockManager::HandleWorkCompletion(struct ibv_wc* work_completion) {
     } else if (message->type == Message::GRANT_LOCK) {
       if (current_lock_mode_ == REMOTE_NOTIFY) {
         TryLock(context, message);
-      } else if (current_lock_mode_ == PROXY_QUEUE) {
+      } else if (current_lock_mode_ == PROXY_QUEUE ||
+                 current_lock_mode_ == PROXY_QUEUE2) {
         // sends the ACK message back to CommunicationClient
         this->SendGrantLockAck(context, message->seq_no, message->owner_user_id,
                                message->lock_type, message->obj_index);
@@ -1905,6 +2154,19 @@ double LockManager::GetAverageRDMAReadCount() const {
   return total_count / num_clients;
 }
 
+uint64_t LockManager::GetTotalNumReset() const {
+  uint64_t total_count = 0;
+  map<uint64_t, CommunicationClient*>::const_iterator it2;
+  for (auto it = lock_clients_.begin(); it != lock_clients_.end(); ++it) {
+    total_count += it->second->GetNumReset();
+  }
+  for (it2 = communication_clients_.begin();
+       it2 != communication_clients_.end(); ++it2) {
+    total_count += it2->second->GetNumReset();
+  }
+  return total_count;
+}
+
 uint64_t LockManager::GetTotalRDMAReadCount() const {
   uint64_t total_count = 0;
   map<uint64_t, CommunicationClient*>::const_iterator it2;
@@ -2055,13 +2317,15 @@ void* LockManager::PollLocalWorkQueue(void* arg) {
         manager->LockLocallyWithRetry(NULL, work);
       } else if (lock_mode == PROXY_QUEUE) {
         manager->LockLocallyWithQueue(NULL, work);
+      } else if (lock_mode == PROXY_QUEUE2) {
+        manager->LockLocallyWithQueue2(NULL, work);
       } else {
         cerr << "Incompatible proxy lock mode: " << lock_mode << endl;
       }
     } else {
       if (lock_mode == PROXY_RETRY) {
         manager->UnlockLocallyWithRetry(NULL, work);
-      } else if (lock_mode == PROXY_QUEUE) {
+      } else if (lock_mode == PROXY_QUEUE || lock_mode == PROXY_QUEUE2) {
         manager->UnlockLocallyWithQueue(NULL, work);
       } else {
         cerr << "Incompatible proxy lock mode: " << lock_mode << endl;

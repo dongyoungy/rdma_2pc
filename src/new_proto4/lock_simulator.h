@@ -74,10 +74,13 @@ class LockSimulator : public Poco::Runnable {
 
   static void SetBaseBackoff(double backoff);
   static void SetMaxBackoff(double backoff);
+  static void SetReadLockTime(long time);
 
  protected:
+  static const int LEASE_EXTENSION_TIME = 100;
   static double kMaxBackoff;
   static double kBaseBackoff;
+  static long kReadLockTime;
   virtual void CreateRequest();
   void RevertLocks(int& index);
   int PerformRandomBackoff(int& attempt);

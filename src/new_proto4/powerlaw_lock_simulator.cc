@@ -7,11 +7,12 @@ namespace proto {
 PowerlawLockSimulator::PowerlawLockSimulator(
     LockManager* manager, int id, int num_nodes, int num_objects,
     int request_size, string think_time_type, bool do_random_backoff,
-    double exponent, double shared_lock_ratio)
+    double exponent, double shared_lock_ratio, bool use_update_lock)
     : LockSimulator(manager, id, num_nodes, num_objects, request_size,
                     think_time_type, do_random_backoff),
       exponent_(exponent),
-      shared_lock_ratio_(shared_lock_ratio) {
+      shared_lock_ratio_(shared_lock_ratio),
+      use_update_lock_(use_update_lock) {
   exponent_ = exponent_ * -1;
   min_pow_ = pow(1, exponent_ + 1);
   max_pow_ = pow(num_objects, exponent_ + 1);
@@ -31,8 +32,25 @@ void PowerlawLockSimulator::CreateRequest() {
                  1 / (exponent_ + 1)) -
         1;
     requests_[i]->obj_index = obj_index;
-    requests_[i]->lock_type =
-        (rng_.nextDouble() <= shared_lock_ratio_) ? SHARED : EXCLUSIVE;
+    if (use_update_lock_) {
+      int val = rng_.next(3);
+      switch (val) {
+        case 0:
+          requests_[i]->lock_type = SHARED;
+          break;
+        case 1:
+          requests_[i]->lock_type = EXCLUSIVE;
+          break;
+        case 2:
+          requests_[i]->lock_type = UPDATE;
+          break;
+        default:
+          break;
+      }
+    } else {
+      requests_[i]->lock_type =
+          (rng_.nextDouble() <= shared_lock_ratio_) ? SHARED : EXCLUSIVE;
+    }
     requests_[i]->contention_count = 0;
     requests_[i]->contention_count2 = 0;
   }

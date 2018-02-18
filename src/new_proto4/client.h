@@ -51,6 +51,7 @@ class Client {
   uint64_t GetNumLockSuccess() const;
   uint64_t GetNumLockSuccessWithPoll() const;
   uint64_t GetSumPollWhenSuccess() const;
+  uint64_t GetNumReset() const;
 
   double GetAveragePollWhenSuccess() const;
   double GetAverageRDMAReadTime() const;
@@ -81,6 +82,7 @@ class Client {
   uint64_t num_rdma_atomic_cas_;
   uint64_t num_rdma_read_;
   uint64_t num_rdma_write_;
+  uint64_t num_reset_;
 
   bool initialized_;
   bool terminate_;

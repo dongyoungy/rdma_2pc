@@ -537,7 +537,8 @@ bool LockClient::RequestLock(const LockRequest& request, LockMode lock_mode) {
   waiters_before_me_[request.obj_index] = 0;
   queued_user_[request.obj_index] = 0;
 
-  if (lock_mode == PROXY_RETRY || lock_mode == PROXY_QUEUE) {
+  if (lock_mode == PROXY_RETRY || lock_mode == PROXY_QUEUE ||
+      lock_mode == PROXY_QUEUE2) {
     // ask lock manager to place the lock
     return this->SendLockRequest(context_, request);
   } else if (lock_mode == REMOTE_POLL || lock_mode == REMOTE_DRTM ||
@@ -554,7 +555,8 @@ bool LockClient::RequestLock(const LockRequest& request, LockMode lock_mode) {
 bool LockClient::RequestUnlock(const LockRequest& request, LockMode lock_mode) {
   user_fail_[request.user_id] = false;
   user_polling_[request.user_id] = false;
-  if (lock_mode == PROXY_RETRY || lock_mode == PROXY_QUEUE) {
+  if (lock_mode == PROXY_RETRY || lock_mode == PROXY_QUEUE ||
+      lock_mode == PROXY_QUEUE2) {
     return this->SendUnlockRequest(context_, request);
   } else if (lock_mode == REMOTE_POLL || lock_mode == REMOTE_DRTM ||
              lock_mode == REMOTE_NOTIFY || lock_mode == REMOTE_D2LM_V1 ||

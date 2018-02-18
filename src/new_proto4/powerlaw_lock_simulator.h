@@ -12,7 +12,8 @@ class PowerlawLockSimulator : public LockSimulator {
   PowerlawLockSimulator(LockManager* manager, int id, int num_nodes,
                         int num_objects, int request_size,
                         std::string think_time_type, bool do_random_backoff,
-                        double exponent, double shared_lock_ratio);
+                        double exponent, double shared_lock_ratio,
+                        bool use_update_lock = false);
 
  protected:
   virtual void CreateRequest();
@@ -22,6 +23,8 @@ class PowerlawLockSimulator : public LockSimulator {
   double shared_lock_ratio_;
   double min_pow_;
   double max_pow_;
+
+  bool use_update_lock_;
 };
 
 }  // namespace proto
